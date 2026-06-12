@@ -1,0 +1,122 @@
+{
+  "name": "localforge-copilot",
+  "displayName": "LocalForge Copilot (Ollama)",
+  "description": "Local Ollama Copilot Platform",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "localforge",
+          "title": "LocalForge",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "localforge": [
+        {
+          "type": "webview",
+          "id": "localforge.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "localforge.explain",
+        "title": "LocalForge: Explain Selection"
+      },
+      {
+        "command": "localforge.fix",
+        "title": "LocalForge: Fix Selection"
+      },
+      {
+        "command": "localforge.refactor",
+        "title": "LocalForge: Refactor Selection"
+      },
+      {
+        "command": "localforge.tests",
+        "title": "LocalForge: Generate Tests"
+      },
+      {
+        "command": "localforge.agentEdit",
+        "title": "LocalForge: Agent Edit (multi-file)"
+      },
+      {
+        "command": "localforge.pickModel",
+        "title": "LocalForge: Switch Model"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "localforge.explain",
+          "when": "editorHasSelection",
+          "group": "localforge@1"
+        },
+        {
+          "command": "localforge.fix",
+          "when": "editorHasSelection",
+          "group": "localforge@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "localforge.explain",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e"
+      }
+    ],
+    "configuration": {
+      "title": "LocalForge",
+      "properties": {
+        "localforge.backendUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:5210"
+        },
+        "localforge.ollamaUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:11434",
+          "description": "Fallback when backend is offline"
+        },
+        "localforge.chatModel": {
+          "type": "string",
+          "default": "qwen2.5-coder:7b"
+        },
+        "localforge.fimModel": {
+          "type": "string",
+          "default": "qwen2.5-coder:1.5b-base"
+        },
+        "localforge.inlineCompletions": {
+          "type": "boolean",
+          "default": true
+        },
+        "localforge.maxPrefixTokens": {
+          "type": "number",
+          "default": 2000
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node"
+  },
+  "devDependencies": {
+    "@types/node": "^18.11.18",
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.0.0"
+  }
+}

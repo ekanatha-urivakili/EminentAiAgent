@@ -1,0 +1,17 @@
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/bin/Debug/net10.0/LocalForge.Infrastructure.deps.json
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/bin/Debug/net10.0/LocalForge.Infrastructure.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/bin/Debug/net10.0/LocalForge.Infrastructure.pdb
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/bin/Debug/net10.0/LocalForge.Application.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/bin/Debug/net10.0/LocalForge.Domain.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/bin/Debug/net10.0/LocalForge.Application.pdb
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/bin/Debug/net10.0/LocalForge.Domain.pdb
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.csproj.AssemblyReference.cache
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.AssemblyInfoInputs.cache
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.AssemblyInfo.cs
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.csproj.CoreCompileInputs.cache
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalFor.E35AAA25.Up2Date
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/refint/LocalForge.Infrastructure.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.pdb
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/ref/LocalForge.Infrastructure.dll

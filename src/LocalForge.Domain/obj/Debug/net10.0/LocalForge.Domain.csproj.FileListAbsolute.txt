@@ -1,0 +1,11 @@
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/bin/Debug/net10.0/LocalForge.Domain.deps.json
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/bin/Debug/net10.0/LocalForge.Domain.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/bin/Debug/net10.0/LocalForge.Domain.pdb
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/LocalForge.Domain.GeneratedMSBuildEditorConfig.editorconfig
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/LocalForge.Domain.AssemblyInfoInputs.cache
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/LocalForge.Domain.AssemblyInfo.cs
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/LocalForge.Domain.csproj.CoreCompileInputs.cache
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/LocalForge.Domain.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/refint/LocalForge.Domain.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/LocalForge.Domain.pdb
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Domain/obj/Debug/net10.0/ref/LocalForge.Domain.dll

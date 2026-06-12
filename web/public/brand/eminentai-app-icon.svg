@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="EminentAI">
+  <defs>
+    <linearGradient id="bg" x1="71" y1="61" x2="440" y2="450" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b1938"/>
+      <stop offset=".55" stop-color="#111f69"/>
+      <stop offset="1" stop-color="#4717d8"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="103" y1="235" x2="411" y2="143" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b5cff"/>
+      <stop offset=".5" stop-color="#16c8ff"/>
+      <stop offset="1" stop-color="#7cf8ff"/>
+    </linearGradient>
+    <linearGradient id="magenta" x1="137" y1="289" x2="393" y2="228" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4021ff"/>
+      <stop offset=".52" stop-color="#b82cff"/>
+      <stop offset="1" stop-color="#ff7bf6"/>
+    </linearGradient>
+    <linearGradient id="lower" x1="185" y1="322" x2="421" y2="365" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0a6eff"/>
+      <stop offset=".45" stop-color="#25d9ff"/>
+      <stop offset="1" stop-color="#81ffff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000a20" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="92" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <path d="M94 292 360 96l64 132-242 82 224 85-70 31L94 292Z" fill="#030b1d"/>
+    <path d="M111 278 351 110l39 81-216 72-63 15Z" fill="url(#cyan)"/>
+    <path d="m151 290 219-77 24 56-220 51-23-30Z" fill="url(#magenta)"/>
+    <path d="m185 332 222-49 35 88-257-39Z" fill="url(#lower)"/>
+    <path d="m111 278 63-15 216-72 13 28-229 74-63-15Z" fill="#041028" opacity=".65"/>
+    <path d="m151 290 23 30 220-51 11 29-231 39-23-47Z" fill="#030b1d" opacity=".55"/>
+  </g>
+</svg>

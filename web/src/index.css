@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 71.4% 4.1%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 71.4% 4.1%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71.4% 4.1%;
+
+    --primary: 220.9 39.3% 11%;
+    --primary-foreground: 210 20% 98%;
+
+    --secondary: 220 14.3% 95.9%;
+    --secondary-foreground: 220.9 39.3% 11%;
+
+    --muted: 220 14.3% 95.9%;
+    --muted-foreground: 220 8.9% 46.1%;
+
+    --accent: 220 14.3% 95.9%;
+    --accent-foreground: 220.9 39.3% 11%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 224 71.4% 4.1%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 224 71.4% 4.1%;
+    --foreground: 210 20% 98%;
+
+    --card: 224 71.4% 4.1%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 224 71.4% 4.1%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 210 20% 98%;
+    --primary-foreground: 220.9 39.3% 11%;
+
+    --secondary: 215 27.9% 16.9%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 215 27.9% 16.9%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+
+    --accent: 215 27.9% 16.9%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 215 27.9% 16.9%;
+    --input: 215 27.9% 16.9%;
+    --ring: 216 12.2% 83.9%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  body, .bg-background, .bg-card, .bg-muted {
+    transition: background-color 0.25s ease, border-color 0.25s ease;
+  }
+}
+
+/* Custom Scrollbar for modern look */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+.markdown-code-block .hljs {
+  background: transparent;
+}
+
+.dark .markdown-code-block .hljs {
+  color: #d6e2ff;
+}
+
+.dark .markdown-code-block .hljs-comment,
+.dark .markdown-code-block .hljs-quote {
+  color: #76839a;
+}
+
+.dark .markdown-code-block .hljs-keyword,
+.dark .markdown-code-block .hljs-selector-tag,
+.dark .markdown-code-block .hljs-subst {
+  color: #ff7b72;
+}
+
+.dark .markdown-code-block .hljs-string,
+.dark .markdown-code-block .hljs-title,
+.dark .markdown-code-block .hljs-section,
+.dark .markdown-code-block .hljs-attribute,
+.dark .markdown-code-block .hljs-name {
+  color: #a5d6ff;
+}
+
+.dark .markdown-code-block .hljs-number,
+.dark .markdown-code-block .hljs-literal,
+.dark .markdown-code-block .hljs-variable,
+.dark .markdown-code-block .hljs-template-variable {
+  color: #79c0ff;
+}
+
+.dark .markdown-code-block .hljs-type,
+.dark .markdown-code-block .hljs-built_in,
+.dark .markdown-code-block .hljs-symbol,
+.dark .markdown-code-block .hljs-bullet {
+  color: #d2a8ff;
+}

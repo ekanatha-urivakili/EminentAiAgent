@@ -1,0 +1,16 @@
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: localforge-mailpit
+    ports:
+      - "1025:1025"   # SMTP — backend sends here
+      - "8025:8025"   # Web UI — view emails at http://localhost:8025
+    environment:
+      MP_MAX_MESSAGES: 200
+      MP_DATA_FILE: /data/mailpit.db
+    volumes:
+      - mailpit-data:/data
+    restart: unless-stopped
+
+volumes:
+  mailpit-data:
