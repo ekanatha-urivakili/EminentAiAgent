@@ -13,3 +13,4 @@
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Application/obj/Debug/net10.0/refint/LocalForge.Application.dll
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Application/obj/Debug/net10.0/LocalForge.Application.pdb
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Application/obj/Debug/net10.0/ref/LocalForge.Application.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Application/obj/Debug/net10.0/LocalForge.Application.sourcelink.json

@@ -15,3 +15,4 @@
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/refint/LocalForge.Infrastructure.dll
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.pdb
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/ref/LocalForge.Infrastructure.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Infrastructure/obj/Debug/net10.0/LocalForge.Infrastructure.sourcelink.json

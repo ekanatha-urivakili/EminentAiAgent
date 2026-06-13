@@ -268,6 +268,7 @@ function ModelSearch({ installedNames, onInstalled }: { installedNames: Set<stri
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!query.trim()) { setResults([]); setSearchError(undefined); return; }
     debounceRef.current = setTimeout(async () => {
       setSearching(true);

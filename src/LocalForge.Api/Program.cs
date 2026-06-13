@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Mail;
 using System.Threading.RateLimiting;
+using LocalForge.Api.JobSearch;
 using LocalForge.Application.Abstractions;
 using LocalForge.Application.Agent;
 using LocalForge.Application.Chat;
@@ -55,12 +56,25 @@ builder.Services.AddHttpClient("OllamaRegistry", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("LocalForge/1.0");
 });
 
+builder.Services.AddHttpClient("ReedApi", client =>
+{
+    client.BaseAddress = new Uri("https://www.reed.co.uk/api/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("LocalForge/1.0");
+});
+
+// Job search singletons
+builder.Services.AddSingleton<IndeedDirectBuffer>();
+builder.Services.AddSingleton<JobRunCache>();
+builder.Services.AddSingleton<JobSearchOrchestrator>();
+
 builder.Services.AddSingleton(new BuiltinToolOptions(builder.Configuration["LocalForge:WorkspaceRoot"]));
 builder.Services.AddSingleton<IBuiltinToolRunner, BuiltinToolRunner>();
 builder.Services.AddSingleton<IPiiRedactor, PiiRedactor>();
 builder.Services.AddSingleton<IPolicyEngine, PolicyEngine>();
 builder.Services.AddSingleton<IMcpHost, McpHost>();
 builder.Services.AddSingleton<ApprovalBroker>();
+builder.Services.AddSingleton<AdminSessionCache>();
 builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IAgentRunRepository, AgentRunRepository>();
 builder.Services.AddScoped<ChatService>();
@@ -116,8 +130,7 @@ app.Use(async (context, next) =>
     if (!string.IsNullOrWhiteSpace(apiToken) && context.Request.Method != HttpMethods.Options)
     {
         var header = context.Request.Headers.Authorization.ToString();
-        var query = context.Request.Query["token"].ToString(); // EventSource cannot set headers
-        var ok = header == $"Bearer {apiToken}" || (!string.IsNullOrEmpty(query) && query == apiToken);
+        var ok = header == $"Bearer {apiToken}";
         if (!ok)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -125,6 +138,50 @@ app.Use(async (context, next) =>
             return;
         }
     }
+    await next();
+});
+
+// Admin session gate — when no LOCALFORGE_API_TOKEN is set, every non-public request
+// must carry a valid admin session bearer token (unless no admins exist yet: first-run setup).
+app.Use(async (ctx, next) =>
+{
+    if (!string.IsNullOrWhiteSpace(apiToken) || ctx.Request.Method == HttpMethods.Options)
+    { await next(); return; }
+
+    var path = ctx.Request.Path.Value ?? "";
+    if (path.StartsWith("/api/health", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/api/models", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase))
+    { await next(); return; }
+
+    var cache = ctx.RequestServices.GetRequiredService<AdminSessionCache>();
+    if (!cache.Exists.HasValue)
+    {
+        var dbF = ctx.RequestServices.GetRequiredService<IDbContextFactory<LocalForgeDbContext>>();
+        await using var seedDb = await dbF.CreateDbContextAsync(ctx.RequestAborted);
+        cache.Set(await seedDb.AdminUsers.AnyAsync(ctx.RequestAborted));
+    }
+
+    // No admins registered yet — allow through so the first admin can be created.
+    if (cache.Exists == false) { await next(); return; }
+
+    var tokenHash = HashToken(GetBearerToken(ctx.Request));
+    if (tokenHash is null)
+    {
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await ctx.Response.WriteAsJsonAsync(new { error = "Admin session required" });
+        return;
+    }
+
+    var dbFactory2 = ctx.RequestServices.GetRequiredService<IDbContextFactory<LocalForgeDbContext>>();
+    await using var authDb = await dbFactory2.CreateDbContextAsync(ctx.RequestAborted);
+    if (!await authDb.AdminUsers.AnyAsync(u => u.SessionTokenHash == tokenHash, ctx.RequestAborted))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        await ctx.Response.WriteAsJsonAsync(new { error = "Admin session required" });
+        return;
+    }
+
     await next();
 });
 
@@ -475,7 +532,7 @@ app.MapGet("/api/auth/me", async (HttpRequest request, IDbContextFactory<LocalFo
         : Results.Ok(new { admin.Id, admin.FullName, admin.Email });
 });
 
-app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, IDbContextFactory<LocalForgeDbContext> dbFactory, CancellationToken ct) =>
+app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, IDbContextFactory<LocalForgeDbContext> dbFactory, AdminSessionCache adminCache, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.FullName) || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
         return Results.BadRequest(new { error = "fullName, email and password are required" });
@@ -497,6 +554,7 @@ app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, IDb
     };
     db.AdminUsers.Add(admin);
     await db.SaveChangesAsync(ct);
+    adminCache.Set(true);
     return Results.Ok(new { token, admin = new { admin.Id, admin.FullName, admin.Email } });
 });
 
@@ -570,6 +628,15 @@ app.MapPost("/api/auth/reset-password", async ([FromBody] ResetPasswordRequest r
     if (DateTime.Parse(row.ExpiresAt, null, System.Globalization.DateTimeStyles.RoundtripKind) < DateTime.UtcNow)
         return Results.BadRequest(new { error = "This reset link has expired." });
 
+    // Atomically claim the token before touching the password — prevents double-use in concurrent requests.
+    var usedAt = DateTime.UtcNow.ToString("O");
+    var rowId = row.Id;
+    var claimed = await db.Database.ExecuteSqlAsync($"""
+        UPDATE "PasswordResetTokens" SET UsedAt = {usedAt} WHERE Id = {rowId} AND UsedAt IS NULL
+        """, ct);
+    if (claimed == 0)
+        return Results.BadRequest(new { error = "This reset link has already been used." });
+
     var adminId = Guid.Parse(row.AdminUserId);
     var admin = await db.AdminUsers.FirstOrDefaultAsync(u => u.Id == adminId, ct);
     if (admin is null)
@@ -577,11 +644,6 @@ app.MapPost("/api/auth/reset-password", async ([FromBody] ResetPasswordRequest r
 
     admin.PasswordHash = HashPassword(request.NewPassword);
     admin.SessionTokenHash = null; // invalidate any active sessions
-    var usedAt = DateTime.UtcNow.ToString("O");
-    var rowId = row.Id;
-    await db.Database.ExecuteSqlAsync($"""
-        UPDATE "PasswordResetTokens" SET UsedAt = {usedAt} WHERE Id = {rowId}
-        """, ct);
     await db.SaveChangesAsync(ct);
 
     return Results.Ok(new { message = "Password updated successfully. You can now log in." });
@@ -688,6 +750,109 @@ app.MapGet("/api/agent/runs/{runId:guid}", async (Guid runId, IAgentRunRepositor
 });
 
 // ---------------------------------------------------------------------------
+// Job Search Agent
+// ---------------------------------------------------------------------------
+
+// Settings helpers — key: "job_search_criteria"
+static async Task<JobSearchCriteria> LoadJobCriteriaAsync(IDbContextFactory<LocalForgeDbContext> dbFactory, CancellationToken ct)
+{
+    await using var db = await dbFactory.CreateDbContextAsync(ct);
+    var rows = await db.Database.SqlQuery<AppSettingRow>(
+        $"""SELECT "Key", "Value" FROM "AppSettings" WHERE "Key" = 'job_search_criteria'""").ToListAsync(ct);
+    if (rows.FirstOrDefault() is { Value: var json })
+    {
+        try { return JsonSerializer.Deserialize<JobSearchCriteria>(json, SseJson.Options) ?? new(); }
+        catch { /* corrupt — return default */ }
+    }
+    return new();
+}
+
+static async Task SaveJobCriteriaAsync(IDbContextFactory<LocalForgeDbContext> dbFactory, JobSearchCriteria criteria, CancellationToken ct)
+{
+    await using var db = await dbFactory.CreateDbContextAsync(ct);
+    var json = JsonSerializer.Serialize(criteria, SseJson.Options);
+    var updatedAt = DateTime.UtcNow.ToString("O");
+    await db.Database.ExecuteSqlAsync(
+        $"""INSERT OR REPLACE INTO "AppSettings" ("Key","Value","UpdatedAt") VALUES ('job_search_criteria',{json},{updatedAt})""", ct);
+}
+
+app.MapGet("/api/jobs/results", (JobRunCache cache) =>
+    cache.LatestRun is not null ? Results.Ok(cache.LatestRun) : Results.NoContent());
+
+app.MapGet("/api/jobs/search",
+    async (JobSearchOrchestrator orchestrator, IDbContextFactory<LocalForgeDbContext> dbFactory, CancellationToken ct) =>
+{
+    var criteria = await LoadJobCriteriaAsync(dbFactory, ct);
+    var result = await orchestrator.RunSearchAsync(criteria, ct);
+    return Results.Ok(result);
+});
+
+app.MapGet("/api/jobs/sources/health", (JobSearchOrchestrator orchestrator) =>
+    Results.Ok(orchestrator.GetSourceHealth()));
+
+app.MapGet("/api/jobs/settings",
+    async (IDbContextFactory<LocalForgeDbContext> dbFactory, CancellationToken ct) =>
+    Results.Ok(await LoadJobCriteriaAsync(dbFactory, ct)));
+
+app.MapPost("/api/jobs/settings",
+    async ([FromBody] JobSearchCriteria criteria, IDbContextFactory<LocalForgeDbContext> dbFactory, CancellationToken ct) =>
+{
+    await SaveJobCriteriaAsync(dbFactory, criteria, ct);
+    return Results.Ok(new { saved = true });
+});
+
+app.MapPost("/api/jobs/ingest_indeed",
+    async ([FromBody] IngestIndeedRequest request, IndeedDirectBuffer buffer,
+           JobSearchOrchestrator orchestrator, IDbContextFactory<LocalForgeDbContext> dbFactory, CancellationToken ct) =>
+{
+    buffer.Ingest(request.Jobs ?? new(), request.ClearFirst);
+
+    // Auto-run search after ingestion so results are immediately available
+    var criteria = await LoadJobCriteriaAsync(dbFactory, ct);
+    var result = await orchestrator.RunSearchAsync(criteria, ct);
+    return Results.Ok(new { ingested = request.Jobs?.Count ?? 0, buffered = buffer.Count, runId = result.RunId, matched = result.Matches.Count });
+});
+
+// CV management
+app.MapGet("/api/cvs", (JobSearchOrchestrator orchestrator) =>
+    Results.Ok(CvLoader.ListFiles(orchestrator.CvFolder)));
+
+app.MapPost("/api/cvs/upload", async (HttpRequest request, JobSearchOrchestrator orchestrator) =>
+{
+    var form = await request.ReadFormAsync();
+    var file = form.Files.GetFile("file");
+    if (file is null)
+        return Results.BadRequest(new { error = "file is required" });
+    if (file.Length > 10 * 1024 * 1024)
+        return Results.BadRequest(new { error = "File exceeds 10 MB limit" });
+
+    var allowed = new[] { ".pdf", ".docx", ".txt", ".md" };
+    var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+    if (!allowed.Contains(ext))
+        return Results.BadRequest(new { error = "Only .pdf, .docx, .txt and .md files are accepted" });
+
+    var cvFolder = orchestrator.CvFolder;
+    Directory.CreateDirectory(cvFolder);
+    var safeName = $"{Guid.NewGuid():N}_{Path.GetFileName(file.FileName)}";
+    var dest = Path.Combine(cvFolder, safeName);
+    await using var stream = File.Create(dest);
+    await file.CopyToAsync(stream);
+    return Results.Ok(new { name = safeName });
+});
+
+app.MapDelete("/api/cvs/{filename}", (string filename, JobSearchOrchestrator orchestrator) =>
+{
+    // Prevent path traversal
+    if (filename.Contains('/') || filename.Contains('\\') || filename.Contains(".."))
+        return Results.BadRequest(new { error = "Invalid filename" });
+
+    var path = Path.Combine(orchestrator.CvFolder, filename);
+    if (!File.Exists(path)) return Results.NotFound();
+    File.Delete(path);
+    return Results.NoContent();
+});
+
+// ---------------------------------------------------------------------------
 // Connector registry
 // ---------------------------------------------------------------------------
 app.MapGet("/api/connectors", async (IDbContextFactory<LocalForgeDbContext> dbFactory, CancellationToken ct) =>
@@ -706,6 +871,8 @@ app.MapPost("/api/connectors", async ([FromBody] ConnectorRequest request, IDbCo
 {
     if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.CommandOrUrl))
         return Results.BadRequest(new { error = "name and commandOrUrl are required" });
+    if (System.Text.RegularExpressions.Regex.IsMatch(request.CommandOrUrl, @"[;&|`$(){}<>\n]"))
+        return Results.BadRequest(new { error = "commandOrUrl must not contain shell metacharacters" });
 
     await using var db = await dbFactory.CreateDbContextAsync(ct);
     if (await db.Connectors.AnyAsync(c => c.Name == request.Name, ct))
@@ -775,6 +942,27 @@ using (var scope = app.Services.CreateScope())
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PRT_TokenHash" ON "PasswordResetTokens" ("TokenHash");""");
+
+    // Job search tables
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "AppSettings" (
+            "Key" TEXT NOT NULL PRIMARY KEY,
+            "Value" TEXT NOT NULL,
+            "UpdatedAt" TEXT NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "JobSearchRuns" (
+            "Id" TEXT NOT NULL PRIMARY KEY,
+            "StartedAt" TEXT NOT NULL,
+            "FinishedAt" TEXT,
+            "Status" TEXT NOT NULL,
+            "TotalFetched" INTEGER NOT NULL DEFAULT 0,
+            "TotalMatched" INTEGER NOT NULL DEFAULT 0,
+            "CriteriaJson" TEXT NOT NULL
+        );
+        """);
+
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "Connectors" (
             "Id" TEXT NOT NULL CONSTRAINT "PK_Connectors" PRIMARY KEY,
@@ -827,6 +1015,15 @@ public record LoginRequest(string Email, string Password);
 public record ForgotPasswordRequest(string Email);
 public record ResetPasswordRequest(string Token, string NewPassword);
 
+// Caches whether any admin accounts exist so the session-gate middleware avoids a DB hit per request.
+internal sealed class AdminSessionCache
+{
+    private volatile int _state = -1; // -1=unknown, 0=no admins, 1=has admins
+
+    public bool? Exists => _state switch { 0 => false, 1 => true, _ => null };
+    public void Set(bool exists) => _state = exists ? 1 : 0;
+}
+
 // Used only for raw SQL projection in the reset-password endpoint.
 internal class PasswordResetRow
 {
@@ -835,4 +1032,11 @@ internal class PasswordResetRow
     public string TokenHash { get; set; } = "";
     public string ExpiresAt { get; set; } = "";
     public string? UsedAt { get; set; }
+}
+
+// Used for raw SQL projection of app settings.
+internal class AppSettingRow
+{
+    public string Key { get; set; } = "";
+    public string Value { get; set; } = "";
 }

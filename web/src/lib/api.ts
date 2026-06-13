@@ -182,6 +182,46 @@ export const api = {
       body: JSON.stringify({ token, newPassword }),
     }),
 
+  // ── Job Search Agent ──────────────────────────────────────────────────────
+  getJobResults: () =>
+    request<import('./types').JobSearchRunResult | null>('/api/jobs/results').catch(() => null),
+  searchJobs: () =>
+    request<import('./types').JobSearchRunResult>('/api/jobs/search'),
+  getJobSources: () =>
+    request<import('./types').SourceHealthInfo[]>('/api/jobs/sources/health'),
+  getJobSettings: () =>
+    request<import('./types').JobSearchCriteria>('/api/jobs/settings'),
+  saveJobSettings: (criteria: import('./types').JobSearchCriteria) =>
+    request<{ saved: boolean }>('/api/jobs/settings', {
+      method: 'POST',
+      body: JSON.stringify(criteria),
+    }),
+  ingestIndeedJobs: (jobs: import('./types').IndeedJobInput[], clearFirst = true) =>
+    request<{ ingested: number; buffered: number; runId: string; matched: number }>(
+      '/api/jobs/ingest_indeed',
+      { method: 'POST', body: JSON.stringify({ clearFirst, jobs }) },
+    ),
+  listCvFiles: () =>
+    request<string[]>('/api/cvs'),
+  uploadCv: async (file: File): Promise<{ name: string }> => {
+    const form = new FormData();
+    form.append('file', file);
+    const token = localStorage.getItem('localforge.adminToken');
+    const res = await fetch(`${BASE}/api/cvs/upload`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { const b = await res.json(); detail = b.error ?? detail; } catch { /* ignore */ }
+      throw new Error(detail);
+    }
+    return res.json() as Promise<{ name: string }>;
+  },
+  deleteCv: (filename: string) =>
+    request<void>(`/api/cvs/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
+
   transcribeAudio: async (blob: Blob): Promise<string> => {
     const form = new FormData();
     form.append('file', blob, 'audio.webm');

@@ -10,6 +10,7 @@ import { OllamaView } from './components/OllamaView';
 import { LibraryView } from './components/LibraryView';
 import { MailpitView } from './components/MailpitView';
 import { ConnectorsView } from './components/ConnectorsView';
+import { JobSearchView } from './components/JobSearchView';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AuthGate } from './components/AuthGate';
 import { InstallPrompt } from './components/InstallPrompt';
@@ -96,6 +97,7 @@ export default function App() {
                 {appView === 'library' && <LibraryView />}
                 {appView === 'mailpit' && <MailpitView />}
                 {appView === 'connectors' && <ConnectorsView />}
+                {appView === 'jobs' && <JobSearchView />}
                 {appView === 'chat' && mode === 'Chat' && <ChatView />}
                 {appView === 'chat' && mode === 'Plan' && <PlanView />}
                 {appView === 'chat' && mode === 'Agent' && <AgentView />}

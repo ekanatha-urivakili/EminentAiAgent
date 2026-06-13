@@ -287,6 +287,7 @@ export function MailpitView() {
     }
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
   const openMessage = async (id: string) => {

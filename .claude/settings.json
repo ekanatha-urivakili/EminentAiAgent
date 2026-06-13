@@ -33,7 +33,10 @@
       "Bash(echo \"Pull started in background \\(PID $!\\)\")",
       "Bash(kill %1)",
       "Bash(echo \"Pulling qwen3:latest \\(PID $!\\)\")",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(sed -n '540,552p' /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/web/src/components/ConnectorsView.tsx)",
+      "Bash(sed -n '265,278p' /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/web/src/components/OllamaView.tsx)",
+      "Bash(sed -n '278,292p' /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/web/src/state/store.ts)"
     ],
     "additionalDirectories": [
       "/Users/ekanathareddyurivakili/Library/LaunchAgents"

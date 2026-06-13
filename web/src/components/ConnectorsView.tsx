@@ -543,7 +543,7 @@ export function ConnectorsView() {
   const setMcpBusy = (id: string, busy: boolean) =>
     setBusyIds((prev) => {
       const next = new Set(prev);
-      busy ? next.add(id) : next.delete(id);
+      if (busy) next.add(id); else next.delete(id);
       return next;
     });
 

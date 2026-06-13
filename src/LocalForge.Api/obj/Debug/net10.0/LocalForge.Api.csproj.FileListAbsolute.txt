@@ -154,3 +154,4 @@
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Api/obj/Debug/net10.0/ref/LocalForge.Api.dll
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Api/bin/Debug/net10.0/Microsoft.Extensions.AI.dll
 /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Api/bin/Debug/net10.0/System.Numerics.Tensors.dll
+/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/src/LocalForge.Api/obj/Debug/net10.0/LocalForge.Api.sourcelink.json

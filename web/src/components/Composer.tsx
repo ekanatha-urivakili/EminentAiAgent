@@ -257,7 +257,7 @@ export function Composer() {
         setShowWhisperGuide(false);
         // Auto-focus textarea after transcription
         setTimeout(() => textareaRef.current?.focus(), 50);
-      } catch (err) {
+      } catch {
         setVoiceStatus('error');
       }
     };

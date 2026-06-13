@@ -1,5 +1,5 @@
 export type Mode = 'Chat' | 'Plan' | 'Agent';
-export type AppView = 'chat' | 'ollama' | 'library' | 'mailpit' | 'connectors';
+export type AppView = 'chat' | 'ollama' | 'library' | 'mailpit' | 'connectors' | 'jobs';
 export type Theme = 'light' | 'dark' | 'system';
 
 export interface ModelInfo {
@@ -129,6 +129,90 @@ export interface OllamaRegistryModel {
   pulls?: number;
   tags?: Array<{ name: string; size?: number }>;
   updated_at?: string;
+}
+
+// ── Job Search Agent ─────────────────────────────────────────────────────────
+
+export interface JobSearchCriteria {
+  keywords: string[];
+  postcode: string;
+  radiusMiles: number;
+  postedWithinDays: number;
+  employmentTypes: string[];
+  minimumPermanentSalaryGbp: number;
+  minimumContractDayRateGbp: number;
+  minimumContractMonths: number;
+}
+
+export interface NormalizedJob {
+  id: string;
+  source: string;
+  sourceJobId: string;
+  title: string;
+  company: string;
+  location: string;
+  url?: string;
+  employmentType?: string;
+  workMode?: string;
+  salaryMin?: number;
+  salaryMax?: number;
+  dayRateMin?: number;
+  dayRateMax?: number;
+  contractMonths?: number;
+  postedDate?: string;
+  description?: string;
+}
+
+export interface JobMatchResult {
+  posting: NormalizedJob;
+  score: number;
+  recommended: boolean;
+  reasons: string[];
+  risks: string[];
+}
+
+export interface SourceStatus {
+  source: string;
+  status: string;
+  jobsFetched: number;
+  mode: string;
+  error?: string;
+}
+
+export interface SourceHealthInfo {
+  source: string;
+  mode: string;
+  ready: boolean;
+  requiredSecret?: string;
+  lastError?: string;
+  bufferedJobs: number;
+}
+
+export interface JobSearchRunResult {
+  runId: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: string;
+  sourceStatuses: SourceStatus[];
+  matches: JobMatchResult[];
+  rejectedSummary: Record<string, number>;
+  reportMarkdown?: string;
+}
+
+export interface IndeedJobInput {
+  jobId: string;
+  title: string;
+  company: string;
+  location: string;
+  url?: string;
+  employmentType?: string;
+  workMode?: string;
+  salaryMin?: number;
+  salaryMax?: number;
+  dayRateMin?: number;
+  dayRateMax?: number;
+  contractMonths?: number;
+  description?: string;
 }
 
 // ── Agent run history ────────────────────────────────────────────────────────

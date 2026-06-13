@@ -132,7 +132,7 @@ public sealed class IndeedDirectBuffer
         }
     }
 
-    public IReadOnlyCollection<NormalizedJob> GetAll() => _jobs.Values;
+    public IReadOnlyCollection<NormalizedJob> GetAll() => (IReadOnlyCollection<NormalizedJob>)_jobs.Values;
     public int Count => _jobs.Count;
 }
 
@@ -145,7 +145,7 @@ public sealed class JobRunCache
 
 // ── Reed API response shapes ──────────────────────────────────────────────────
 
-file sealed class ReedSearchResponse
+internal sealed class ReedSearchResponse
 {
     [JsonPropertyName("results")]
     public List<ReedJobResult> Results { get; set; } = new();
@@ -153,7 +153,7 @@ file sealed class ReedSearchResponse
     public int TotalResults { get; set; }
 }
 
-file sealed class ReedJobResult
+internal sealed class ReedJobResult
 {
     [JsonPropertyName("jobId")]
     public long JobId { get; set; }

@@ -36,59 +36,105 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerCommands = registerCommands;
 const vscode = __importStar(require("vscode"));
 const chatView_1 = require("./chatView");
-function fullRange(content) {
-    const lines = content.split('\\n');
-    return new vscode.Range(new vscode.Position(0, 0), new vscode.Position(lines.length, 0));
-}
 function registerCommands(ctx, api) {
-    const onSelection = (id, instruction) => vscode.commands.registerCommand(`localforge.\${id}`, async () => {
+    const onSelection = (id, instruction) => vscode.commands.registerCommand(`localforge.${id}`, async () => {
         const ed = vscode.window.activeTextEditor;
-        if (!ed)
+        if (!ed) {
             return;
+        }
         const sel = ed.document.getText(ed.selection);
+        if (!sel) {
+            vscode.window.showInformationMessage("Select some code first.");
+            return;
+        }
         const lang = ed.document.languageId;
-        // route to chat sidebar with a prepared prompt
         await vscode.commands.executeCommand("localforge.chat.focus");
         chatView_1.ChatViewProvider.current?.post({
             type: "prefill",
-            prompt: `\${instruction}\\n\\n\`\`\`\${lang}\\n\${sel}\\n\`\`\``
+            prompt: `${instruction}\n\n\`\`\`${lang}\n${sel}\n\`\`\``
         });
     });
     ctx.subscriptions.push(onSelection("explain", "Explain this code precisely. Call out bugs or smells:"), onSelection("fix", "Fix the problems in this code. Return only the corrected code:"), onSelection("refactor", "Refactor for readability and testability. Explain each change:"), onSelection("tests", "Write thorough unit tests:"), vscode.commands.registerCommand("localforge.agentEdit", async () => {
         const goal = await vscode.window.showInputBox({
             prompt: "What should the agent change in this workspace?"
         });
-        if (!goal)
+        if (!goal) {
             return;
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        const run = await api.startAgentRun({ goal, connectors: ["filesystem"], cwd: root });
-        for await (const ev of api.streamRun(run.id)) {
-            if (ev.type === "file_edit_proposed") {
-                const orig = vscode.Uri.file(ev.path);
-                const proposed = orig.with({ scheme: "localforge-proposed" });
-                await vscode.commands.executeCommand("vscode.diff", orig, proposed, `LocalForge: \${ev.path}`);
-                const pick = await vscode.window.showInformationMessage(`Apply changes to \${vscode.workspace.asRelativePath(ev.path)}?`, "Apply", "Skip", "Abort run");
-                if (pick === "Apply") {
-                    const we = new vscode.WorkspaceEdit();
-                    we.replace(orig, fullRange(ev.original), ev.proposed);
-                    await vscode.workspace.applyEdit(we);
-                    await api.approve(run.id, ev.stepId, true);
-                }
-                else if (pick === "Abort run") {
-                    await api.cancel(run.id);
-                    break;
-                }
-                else {
-                    await api.approve(run.id, ev.stepId, false);
-                }
-            }
-            if (ev.type === "approval_required") {
-                const result = await vscode.window.showWarningMessage(`Agent wants: \${ev.tool} \${JSON.stringify(ev.args)}`, "Approve", "Reject");
-                await api.approve(run.id, ev.stepId, result === "Approve");
-            }
         }
+        const cfg = vscode.workspace.getConfiguration("localforge");
+        const model = cfg.get("chatModel");
+        const ac = new AbortController();
+        let runId;
+        await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "LocalForge Agent", cancellable: true }, async (progress, token) => {
+            token.onCancellationRequested(async () => {
+                if (runId) {
+                    await api.cancel(runId);
+                }
+                ac.abort();
+            });
+            try {
+                for await (const ev of api.runAgent(goal, model, ["filesystem", "shell"], ac.signal)) {
+                    await handleAgentEvent(ev, api, progress, () => runId, id => { runId = id; });
+                    if (ev.type === "done" || ev.type === "halted" || ev.type === "error") {
+                        break;
+                    }
+                }
+            }
+            catch (e) {
+                if (e.name !== "AbortError") {
+                    vscode.window.showErrorMessage(`Agent run failed: ${String(e)}`);
+                }
+            }
+        });
     }), vscode.commands.registerCommand("localforge.pickModel", async () => {
-        vscode.window.showInformationMessage("Model picker not fully implemented yet.");
+        const models = await api.listModels();
+        if (models.length === 0) {
+            vscode.window.showWarningMessage("No models found — is the LocalForge backend (and Ollama) running?");
+            return;
+        }
+        const cfg = vscode.workspace.getConfiguration("localforge");
+        const pick = await vscode.window.showQuickPick(models, {
+            placeHolder: `Current: ${cfg.get("chatModel")}`
+        });
+        if (pick) {
+            await cfg.update("chatModel", pick, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage(`LocalForge chat model set to ${pick}`);
+        }
     }));
+}
+async function handleAgentEvent(ev, api, progress, getRunId, setRunId) {
+    switch (ev.type) {
+        case "run_started":
+            if (ev.runId) {
+                setRunId(ev.runId);
+            }
+            progress.report({ message: "running…" });
+            break;
+        case "thought":
+            progress.report({ message: (ev.text ?? "").slice(0, 80) });
+            break;
+        case "tool_call":
+            progress.report({ message: `→ ${ev.tool}` });
+            break;
+        case "approval_required": {
+            const runId = getRunId();
+            if (!runId || !ev.stepId) {
+                break;
+            }
+            const argsPreview = JSON.stringify(ev.args ?? {}, null, 2);
+            const pick = await vscode.window.showWarningMessage(`Agent wants to run: ${ev.tool}\n${argsPreview.slice(0, 500)}`, { modal: true }, "Approve", "Reject");
+            await api.approve(runId, ev.stepId, pick === "Approve");
+            break;
+        }
+        case "done":
+            vscode.window.showInformationMessage(`Agent finished: ${(ev.answer ?? "").slice(0, 200)}`);
+            break;
+        case "halted":
+            vscode.window.showWarningMessage(`Agent halted: ${ev.reason ?? "unknown reason"}`);
+            break;
+        case "error":
+            vscode.window.showErrorMessage(`Agent error: ${ev.message ?? "unknown"}`);
+            break;
+    }
 }
 //# sourceMappingURL=commands.js.map

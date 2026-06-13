@@ -178,7 +178,7 @@ export function LibraryView() {
   );
 }
 
-function LibraryRow({ id: _id, title, createdAt, model, active, onSelect, onDelete, onArchive }: {
+function LibraryRow({ title, createdAt, model, active, onSelect, onDelete, onArchive }: {
   id: string; title: string; createdAt: string; model: string; active: boolean;
   onSelect: () => void; onDelete: () => void; onArchive: () => void;
 }) {

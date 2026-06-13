@@ -40,51 +40,36 @@ const chatView_1 = require("./chatView");
 const fim_1 = require("./fim");
 const commands_1 = require("./commands");
 const apiClient_1 = require("./apiClient");
-class ErrorHeuristics {
-    static detect(text) {
-        const lower = text.toLowerCase();
-        return lower.includes("error") || lower.includes("exception") || lower.includes("failed");
-    }
-}
-async function showFixSuggestion(ctx, data) {
-    const answer = await vscode.window.showInformationMessage("Terminal error detected. 💡 Fix with LocalForge?", "Fix");
-    if (answer === "Fix") {
-        vscode.commands.executeCommand("localforge.chat.focus");
-        chatView_1.ChatViewProvider.current?.post({
-            type: "prefill",
-            prompt: `I got this error in the terminal, please help me fix it:\n\n\`\`\`\n${data}\n\`\`\``
-        });
-    }
-}
-async function updateStatusBar(ctx, ok) {
-    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    const cfg = vscode.workspace.getConfiguration("localforge");
-    const model = cfg.get("chatModel");
-    statusBarItem.text = ok ? `⚡ ${model}` : `⚠ Ollama offline`;
-    statusBarItem.command = "localforge.pickModel";
-    statusBarItem.show();
-    ctx.subscriptions.push(statusBarItem);
-}
 function activate(ctx) {
     const cfg = () => vscode.workspace.getConfiguration("localforge");
     const api = new apiClient_1.ApiClient(() => cfg().get("backendUrl"), () => cfg().get("ollamaUrl"));
     // 1) Chat sidebar
     ctx.subscriptions.push(vscode.window.registerWebviewViewProvider("localforge.chat", new chatView_1.ChatViewProvider(ctx, api), { webviewOptions: { retainContextWhenHidden: true } }));
-    // 2) Inline completions (all languages; gate via setting)
+    // 2) Inline completions (all languages; gated by the localforge.inlineCompletions setting)
     ctx.subscriptions.push(vscode.languages.registerInlineCompletionItemProvider({ pattern: "**" }, new fim_1.FimProvider(api, cfg)));
     // 3) Commands + code actions
     (0, commands_1.registerCommands)(ctx, api);
-    // 4) Terminal Observer (Active Troubleshooting) - requires proposed API, disabled for now
-    /*
-    ctx.subscriptions.push(vscode.window.onDidWriteTerminalData(e => {
-      if (ErrorHeuristics.detect(e.data)) {
-          // debounce or filter in a real implementation
-          // showFixSuggestion(ctx, e.data);
-      }
+    // 4) Status bar: backend health + current model, click to switch
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.command = "localforge.pickModel";
+    statusBarItem.show();
+    ctx.subscriptions.push(statusBarItem);
+    const refreshStatus = async () => {
+        const ok = await api.health();
+        const model = cfg().get("chatModel");
+        statusBarItem.text = ok ? `$(zap) ${model}` : "$(warning) LocalForge offline";
+        statusBarItem.tooltip = ok
+            ? "LocalForge backend connected — click to switch model"
+            : "LocalForge backend unreachable — start it with ./start.sh";
+    };
+    void refreshStatus();
+    const timer = setInterval(() => void refreshStatus(), 30_000);
+    ctx.subscriptions.push({ dispose: () => clearInterval(timer) });
+    ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration("localforge")) {
+            void refreshStatus();
+        }
     }));
-    */
-    // 5) Health check → status bar item
-    api.health().then(ok => updateStatusBar(ctx, ok));
 }
 function deactivate() { }
 //# sourceMappingURL=extension.js.map

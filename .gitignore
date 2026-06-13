@@ -1,0 +1,29 @@
+# .NET build output
+bin/
+obj/
+*.user
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Node / frontend
+node_modules/
+dist/
+out/
+.vite/
+
+# Environment and secrets
+.env
+.env.*
+
+# CV uploads (user data — not committed)
+CVs/
+
+# macOS
+.DS_Store
+
+# JetBrains / VS Code local settings
+.idea/
+.vscode/

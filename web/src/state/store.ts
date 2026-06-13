@@ -4,6 +4,7 @@ import type {
   AgentRunState, ChatMsg, ConnectorInfo, CreateConnectorRequest,
   ConversationDetail, ConversationSummary, Mode, ModelInfo, Plan, Theme, AppView,
   AdminProfile, ChatAttachment,
+  JobSearchCriteria, JobSearchRunResult, SourceHealthInfo, IndeedJobInput,
 } from '../lib/types';
 
 interface AppState {
@@ -92,6 +93,23 @@ interface AppState {
   // ── voice mode ───────────────────────────────────────────────────────────
   voiceModeEnabled: boolean;
   toggleVoiceMode: () => void;
+
+  // ── job search agent ──────────────────────────────────────────────────────
+  jobResults?: JobSearchRunResult;
+  jobLoading: boolean;
+  jobError?: string;
+  jobSettings: JobSearchCriteria;
+  jobSources: SourceHealthInfo[];
+  cvFiles: string[];
+  loadJobResults: () => Promise<void>;
+  runJobSearch: () => Promise<void>;
+  loadJobSettings: () => Promise<void>;
+  saveJobSettings: (settings: JobSearchCriteria) => Promise<void>;
+  ingestIndeedJobs: (jobs: IndeedJobInput[], clearFirst?: boolean) => Promise<void>;
+  loadJobSources: () => Promise<void>;
+  loadCvFiles: () => Promise<void>;
+  uploadCv: (file: File) => Promise<void>;
+  deleteCv: (filename: string) => Promise<void>;
 }
 
 const initialAgent: AgentRunState = {
@@ -261,7 +279,8 @@ export const useStore = create<AppState>((set, get) => ({
 
   sendMessageWithAttachments: async (content, attachments) => {
     const { selectedModel } = get();
-    let { activeBranchId, activeConversationId } = get();
+    let { activeBranchId } = get();
+    let activeConversationId: string | undefined;
 
     if (!activeBranchId) {
       const created = await api.createConversation(selectedModel);
@@ -615,4 +634,87 @@ export const useStore = create<AppState>((set, get) => ({
 
   voiceModeEnabled: false,
   toggleVoiceMode: () => set((s) => ({ voiceModeEnabled: !s.voiceModeEnabled })),
+
+  // ── job search agent ───────────────────────────────────────────────────────
+  jobResults: undefined,
+  jobLoading: false,
+  jobError: undefined,
+  jobSettings: {
+    keywords: [],
+    postcode: '',
+    radiusMiles: 30,
+    postedWithinDays: 7,
+    employmentTypes: ['Permanent', 'Contract'],
+    minimumPermanentSalaryGbp: 0,
+    minimumContractDayRateGbp: 0,
+    minimumContractMonths: 0,
+  },
+  jobSources: [],
+  cvFiles: [],
+
+  loadJobResults: async () => {
+    try {
+      const results = await api.getJobResults();
+      if (results) set({ jobResults: results });
+    } catch { /* offline */ }
+  },
+
+  runJobSearch: async () => {
+    set({ jobLoading: true, jobError: undefined });
+    try {
+      const results = await api.searchJobs();
+      set({ jobResults: results, jobLoading: false });
+    } catch (err) {
+      set({ jobLoading: false, jobError: (err as Error).message });
+    }
+  },
+
+  loadJobSettings: async () => {
+    try {
+      const settings = await api.getJobSettings();
+      set({ jobSettings: settings });
+    } catch { /* use defaults */ }
+  },
+
+  saveJobSettings: async (settings) => {
+    await api.saveJobSettings(settings);
+    set({ jobSettings: settings });
+  },
+
+  ingestIndeedJobs: async (jobs, clearFirst = true) => {
+    set({ jobLoading: true, jobError: undefined });
+    try {
+      await api.ingestIndeedJobs(jobs, clearFirst);
+      const results = await api.getJobResults();
+      if (results) set({ jobResults: results, jobLoading: false });
+      else set({ jobLoading: false });
+    } catch (err) {
+      set({ jobLoading: false, jobError: (err as Error).message });
+    }
+  },
+
+  loadJobSources: async () => {
+    try {
+      const sources = await api.getJobSources();
+      set({ jobSources: sources });
+    } catch { /* offline */ }
+  },
+
+  loadCvFiles: async () => {
+    try {
+      const files = await api.listCvFiles();
+      set({ cvFiles: files });
+    } catch { /* offline */ }
+  },
+
+  uploadCv: async (file) => {
+    await api.uploadCv(file);
+    const files = await api.listCvFiles();
+    set({ cvFiles: files });
+  },
+
+  deleteCv: async (filename) => {
+    await api.deleteCv(filename);
+    set((s) => ({ cvFiles: s.cvFiles.filter((f) => f !== filename) }));
+  },
 }));

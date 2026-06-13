@@ -17,7 +17,7 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
-          code({ node, inline, className, children, ...props }: any) {
+          code({ inline, className, children, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) {
             const match = /language-(\w+)/.exec(className || '');
             const language = match ? match[1] : '';
             

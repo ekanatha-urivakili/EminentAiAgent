@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useStore } from '../state/store';
 import { BrandLogo } from './BrandLogo';
@@ -27,11 +27,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [infoMsg, setInfoMsg] = useState('');
   const [localError, setLocalError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  // If someone opens the app with ?token= in the URL, switch to reset mode.
-  useEffect(() => {
-    if (getResetToken()) setMode('reset');
-  }, []);
 
   if (admin) return <>{children}</>;
 

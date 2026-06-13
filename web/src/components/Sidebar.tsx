@@ -1,4 +1,4 @@
-import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, Archive, ArchiveRestore, Mail } from 'lucide-react';
+import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, Archive, ArchiveRestore, Mail, Briefcase } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -94,6 +94,12 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
                 <Plug size={21} /> MCP Connectors
                 {connectors.length > 0 && <span className="ml-auto text-xs font-mono text-muted-foreground">{connectors.length}</span>}
               </button>
+              <button
+                onClick={() => navigate('jobs')}
+                className={cn('flex items-center gap-3 w-full p-3 rounded-xl text-base hover:bg-muted transition-colors', appView === 'jobs' && 'bg-muted')}
+              >
+                <Briefcase size={21} /> Job Search Agent
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-5 space-y-1">
@@ -124,7 +130,8 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
             <button onClick={() => navigate('library')} title="Library" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'library' && 'bg-muted')}><Library size={24} /></button>
             <button onClick={() => navigate('ollama')} title="Ollama" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'ollama' && 'bg-muted')}><Cpu size={24} /></button>
             <button onClick={() => navigate('mailpit')} title="Mailpit" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'mailpit' && 'bg-muted')}><Mail size={24} /></button>
-            <button onClick={() => navigate('connectors')} title="MCP Connectors" className={cn('p-2 hover:bg-muted rounded-lg transition-colors mt-auto mb-5', appView === 'connectors' && 'bg-muted')}><Plug size={22} /></button>
+            <button onClick={() => navigate('connectors')} title="MCP Connectors" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'connectors' && 'bg-muted')}><Plug size={22} /></button>
+            <button onClick={() => navigate('jobs')} title="Job Search Agent" className={cn('p-2 hover:bg-muted rounded-lg transition-colors mt-auto mb-5', appView === 'jobs' && 'bg-muted')}><Briefcase size={22} /></button>
           </div>
         )}
       </div>
@@ -141,7 +148,7 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
   );
 }
 
-function ChatRow({ id, title, active, onSelect, onDelete, onArchive }: {
+function ChatRow({ title, active, onSelect, onDelete, onArchive }: {
   id: string; title: string; active: boolean;
   onSelect: () => void; onDelete: () => void; onArchive: () => void;
 }) {
@@ -184,7 +191,7 @@ function ChatRow({ id, title, active, onSelect, onDelete, onArchive }: {
 }
 
 // Re-exported for LibraryView to display archived rows with unarchive action
-export function ArchivedChatRow({ id, title, active, onSelect, onDelete, onUnarchive }: {
+export function ArchivedChatRow({ title, active, onSelect, onDelete, onUnarchive }: {
   id: string; title: string; active: boolean;
   onSelect: () => void; onDelete: () => void; onUnarchive: () => void;
 }) {
