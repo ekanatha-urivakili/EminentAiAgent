@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../state/store';
 import { cn } from '../lib/utils';
-import type { JobSearchCriteria, JobMatchResult, SourceHealthInfo } from '../lib/types';
+import type { IndeedJobInput, JobSearchCriteria, JobMatchResult, SourceHealthInfo } from '../lib/types';
 
 type Tab = 'results' | 'settings' | 'cvs' | 'sources';
 
@@ -26,6 +26,7 @@ export function JobSearchView() {
   const loadCvFiles = useStore((s) => s.loadCvFiles);
   const uploadCv = useStore((s) => s.uploadCv);
   const deleteCv = useStore((s) => s.deleteCv);
+  const ingestIndeedJobs = useStore((s) => s.ingestIndeedJobs);
 
   useEffect(() => {
     void loadJobResults();
@@ -102,7 +103,7 @@ export function JobSearchView() {
           <CvsTab files={cvFiles} onUpload={uploadCv} onDelete={deleteCv} onReload={loadCvFiles} />
         )}
         {tab === 'sources' && (
-          <SourcesTab sources={jobSources} onRefresh={loadJobSources} />
+          <SourcesTab sources={jobSources} onRefresh={loadJobSources} onIngestIndeed={ingestIndeedJobs} />
         )}
       </div>
     </div>
@@ -391,6 +392,7 @@ function SettingsTab({
 }) {
   const [form, setForm] = useState<JobSearchCriteria>(settings);
   const [newKeyword, setNewKeyword] = useState('');
+  const configuredSecrets = new Set(form.configuredSecretKeys);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -420,6 +422,20 @@ function SettingsTab({
         : [...f.employmentTypes, t],
     }));
 
+  const toggleWorkMode = (mode: string) =>
+    setForm((f) => ({
+      ...f,
+      workModes: f.workModes.includes(mode)
+        ? f.workModes.filter((m) => m !== mode)
+        : [...f.workModes, mode],
+    }));
+
+  const updateCsv = (key: 'desiredDesignations' | 'skills' | 'excludedKeywords', value: string) =>
+    setForm((f) => ({
+      ...f,
+      [key]: value.split(',').map((item) => item.trim()).filter(Boolean),
+    }));
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -432,7 +448,66 @@ function SettingsTab({
   };
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-4xl space-y-6">
+      <section className="rounded-xl border border-border bg-card p-4">
+        <h2 className="text-sm font-semibold mb-4">Job Profile</h2>
+        <div className="grid grid-cols-1 gap-4">
+          <div>
+            <label className="block text-sm font-semibold mb-2">Desired Designations</label>
+            <textarea
+              rows={3}
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="Senior Software Engineer, Lead Developer, Principal Engineer"
+              value={form.desiredDesignations.join(', ')}
+              onChange={(e) => updateCsv('desiredDesignations', e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2">Skills</label>
+            <textarea
+              rows={3}
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="C#, ASP.NET Core, React, TypeScript, AWS, Docker"
+              value={form.skills.join(', ')}
+              onChange={(e) => updateCsv('skills', e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2">Excluded Keywords</label>
+            <textarea
+              rows={2}
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="graduate, junior, java only, onsite 5 days"
+              value={form.excludedKeywords.join(', ')}
+              onChange={(e) => updateCsv('excludedKeywords', e.target.value)}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-4 space-y-4">
+        <h2 className="text-sm font-semibold">Schedule</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-semibold mb-2">Time Zone</label>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              value={form.timeZone}
+              onChange={(e) => setForm((f) => ({ ...f, timeZone: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2">Run At</label>
+            <input
+              type="time"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              value={form.runAt}
+              onChange={(e) => setForm((f) => ({ ...f, runAt: e.target.value }))}
+            />
+          </div>
+        </div>
+      </section>
+
       {/* Keywords */}
       <section>
         <label className="block text-sm font-semibold mb-2">Job Title Keywords</label>
@@ -529,6 +604,23 @@ function SettingsTab({
         </div>
       </section>
 
+      <section>
+        <label className="block text-sm font-semibold mb-2">Work Modes</label>
+        <div className="flex gap-3">
+          {['Remote', 'Hybrid', 'Office'].map((mode) => (
+            <label key={mode} className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                className="accent-primary w-4 h-4"
+                checked={form.workModes.includes(mode)}
+                onChange={() => toggleWorkMode(mode)}
+              />
+              {mode}
+            </label>
+          ))}
+        </div>
+      </section>
+
       {/* Salary thresholds */}
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
@@ -565,6 +657,63 @@ function SettingsTab({
             min={0}
             onChange={(e) => setForm((f) => ({ ...f, minimumContractMonths: Number(e.target.value) }))}
           />
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-4 space-y-4">
+        <h2 className="text-sm font-semibold">Source Configuration</h2>
+        <div>
+          <label className="block text-sm font-semibold mb-2">Reed API Key</label>
+          <input
+            type="password"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder={configuredSecrets.has('REED_API_KEY') ? 'Saved. Enter a new key to replace it.' : 'Paste Reed API key'}
+            value={form.reedApiKey ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, reedApiKey: e.target.value }))}
+          />
+          {configuredSecrets.has('REED_API_KEY') && (
+            <p className="mt-1 text-xs text-muted-foreground">A Reed key is already configured.</p>
+          )}
+        </div>
+        <div>
+          <label className="block text-sm font-semibold mb-2">Slack Webhook URL</label>
+          <input
+            type="password"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder={configuredSecrets.has('SLACK_WEBHOOK_URL') ? 'Saved. Enter a new URL to replace it.' : 'https://hooks.slack.com/services/...'}
+            value={form.slackWebhookUrl ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, slackWebhookUrl: e.target.value }))}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-semibold mb-2">Gmail Credentials JSON</label>
+          <textarea
+            rows={5}
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+            placeholder={configuredSecrets.has('GMAIL_CREDENTIALS_JSON') ? 'Saved. Paste new JSON to replace it.' : '{"type":"service_account",...}'}
+            value={form.gmailCredentialsJson ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, gmailCredentialsJson: e.target.value }))}
+          />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-semibold mb-2">Gmail User Email</label>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="you@your-domain.com"
+              value={form.gmailUserEmail ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, gmailUserEmail: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2">Gmail Search Query</label>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="label:job-alerts is:unread"
+              value={form.gmailSearchQuery ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, gmailSearchQuery: e.target.value }))}
+            />
+          </div>
         </div>
       </section>
 
@@ -704,15 +853,105 @@ function CvsTab({
 
 // ── Sources Tab ───────────────────────────────────────────────────────────────
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function getString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function getNumber(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return undefined;
+}
+
+function parseIndeedPayload(raw: string): IndeedJobInput[] {
+  const parsed = JSON.parse(raw) as unknown;
+  const root = asRecord(parsed);
+  const items = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(root?.jobs)
+      ? root.jobs
+      : Array.isArray(root?.results)
+        ? root.results
+        : [];
+
+  return items
+    .map(asRecord)
+    .filter((record): record is Record<string, unknown> => Boolean(record))
+    .map((record) => ({
+      jobId: getString(record, ['jobId', 'jobkey', 'jk', 'id']) ?? '',
+      jobkey: getString(record, ['jobkey']),
+      jk: getString(record, ['jk']),
+      title: getString(record, ['title', 'jobTitle']) ?? '',
+      jobTitle: getString(record, ['jobTitle']),
+      company: getString(record, ['company', 'companyName']) ?? '',
+      companyName: getString(record, ['companyName']),
+      location: getString(record, ['location', 'formattedLocation']) ?? 'Remote',
+      formattedLocation: getString(record, ['formattedLocation']),
+      url: getString(record, ['url', 'jobUrl', 'link']),
+      jobUrl: getString(record, ['jobUrl']),
+      employmentType: getString(record, ['employmentType']),
+      workMode: getString(record, ['workMode']),
+      salaryMin: getNumber(record, ['salaryMin', 'minimumSalary']),
+      salaryMax: getNumber(record, ['salaryMax', 'maximumSalary']),
+      dayRateMin: getNumber(record, ['dayRateMin']),
+      dayRateMax: getNumber(record, ['dayRateMax']),
+      contractMonths: getNumber(record, ['contractMonths']),
+      description: getString(record, ['description', 'jobDescription', 'snippet']),
+      jobDescription: getString(record, ['jobDescription']),
+      snippet: getString(record, ['snippet']),
+    }))
+    .filter((job) => (job.jobId || job.jobkey || job.jk) && job.title && job.company);
+}
+
 function SourcesTab({
   sources,
   onRefresh,
+  onIngestIndeed,
 }: {
   sources: SourceHealthInfo[];
   onRefresh: () => Promise<void>;
+  onIngestIndeed: (jobs: IndeedJobInput[], clearFirst?: boolean) => Promise<void>;
 }) {
+  const [indeedJson, setIndeedJson] = useState('');
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestMessage, setIngestMessage] = useState<string>();
+
+  const ingestIndeed = async () => {
+    setIngestMessage(undefined);
+    const jobs = parseIndeedPayload(indeedJson);
+    if (jobs.length === 0) {
+      setIngestMessage('No valid Indeed jobs found in the JSON payload.');
+      return;
+    }
+
+    setIngesting(true);
+    try {
+      await onIngestIndeed(jobs, true);
+      await onRefresh();
+      setIngestMessage(`Imported ${jobs.length} Indeed jobs.`);
+      setIndeedJson('');
+    } catch (err) {
+      setIngestMessage((err as Error).message);
+    } finally {
+      setIngesting(false);
+    }
+  };
+
   return (
-    <div className="space-y-4 max-w-lg">
+    <div className="space-y-4 max-w-3xl">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">Source Health</h2>
         <button
@@ -741,6 +980,34 @@ function SourcesTab({
           <code className="bg-muted px-1 rounded">POST /api/jobs/ingest_indeed</code> using an MCP client or any
           HTTP caller. The buffer is in-memory and resets on server restart.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold">Indeed Direct Import</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Paste an array of Indeed jobs, or an object with a jobs/results array. Fields like jobkey, jobTitle,
+            companyName, formattedLocation, jobUrl, description, and snippet are accepted.
+          </p>
+        </div>
+        <textarea
+          rows={8}
+          className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+          placeholder='[{"jobkey":"abc123","jobTitle":"Senior Software Engineer","companyName":"Example Ltd","formattedLocation":"Remote","jobUrl":"https://uk.indeed.com/viewjob?jk=abc123"}]'
+          value={indeedJson}
+          onChange={(e) => setIndeedJson(e.target.value)}
+        />
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => void ingestIndeed()}
+            disabled={ingesting || !indeedJson.trim()}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-sm font-medium"
+          >
+            <Upload size={14} />
+            {ingesting ? 'Importing…' : 'Import Indeed Jobs'}
+          </button>
+          {ingestMessage && <span className="text-xs text-muted-foreground">{ingestMessage}</span>}
+        </div>
       </div>
     </div>
   );

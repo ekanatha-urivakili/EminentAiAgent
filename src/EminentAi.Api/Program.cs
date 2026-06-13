@@ -767,6 +767,32 @@ static async Task<JobSearchCriteria> LoadJobCriteriaAsync(IDbContextFactory<Emin
     return new();
 }
 
+static JobSearchCriteria RedactJobCriteriaSecrets(JobSearchCriteria criteria)
+{
+    var configured = new List<string>();
+    if (!string.IsNullOrWhiteSpace(criteria.ReedApiKey)) configured.Add("REED_API_KEY");
+    if (!string.IsNullOrWhiteSpace(criteria.SlackWebhookUrl)) configured.Add("SLACK_WEBHOOK_URL");
+    if (!string.IsNullOrWhiteSpace(criteria.GmailCredentialsJson)) configured.Add("GMAIL_CREDENTIALS_JSON");
+    if (!string.IsNullOrWhiteSpace(criteria.GmailSearchQuery)) configured.Add("GMAIL_SEARCH_QUERY");
+
+    return criteria with
+    {
+        ReedApiKey = null,
+        SlackWebhookUrl = null,
+        GmailCredentialsJson = null,
+        ConfiguredSecretKeys = configured,
+    };
+}
+
+static JobSearchCriteria PreserveBlankSecrets(JobSearchCriteria incoming, JobSearchCriteria existing) =>
+    incoming with
+    {
+        ReedApiKey = string.IsNullOrWhiteSpace(incoming.ReedApiKey) ? existing.ReedApiKey : incoming.ReedApiKey,
+        SlackWebhookUrl = string.IsNullOrWhiteSpace(incoming.SlackWebhookUrl) ? existing.SlackWebhookUrl : incoming.SlackWebhookUrl,
+        GmailCredentialsJson = string.IsNullOrWhiteSpace(incoming.GmailCredentialsJson) ? existing.GmailCredentialsJson : incoming.GmailCredentialsJson,
+        GmailSearchQuery = string.IsNullOrWhiteSpace(incoming.GmailSearchQuery) ? existing.GmailSearchQuery : incoming.GmailSearchQuery,
+    };
+
 static async Task SaveJobCriteriaAsync(IDbContextFactory<EminentAiDbContext> dbFactory, JobSearchCriteria criteria, CancellationToken ct)
 {
     await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -787,17 +813,22 @@ app.MapGet("/api/jobs/search",
     return Results.Ok(result);
 });
 
-app.MapGet("/api/jobs/sources/health", (JobSearchOrchestrator orchestrator) =>
-    Results.Ok(orchestrator.GetSourceHealth()));
+app.MapGet("/api/jobs/sources/health",
+    async (JobSearchOrchestrator orchestrator, IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
+{
+    var criteria = await LoadJobCriteriaAsync(dbFactory, ct);
+    return Results.Ok(orchestrator.GetSourceHealth(criteria));
+});
 
 app.MapGet("/api/jobs/settings",
     async (IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
-    Results.Ok(await LoadJobCriteriaAsync(dbFactory, ct)));
+    Results.Ok(RedactJobCriteriaSecrets(await LoadJobCriteriaAsync(dbFactory, ct))));
 
 app.MapPost("/api/jobs/settings",
     async ([FromBody] JobSearchCriteria criteria, IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
 {
-    await SaveJobCriteriaAsync(dbFactory, criteria, ct);
+    var existing = await LoadJobCriteriaAsync(dbFactory, ct);
+    await SaveJobCriteriaAsync(dbFactory, PreserveBlankSecrets(criteria, existing), ct);
     return Results.Ok(new { saved = true });
 });
 

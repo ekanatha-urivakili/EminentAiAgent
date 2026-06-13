@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,14 +12,58 @@ namespace EminentAi.Api.JobSearch;
 
 public sealed record JobSearchCriteria
 {
+    public string TimeZone { get; init; } = "Europe/London";
+    public string RunAt { get; init; } = "10:00";
     public List<string> Keywords { get; init; } = new();
+    public List<string> DesiredDesignations { get; init; } = new()
+    {
+        "Senior Software Engineer",
+        "Lead Developer",
+        "Principal Engineer",
+        "Senior Fullstack Engineer",
+        "Senior Software Developer",
+        "Lead Software Engineer",
+        "Principal Developer",
+    };
+    public List<string> Skills { get; init; } = new()
+    {
+        "c#",
+        "asp.net core",
+        "web api",
+        "react",
+        "typescript",
+        "javascript",
+        "aws",
+        "docker",
+        "sql server",
+        "postgresql",
+        "microservices",
+        "cqrs",
+        "rest",
+    };
+    public List<string> ExcludedKeywords { get; init; } = new()
+    {
+        "graduate",
+        "junior",
+        "java only",
+        "onsite 5 days",
+        "5 days onsite",
+        "sc clearance",
+    };
     public string Postcode { get; init; } = string.Empty;
     public int RadiusMiles { get; init; } = 30;
     public int PostedWithinDays { get; init; } = 7;
     public List<string> EmploymentTypes { get; init; } = new() { "Permanent", "Contract" };
+    public List<string> WorkModes { get; init; } = new() { "Remote", "Hybrid", "Office" };
     public decimal MinimumPermanentSalaryGbp { get; init; } = 0;
     public decimal MinimumContractDayRateGbp { get; init; } = 0;
     public int MinimumContractMonths { get; init; } = 0;
+    public string? ReedApiKey { get; init; }
+    public string? SlackWebhookUrl { get; init; }
+    public string? GmailCredentialsJson { get; init; }
+    public string? GmailUserEmail { get; init; }
+    public string? GmailSearchQuery { get; init; } = "label:job-alerts is:unread";
+    public List<string> ConfiguredSecretKeys { get; init; } = new();
 }
 
 public sealed record NormalizedJob
@@ -84,10 +129,18 @@ public sealed record JobSearchRunResult
 public sealed record IndeedJobInput
 {
     public string JobId { get; init; } = string.Empty;
+    [JsonPropertyName("jobkey")]
+    public string? JobKey { get; init; }
+    [JsonPropertyName("jk")]
+    public string? Jk { get; init; }
     public string Title { get; init; } = string.Empty;
+    public string? JobTitle { get; init; }
     public string Company { get; init; } = string.Empty;
+    public string? CompanyName { get; init; }
     public string Location { get; init; } = string.Empty;
+    public string? FormattedLocation { get; init; }
     public string? Url { get; init; }
+    public string? JobUrl { get; init; }
     public string? EmploymentType { get; init; }
     public string? WorkMode { get; init; }
     public decimal? SalaryMin { get; init; }
@@ -96,6 +149,8 @@ public sealed record IndeedJobInput
     public decimal? DayRateMax { get; init; }
     public int? ContractMonths { get; init; }
     public string? Description { get; init; }
+    public string? JobDescription { get; init; }
+    public string? Snippet { get; init; }
 }
 
 public sealed record IngestIndeedRequest(bool ClearFirst, List<IndeedJobInput> Jobs);
@@ -111,22 +166,32 @@ public sealed class IndeedDirectBuffer
         if (clearFirst) _jobs.Clear();
         foreach (var input in inputs)
         {
-            _jobs[input.JobId] = new NormalizedJob
+            var jobId = FirstValue(input.JobId, input.JobKey, input.Jk, StableId(input));
+            var title = FirstValue(input.Title, input.JobTitle);
+            var company = FirstValue(input.Company, input.CompanyName);
+            var location = FirstValue(input.Location, input.FormattedLocation, "Remote");
+            var employmentType = FirstValue(input.EmploymentType, InferEmploymentType(input));
+            var workMode = FirstValue(input.WorkMode, InferWorkMode(location, input.Description, input.JobDescription, input.Snippet));
+
+            if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(company))
+                continue;
+
+            _jobs[jobId] = new NormalizedJob
             {
                 Source = "Indeed Direct",
-                SourceJobId = input.JobId,
-                Title = input.Title,
-                Company = input.Company,
-                Location = input.Location,
-                Url = input.Url,
-                EmploymentType = input.EmploymentType,
-                WorkMode = input.WorkMode,
+                SourceJobId = jobId,
+                Title = title,
+                Company = company,
+                Location = location,
+                Url = FirstValue(input.Url, input.JobUrl, $"https://uk.indeed.com/viewjob?jk={Uri.EscapeDataString(jobId)}"),
+                EmploymentType = employmentType,
+                WorkMode = workMode,
                 SalaryMin = input.SalaryMin,
                 SalaryMax = input.SalaryMax,
                 DayRateMin = input.DayRateMin,
                 DayRateMax = input.DayRateMax,
                 ContractMonths = input.ContractMonths,
-                Description = input.Description,
+                Description = FirstValue(input.Description, input.JobDescription, input.Snippet),
                 PostedDate = DateTime.UtcNow,
             };
         }
@@ -134,6 +199,32 @@ public sealed class IndeedDirectBuffer
 
     public IReadOnlyCollection<NormalizedJob> GetAll() => (IReadOnlyCollection<NormalizedJob>)_jobs.Values;
     public int Count => _jobs.Count;
+
+    private static string FirstValue(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+
+    private static string StableId(IndeedJobInput input)
+    {
+        var raw = $"{input.Title}|{input.JobTitle}|{input.Company}|{input.CompanyName}|{input.Location}|{input.FormattedLocation}";
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
+        return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
+    }
+
+    private static string InferEmploymentType(IndeedJobInput input)
+    {
+        var text = $"{input.Title} {input.JobTitle} {input.Description} {input.JobDescription} {input.Snippet}".ToLowerInvariant();
+        return text.Contains("contract") || text.Contains("outside ir35") || text.Contains("inside ir35")
+            ? "Contract"
+            : "Permanent";
+    }
+
+    private static string InferWorkMode(params string?[] values)
+    {
+        var text = string.Join(' ', values.Where(value => !string.IsNullOrWhiteSpace(value))).ToLowerInvariant();
+        if (text.Contains("remote")) return "Remote";
+        if (text.Contains("hybrid")) return "Hybrid";
+        return "Office";
+    }
 }
 
 // ── Latest Run Cache ──────────────────────────────────────────────────────────
@@ -192,7 +283,7 @@ public static class ReedAdapter
     {
         try
         {
-            var keywords = string.Join(" ", criteria.Keywords);
+            var keywords = string.Join(" ", EffectiveKeywords(criteria));
             var qs = new StringBuilder("/1.0/search?resultsToTake=50");
             if (!string.IsNullOrWhiteSpace(keywords))
                 qs.Append($"&keywords={Uri.EscapeDataString(keywords)}");
@@ -243,6 +334,9 @@ public static class ReedAdapter
             Description = r.JobDescription,
         };
     }
+
+    private static IReadOnlyCollection<string> EffectiveKeywords(JobSearchCriteria criteria) =>
+        criteria.Keywords.Count > 0 ? criteria.Keywords : criteria.DesiredDesignations;
 }
 
 // ── Job Filter ─────────────────────────────────────────────────────────────────
@@ -251,6 +345,12 @@ public static class JobFilter
 {
     public static (bool Pass, string? RejectReason) Evaluate(NormalizedJob job, JobSearchCriteria criteria)
     {
+        var jobText = $"{job.Title} {job.Company} {job.Location} {job.Description ?? ""}";
+        var jobTextLower = jobText.ToLowerInvariant();
+
+        if (criteria.ExcludedKeywords.Any(k => !string.IsNullOrWhiteSpace(k) && jobTextLower.Contains(k.ToLowerInvariant())))
+            return (false, "Excluded keyword");
+
         if (job.PostedDate.HasValue)
         {
             var ageDays = (DateTime.UtcNow - job.PostedDate.Value).TotalDays;
@@ -258,11 +358,12 @@ public static class JobFilter
                 return (false, "Stale posting");
         }
 
-        if (criteria.Keywords.Count > 0)
+        var keywords = criteria.Keywords.Count > 0 ? criteria.Keywords : criteria.DesiredDesignations;
+        if (keywords.Count > 0)
         {
             var titleLower = job.Title.ToLowerInvariant();
             var descLower = (job.Description ?? "").ToLowerInvariant();
-            var hasMatch = criteria.Keywords.Any(k =>
+            var hasMatch = keywords.Any(k =>
                 titleLower.Contains(k.ToLowerInvariant()) ||
                 descLower.Contains(k.ToLowerInvariant()));
             if (!hasMatch)
@@ -270,6 +371,16 @@ public static class JobFilter
         }
 
         var empType = (job.EmploymentType ?? "").ToLowerInvariant();
+        if (criteria.EmploymentTypes.Count > 0 &&
+            !criteria.EmploymentTypes.Any(type => empType.Contains(type.ToLowerInvariant())))
+            return (false, "Employment type mismatch");
+
+        var workMode = (job.WorkMode ?? "").ToLowerInvariant();
+        if (criteria.WorkModes.Count > 0 &&
+            !string.IsNullOrWhiteSpace(workMode) &&
+            !criteria.WorkModes.Any(mode => workMode.Contains(mode.ToLowerInvariant())))
+            return (false, "Work mode mismatch");
+
         if (empType.Contains("contract"))
         {
             if (criteria.MinimumContractDayRateGbp > 0 &&
@@ -333,9 +444,12 @@ public static class JobScorer
 
         // Title-specific keyword match bonus
         var titleKeywords = ExtractKeywords(job.Title);
-        if (criteria.Keywords.Count > 0)
+        var profileKeywords = criteria.Keywords.Count > 0
+            ? criteria.Keywords
+            : criteria.DesiredDesignations.Concat(criteria.Skills).ToList();
+        if (profileKeywords.Count > 0)
         {
-            var criteriaKeywords = criteria.Keywords.Select(k => k.ToLowerInvariant()).ToHashSet();
+            var criteriaKeywords = profileKeywords.Select(k => k.ToLowerInvariant()).ToHashSet();
             var titleCriteriaMatch = titleKeywords
                 .Any(tk => criteriaKeywords.Any(ck => tk.Contains(ck) || ck.Contains(tk)));
             if (titleCriteriaMatch)
@@ -474,7 +588,7 @@ public sealed class JobSearchOrchestrator
         var rejectedSummary = new Dictionary<string, int>();
 
         // Reed API
-        var reedApiKey = Environment.GetEnvironmentVariable("REED_API_KEY");
+        var reedApiKey = FirstValue(criteria.ReedApiKey, Environment.GetEnvironmentVariable("REED_API_KEY"));
         if (!string.IsNullOrWhiteSpace(reedApiKey))
         {
             var reedClient = _httpFactory.CreateClient("ReedApi");
@@ -504,6 +618,18 @@ public sealed class JobSearchOrchestrator
             });
         }
 
+        sourceStatuses.Add(new SourceStatus
+        {
+            Source = "Gmail Alerts",
+            Mode = "AlertInbox",
+            Status = !string.IsNullOrWhiteSpace(criteria.GmailCredentialsJson) &&
+                     !string.IsNullOrWhiteSpace(criteria.GmailUserEmail)
+                ? "NotImplemented"
+                : "NotConfigured",
+            JobsFetched = 0,
+            Error = "Gmail alert fetching needs the Gmail API adapter package before it can run inside EminentAi.",
+        });
+
         // Indeed Direct buffer
         var indeedJobs = _indeedBuffer.GetAll().ToList();
         allJobs.AddRange(indeedJobs);
@@ -526,6 +652,7 @@ public sealed class JobSearchOrchestrator
 
         // Load CV keywords for scoring
         var cvKeywords = CvLoader.LoadKeywords(_cvFolder);
+        cvKeywords.UnionWith(criteria.Skills.SelectMany(JobScorer.ExtractKeywords));
 
         // Filter + Score
         var matches = new List<JobMatchResult>();
@@ -569,9 +696,12 @@ public sealed class JobSearchOrchestrator
         return result;
     }
 
-    public IReadOnlyList<SourceHealthInfo> GetSourceHealth()
+    public IReadOnlyList<SourceHealthInfo> GetSourceHealth(JobSearchCriteria criteria)
     {
-        var reedApiKey = Environment.GetEnvironmentVariable("REED_API_KEY");
+        var reedApiKey = FirstValue(criteria.ReedApiKey, Environment.GetEnvironmentVariable("REED_API_KEY"));
+        var gmailConfigured =
+            !string.IsNullOrWhiteSpace(criteria.GmailCredentialsJson) &&
+            !string.IsNullOrWhiteSpace(criteria.GmailUserEmail);
         return new[]
         {
             new SourceHealthInfo
@@ -589,6 +719,17 @@ public sealed class JobSearchOrchestrator
                 BufferedJobs = _indeedBuffer.Count,
                 RequiredSecret = "Call POST /api/jobs/ingest_indeed before searching",
             },
+            new SourceHealthInfo
+            {
+                Source = "Gmail Alerts",
+                Mode = "AlertInbox",
+                Ready = gmailConfigured,
+                RequiredSecret = "GMAIL_CREDENTIALS_JSON and GMAIL_USER_EMAIL",
+                LastError = gmailConfigured ? "Gmail fetch is not implemented in EminentAi yet." : null,
+            },
         };
     }
+
+    private static string FirstValue(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 }

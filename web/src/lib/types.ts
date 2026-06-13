@@ -134,14 +134,26 @@ export interface OllamaRegistryModel {
 // ── Job Search Agent ─────────────────────────────────────────────────────────
 
 export interface JobSearchCriteria {
+  timeZone: string;
+  runAt: string;
   keywords: string[];
+  desiredDesignations: string[];
+  skills: string[];
+  excludedKeywords: string[];
   postcode: string;
   radiusMiles: number;
   postedWithinDays: number;
   employmentTypes: string[];
+  workModes: string[];
   minimumPermanentSalaryGbp: number;
   minimumContractDayRateGbp: number;
   minimumContractMonths: number;
+  reedApiKey?: string;
+  slackWebhookUrl?: string;
+  gmailCredentialsJson?: string;
+  gmailUserEmail?: string;
+  gmailSearchQuery?: string;
+  configuredSecretKeys: string[];
 }
 
 export interface NormalizedJob {
@@ -201,10 +213,16 @@ export interface JobSearchRunResult {
 
 export interface IndeedJobInput {
   jobId: string;
+  jobkey?: string;
+  jk?: string;
   title: string;
+  jobTitle?: string;
   company: string;
+  companyName?: string;
   location: string;
+  formattedLocation?: string;
   url?: string;
+  jobUrl?: string;
   employmentType?: string;
   workMode?: string;
   salaryMin?: number;
@@ -213,6 +231,8 @@ export interface IndeedJobInput {
   dayRateMax?: number;
   contractMonths?: number;
   description?: string;
+  jobDescription?: string;
+  snippet?: string;
 }
 
 // ── Agent run history ────────────────────────────────────────────────────────
