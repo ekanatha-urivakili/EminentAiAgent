@@ -168,7 +168,7 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
               </p>
               <CodeLine cmd="docker compose up -d mailpit" />
               <p className="text-xs text-muted-foreground">
-                Or click the <span className="font-medium">Start Mailpit</span> button above — EminentAI will run this command for you.
+                Or click the <span className="font-medium">Start Mailpit</span> button above — EminentAi will run this command for you.
               </p>
             </div>
           </section>
@@ -249,7 +249,7 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
           {/* SMTP config reminder */}
           <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-600 dark:text-blue-400 space-y-1">
             <p className="font-semibold">SMTP configuration (already set in this project)</p>
-            <p>EminentAI sends password-reset emails via <code className="bg-blue-500/10 px-1 rounded">localhost:1025</code> — the Mailpit SMTP port.
+            <p>EminentAi sends password-reset emails via <code className="bg-blue-500/10 px-1 rounded">localhost:1025</code> — the Mailpit SMTP port.
               No credentials required. All outgoing mail is captured here instead of being delivered.</p>
           </div>
 

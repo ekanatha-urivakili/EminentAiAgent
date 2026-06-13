@@ -18,8 +18,19 @@ export type AgentEvent = {
   runId?: string;
 };
 
+export type LoginResult = {
+  token: string;
+  admin: {
+    id: string;
+    fullName: string;
+    email: string;
+  };
+};
+
+type SseFrame = { event: string; data: Record<string, unknown> };
+
 /** Parses a fetch Response body as Server-Sent Events. */
-async function* readSse(r: Response): AsyncGenerator<{ event: string; data: any }> {
+async function* readSse(r: Response): AsyncGenerator<SseFrame> {
   if (!r.body) { return; }
   const reader = r.body.getReader();
   const dec = new TextDecoder();
@@ -37,7 +48,11 @@ async function* readSse(r: Response): AsyncGenerator<{ event: string; data: any 
       if (line.startsWith("event: ")) {
         eventType = line.slice(7).trim();
       } else if (line.startsWith("data: ")) {
-        try { yield { event: eventType, data: JSON.parse(line.slice(6)) }; }
+        try {
+          const parsed = JSON.parse(line.slice(6)) as unknown;
+          const data = isRecord(parsed) ? parsed : {};
+          yield { event: eventType, data };
+        }
         catch { /* skip malformed frame */ }
         eventType = "message";
       }
@@ -45,16 +60,67 @@ async function* readSse(r: Response): AsyncGenerator<{ event: string; data: any 
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 export class ApiClient {
-  constructor(private backendUrl: () => string, private ollamaUrl: () => string) {}
+  constructor(
+    private backendUrl: () => string,
+    private ollamaUrl: () => string,
+    private authToken: () => Thenable<string | undefined>
+  ) {}
+
+  private async backendHeaders(contentType = false): Promise<HeadersInit> {
+    const token = await this.authToken();
+    return {
+      ...(contentType ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    };
+  }
 
   async health(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.backendUrl()}/api/health`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${this.backendUrl()}/api/health`, {
+        headers: await this.backendHeaders(),
+        signal: AbortSignal.timeout(2000)
+      });
       return res.ok;
     } catch {
       return false;
     }
+  }
+
+  async login(email: string, password: string): Promise<LoginResult> {
+    const r = await fetch(`${this.backendUrl()}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    if (!r.ok) {
+      let message = `Backend returned ${r.status}`;
+      try {
+        const body = await r.json() as unknown;
+        if (isRecord(body)) { message = asString(body.error) ?? message; }
+      } catch { /* keep status */ }
+      throw new Error(message);
+    }
+    const body = await r.json() as unknown;
+    if (!isRecord(body) || !isRecord(body.admin)) {
+      throw new Error("Invalid login response");
+    }
+    const token = asString(body.token);
+    const id = asString(body.admin.id);
+    const fullName = asString(body.admin.fullName);
+    const emailAddress = asString(body.admin.email);
+    if (!token || !id || !fullName || !emailAddress) {
+      throw new Error("Invalid login response");
+    }
+    return { token, admin: { id, fullName, email: emailAddress } };
   }
 
   /** Stream chat via the backend (PII redaction + shared config); falls back to direct Ollama. */
@@ -62,7 +128,7 @@ export class ApiClient {
     if (await this.health()) {
       const r = await fetch(`${this.backendUrl()}/api/chat`, {
         method: "POST", signal,
-        headers: { "Content-Type": "application/json" },
+        headers: await this.backendHeaders(true),
         body: JSON.stringify({ model, messages })
       });
       if (!r.ok) {
@@ -71,8 +137,14 @@ export class ApiClient {
       }
       for await (const ev of readSse(r)) {
         if (ev.event === "error") { yield { type: "error", message: String(ev.data.message ?? "failed") }; return; }
-        if (ev.data.token) { yield { type: "token", text: ev.data.token }; }
-        if (ev.event === "done") { yield { type: "done", usage: { out: ev.data.usage?.out ?? 0 } }; return; }
+        const token = asString(ev.data.token);
+        if (token) { yield { type: "token", text: token }; }
+        if (ev.event === "done") {
+          const usage = isRecord(ev.data.usage) ? ev.data.usage : {};
+          const out = typeof usage.out === "number" ? usage.out : 0;
+          yield { type: "done", usage: { out } };
+          return;
+        }
       }
       return;
     }
@@ -128,7 +200,9 @@ export class ApiClient {
 
   async listModels(): Promise<string[]> {
     try {
-      const r = await fetch(`${this.backendUrl()}/api/models`);
+      const r = await fetch(`${this.backendUrl()}/api/models`, {
+        headers: await this.backendHeaders()
+      });
       if (!r.ok) { return []; }
       const models = await r.json() as { name: string; tier: string }[];
       return models.filter(m => m.tier !== "embedding").map(m => m.name);
@@ -143,7 +217,7 @@ export class ApiClient {
   ): AsyncGenerator<AgentEvent> {
     const r = await fetch(`${this.backendUrl()}/api/agent/runs`, {
       method: "POST", signal,
-      headers: { "Content-Type": "application/json" },
+      headers: await this.backendHeaders(true),
       body: JSON.stringify({ goal, model, connectors })
     });
     if (!r.ok) {
@@ -155,15 +229,31 @@ export class ApiClient {
     }
   }
 
+  async plan(goal: string, model: string): Promise<string> {
+    const r = await fetch(`${this.backendUrl()}/api/plan`, {
+      method: "POST",
+      headers: await this.backendHeaders(true),
+      body: JSON.stringify({ goal, model })
+    });
+    if (!r.ok) {
+      throw new Error(`Backend returned ${r.status}`);
+    }
+    const data = await r.json() as { steps: { title: string }[] };
+    return data.steps.map((s, i) => `${i + 1}. ${s.title}`).join("\n");
+  }
+
   async approve(runId: string, stepId: string, approved: boolean, remember = false): Promise<void> {
     await fetch(`${this.backendUrl()}/api/agent/runs/${runId}/approvals/${stepId}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await this.backendHeaders(true),
       body: JSON.stringify({ decision: approved ? "approve" : "reject", remember })
     });
   }
 
   async cancel(runId: string): Promise<void> {
-    await fetch(`${this.backendUrl()}/api/agent/runs/${runId}/cancel`, { method: "POST" });
+    await fetch(`${this.backendUrl()}/api/agent/runs/${runId}/cancel`, {
+      method: "POST",
+      headers: await this.backendHeaders()
+    });
   }
 }

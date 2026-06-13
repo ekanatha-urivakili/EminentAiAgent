@@ -114,8 +114,8 @@ export function ChatView() {
   return (
     <div className="flex flex-col">
       <BranchSwitcher />
-      <div className="pb-56 sm:pb-40">
-        <div className="max-w-3xl mx-auto px-4">
+      <div className="pb-72 sm:pb-56">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6">
           {messages.map((m) => (
             <ChatMessage key={m.id} message={m} />
           ))}

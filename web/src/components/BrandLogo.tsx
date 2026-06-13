@@ -10,7 +10,7 @@ export function BrandLogo({ compact = false, className }: BrandLogoProps) {
     return (
       <img
         src="/brand/eminentai-mark.svg"
-        alt="EminentAI"
+        alt="EminentAi"
         className={cn('h-9 w-9 object-contain', className)}
       />
     );
@@ -20,12 +20,12 @@ export function BrandLogo({ compact = false, className }: BrandLogoProps) {
     <span className={cn('block h-10 w-[185px]', className)}>
       <img
         src="/brand/eminentai-wordmark-light.svg"
-        alt="EminentAI"
+        alt="EminentAi"
         className="h-full w-full object-contain dark:hidden"
       />
       <img
         src="/brand/eminentai-wordmark-dark.svg"
-        alt="EminentAI"
+        alt="EminentAi"
         className="hidden h-full w-full object-contain dark:block"
       />
     </span>

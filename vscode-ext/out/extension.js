@@ -40,34 +40,42 @@ const chatView_1 = require("./chatView");
 const fim_1 = require("./fim");
 const commands_1 = require("./commands");
 const apiClient_1 = require("./apiClient");
+const tokenKey = "eminentai.adminToken";
 function activate(ctx) {
-    const cfg = () => vscode.workspace.getConfiguration("localforge");
-    const api = new apiClient_1.ApiClient(() => cfg().get("backendUrl"), () => cfg().get("ollamaUrl"));
+    const cfg = () => vscode.workspace.getConfiguration("eminentai");
+    const api = new apiClient_1.ApiClient(() => cfg().get("backendUrl"), () => cfg().get("ollamaUrl"), () => ctx.secrets.get(tokenKey));
     // 1) Chat sidebar
-    ctx.subscriptions.push(vscode.window.registerWebviewViewProvider("localforge.chat", new chatView_1.ChatViewProvider(ctx, api), { webviewOptions: { retainContextWhenHidden: true } }));
-    // 2) Inline completions (all languages; gated by the localforge.inlineCompletions setting)
+    ctx.subscriptions.push(vscode.window.registerWebviewViewProvider("eminentai.chat", new chatView_1.ChatViewProvider(ctx, api), { webviewOptions: { retainContextWhenHidden: true } }));
+    // 2) Inline completions (all languages; gated by the eminentai.inlineCompletions setting)
     ctx.subscriptions.push(vscode.languages.registerInlineCompletionItemProvider({ pattern: "**" }, new fim_1.FimProvider(api, cfg)));
     // 3) Commands + code actions
-    (0, commands_1.registerCommands)(ctx, api);
+    (0, commands_1.registerCommands)(ctx, api, tokenKey);
     // 4) Status bar: backend health + current model, click to switch
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.command = "localforge.pickModel";
+    statusBarItem.command = "eminentai.pickModel";
     statusBarItem.show();
     ctx.subscriptions.push(statusBarItem);
     const refreshStatus = async () => {
         const ok = await api.health();
         const model = cfg().get("chatModel");
-        statusBarItem.text = ok ? `$(zap) ${model}` : "$(warning) LocalForge offline";
+        statusBarItem.text = ok ? `$(zap) ${model}` : "$(warning) EminentAi offline";
         statusBarItem.tooltip = ok
-            ? "LocalForge backend connected — click to switch model"
-            : "LocalForge backend unreachable — start it with ./start.sh";
+            ? "EminentAi backend connected — click to switch model"
+            : "EminentAi backend unreachable — start it with ./start.sh";
     };
     void refreshStatus();
     const timer = setInterval(() => void refreshStatus(), 30_000);
     ctx.subscriptions.push({ dispose: () => clearInterval(timer) });
-    ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration("localforge")) {
+    ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async (e) => {
+        if (e.affectsConfiguration("eminentai")) {
             void refreshStatus();
+            const models = await api.listModels();
+            chatView_1.ChatViewProvider.current?.post({
+                type: "init",
+                models,
+                selectedModel: cfg().get("chatModel"),
+                mode: chatView_1.ChatViewProvider.current?.mode ?? "Chat"
+            });
         }
     }));
 }

@@ -25,7 +25,9 @@ async function* readSse(r) {
             }
             else if (line.startsWith("data: ")) {
                 try {
-                    yield { event: eventType, data: JSON.parse(line.slice(6)) };
+                    const parsed = JSON.parse(line.slice(6));
+                    const data = isRecord(parsed) ? parsed : {};
+                    yield { event: eventType, data };
                 }
                 catch { /* skip malformed frame */ }
                 eventType = "message";
@@ -33,28 +35,76 @@ async function* readSse(r) {
         }
     }
 }
+function isRecord(value) {
+    return typeof value === "object" && value !== null;
+}
+function asString(value) {
+    return typeof value === "string" ? value : undefined;
+}
 class ApiClient {
     backendUrl;
     ollamaUrl;
-    constructor(backendUrl, ollamaUrl) {
+    authToken;
+    constructor(backendUrl, ollamaUrl, authToken) {
         this.backendUrl = backendUrl;
         this.ollamaUrl = ollamaUrl;
+        this.authToken = authToken;
+    }
+    async backendHeaders(contentType = false) {
+        const token = await this.authToken();
+        return {
+            ...(contentType ? { "Content-Type": "application/json" } : {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+        };
     }
     async health() {
         try {
-            const res = await fetch(`${this.backendUrl()}/api/health`, { signal: AbortSignal.timeout(2000) });
+            const res = await fetch(`${this.backendUrl()}/api/health`, {
+                headers: await this.backendHeaders(),
+                signal: AbortSignal.timeout(2000)
+            });
             return res.ok;
         }
         catch {
             return false;
         }
     }
+    async login(email, password) {
+        const r = await fetch(`${this.backendUrl()}/api/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password })
+        });
+        if (!r.ok) {
+            let message = `Backend returned ${r.status}`;
+            try {
+                const body = await r.json();
+                if (isRecord(body)) {
+                    message = asString(body.error) ?? message;
+                }
+            }
+            catch { /* keep status */ }
+            throw new Error(message);
+        }
+        const body = await r.json();
+        if (!isRecord(body) || !isRecord(body.admin)) {
+            throw new Error("Invalid login response");
+        }
+        const token = asString(body.token);
+        const id = asString(body.admin.id);
+        const fullName = asString(body.admin.fullName);
+        const emailAddress = asString(body.admin.email);
+        if (!token || !id || !fullName || !emailAddress) {
+            throw new Error("Invalid login response");
+        }
+        return { token, admin: { id, fullName, email: emailAddress } };
+    }
     /** Stream chat via the backend (PII redaction + shared config); falls back to direct Ollama. */
     async *chat(messages, model, signal) {
         if (await this.health()) {
             const r = await fetch(`${this.backendUrl()}/api/chat`, {
                 method: "POST", signal,
-                headers: { "Content-Type": "application/json" },
+                headers: await this.backendHeaders(true),
                 body: JSON.stringify({ model, messages })
             });
             if (!r.ok) {
@@ -66,11 +116,14 @@ class ApiClient {
                     yield { type: "error", message: String(ev.data.message ?? "failed") };
                     return;
                 }
-                if (ev.data.token) {
-                    yield { type: "token", text: ev.data.token };
+                const token = asString(ev.data.token);
+                if (token) {
+                    yield { type: "token", text: token };
                 }
                 if (ev.event === "done") {
-                    yield { type: "done", usage: { out: ev.data.usage?.out ?? 0 } };
+                    const usage = isRecord(ev.data.usage) ? ev.data.usage : {};
+                    const out = typeof usage.out === "number" ? usage.out : 0;
+                    yield { type: "done", usage: { out } };
                     return;
                 }
             }
@@ -137,7 +190,9 @@ class ApiClient {
     }
     async listModels() {
         try {
-            const r = await fetch(`${this.backendUrl()}/api/models`);
+            const r = await fetch(`${this.backendUrl()}/api/models`, {
+                headers: await this.backendHeaders()
+            });
             if (!r.ok) {
                 return [];
             }
@@ -152,7 +207,7 @@ class ApiClient {
     async *runAgent(goal, model, connectors, signal) {
         const r = await fetch(`${this.backendUrl()}/api/agent/runs`, {
             method: "POST", signal,
-            headers: { "Content-Type": "application/json" },
+            headers: await this.backendHeaders(true),
             body: JSON.stringify({ goal, model, connectors })
         });
         if (!r.ok) {
@@ -163,15 +218,30 @@ class ApiClient {
             yield { type: ev.event, ...ev.data };
         }
     }
+    async plan(goal, model) {
+        const r = await fetch(`${this.backendUrl()}/api/plan`, {
+            method: "POST",
+            headers: await this.backendHeaders(true),
+            body: JSON.stringify({ goal, model })
+        });
+        if (!r.ok) {
+            throw new Error(`Backend returned ${r.status}`);
+        }
+        const data = await r.json();
+        return data.steps.map((s, i) => `${i + 1}. ${s.title}`).join("\n");
+    }
     async approve(runId, stepId, approved, remember = false) {
         await fetch(`${this.backendUrl()}/api/agent/runs/${runId}/approvals/${stepId}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await this.backendHeaders(true),
             body: JSON.stringify({ decision: approved ? "approve" : "reject", remember })
         });
     }
     async cancel(runId) {
-        await fetch(`${this.backendUrl()}/api/agent/runs/${runId}/cancel`, { method: "POST" });
+        await fetch(`${this.backendUrl()}/api/agent/runs/${runId}/cancel`, {
+            method: "POST",
+            headers: await this.backendHeaders()
+        });
     }
 }
 exports.ApiClient = ApiClient;

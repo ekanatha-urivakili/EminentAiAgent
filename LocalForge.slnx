@@ -1,8 +1,0 @@
-<Solution>
-  <Folder Name="/src/">
-    <Project Path="src/LocalForge.Api/LocalForge.Api.csproj" />
-    <Project Path="src/LocalForge.Application/LocalForge.Application.csproj" />
-    <Project Path="src/LocalForge.Domain/LocalForge.Domain.csproj" />
-    <Project Path="src/LocalForge.Infrastructure/LocalForge.Infrastructure.csproj" />
-  </Folder>
-</Solution>

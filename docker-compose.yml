@@ -1,7 +1,7 @@
 services:
   mailpit:
     image: axllent/mailpit:latest
-    container_name: localforge-mailpit
+    container_name: eminentai-mailpit
     ports:
       - "1025:1025"   # SMTP — backend sends here
       - "8025:8025"   # Web UI — view emails at http://localhost:8025

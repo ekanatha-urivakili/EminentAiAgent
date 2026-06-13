@@ -26,10 +26,10 @@ interface RecentFile {
 }
 
 function loadRecent(): RecentFile[] {
-  try { return JSON.parse(localStorage.getItem('localforge.recentFiles') ?? '[]'); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem('eminentai.recentFiles') ?? '[]'); } catch { return []; }
 }
 function saveRecent(files: RecentFile[]) {
-  localStorage.setItem('localforge.recentFiles', JSON.stringify(files.slice(0, MAX_RECENT)));
+  localStorage.setItem('eminentai.recentFiles', JSON.stringify(files.slice(0, MAX_RECENT)));
 }
 function addToRecent(name: string, type: string, size: number, dataUrl?: string, content?: string) {
   const prev = loadRecent().filter((f) => f.name !== name);
@@ -73,7 +73,7 @@ function WhisperGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
       {open && (
         <div className="px-4 pb-4 space-y-4 border-t border-amber-500/20">
           <p className="text-xs text-muted-foreground mt-3">
-            EminentAI uses <strong>whisper.cpp</strong> — a fast, open-source local speech recognition server.
+            EminentAi uses <strong>whisper.cpp</strong> — a fast, open-source local speech recognition server.
             No cloud calls, no API keys. Pick any install method:
           </p>
 
@@ -283,15 +283,15 @@ export function Composer() {
   const stop = () => { if (mode === 'Agent') void cancelAgent(); else stopStreaming(); };
 
   const ModeIcon = modeMeta[mode].icon;
-  const placeholder = mode === 'Chat' ? 'Message EminentAI…' : mode === 'Plan' ? 'Describe a goal to plan…' : 'Give the agent a goal…';
+  const placeholder = mode === 'Chat' ? 'Message EminentAi…' : mode === 'Plan' ? 'Describe a goal to plan…' : 'Give the agent a goal…';
 
   const micLabel = voiceStatus === 'recording' ? 'Stop recording'
     : voiceStatus === 'transcribing' ? 'Transcribing…'
     : 'Voice input (whisper.cpp)';
 
   return (
-    <div className="absolute bottom-0 w-full bg-gradient-to-t from-background via-background/95 to-transparent pt-8 sm:pt-10 pb-3 sm:pb-5 px-3 sm:px-4 flex justify-center z-20">
-      <div className="max-w-3xl w-full space-y-2">
+    <div className="absolute bottom-0 w-full bg-gradient-to-t from-background via-background/95 to-transparent pt-8 sm:pt-10 pb-3 sm:pb-5 px-3 sm:px-6 flex justify-center z-20">
+      <div className="max-w-5xl w-full space-y-2">
 
         <div className="relative rounded-3xl border border-input bg-card shadow-lg shadow-black/5 focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/40 transition-all flex flex-col">
 
@@ -491,7 +491,7 @@ export function Composer() {
             : voiceStatus === 'error' ? 'Could not reach whisper.cpp server. See setup guide below.'
             : voiceModeEnabled ? 'Voice mode on — AI responses will be read aloud.'
             : mode === 'Agent' ? 'Write actions always require your approval.'
-            : 'EminentAI runs entirely on this machine. Your data stays local.'}
+            : 'EminentAi runs entirely on this machine. Your data stays local.'}
         </div>
 
         {/* Whisper install guide — shown below the input so it never overlaps chat messages */}

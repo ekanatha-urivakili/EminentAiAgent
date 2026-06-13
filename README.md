@@ -1,121 +1,199 @@
-# LocalForge — Local Ollama Copilot Platform
+<!-- markdownlint-disable MD013 -->
 
-A fully local AI copilot: streaming chat, Plan mode, and an autonomous Agent mode with
-policy-gated tools — backed by Ollama, with a React web UI and a VS Code extension.
-See `local-ollama-copilot-architecture.md` for the full architecture.
+# EminentAi — Local Ollama Copilot Platform
+
+EminentAi is a localhost-only AI copilot with streaming chat, Plan mode, Agent mode, a React web UI, and a VS Code extension. It runs against Ollama and stores application state locally.
+
+Full architecture: `docs/AIAGENT_ARCHITECTURE.md`
+
+VS Code extension details: `VS_CODE_EXTENSION.md`
+
+## Database Recommendation
+
+Use the current local SQLite database for this project.
+
+Reason: this app is explicitly localhost-only, single-user, and not deployed online. SQLite keeps setup simple, has no Docker dependency for persistence, is fast enough for chat history, agent runs, connector config, admin users, and job-search metadata, and works cleanly with EF Core.
+
+Do not use Docker Desktop as the database. Docker Desktop is a runtime for containers, not a database. You can run PostgreSQL inside Docker Desktop, but that adds a daemon, container lifecycle, volume backups, ports, credentials, and startup ordering. For this app, that complexity is not buying much.
+
+Use PostgreSQL in Docker only if one of these becomes true:
+
+- Multiple local processes/users need concurrent write-heavy access.
+- You need Postgres-specific search, JSONB, indexes, extensions, or migration parity with a future hosted system.
+- The SQLite file grows large enough that backup, vacuum, or write-lock behavior becomes painful.
+- You want to test production-like database behavior before a future deployment.
+
+Recommended path:
+
+1. Keep SQLite now: `src/EminentAi.Api/eminentai.db`.
+2. Add EF Core migrations before the schema changes further.
+3. Keep repositories behind EF Core abstractions so a future SQLite-to-Postgres move is mechanical.
+4. If scaling locally later, add a `postgres` service to `docker-compose.yml` and switch only the connection string/provider.
 
 ## Layout
 
-```
-src/LocalForge.Domain          entities (conversations, branches, agent runs, policy)
-src/LocalForge.Application    use cases: ChatService, PlannerService, AgentOrchestrator,
-                              ApprovalBroker, ToolCallRepair (tool-call recovery for 7B models)
-src/LocalForge.Infrastructure OllamaClient, McpHost (MCP SDK), PolicyEngine, PiiRedactor,
-                              BuiltinToolRunner (sandboxed filesystem + shell), EF Core/SQLite
-src/LocalForge.Api            Minimal API + SSE endpoints (127.0.0.1:5210)
-web/                          React 19 + Vite + Tailwind UI (light/dark/system themes)
+```text
+src/EminentAi.Domain          Entities: conversations, branches, messages, agent runs, policy
+src/EminentAi.Application     Use cases: ChatService, PlannerService, AgentOrchestrator,
+                              ApprovalBroker, ToolCallRepair
+src/EminentAi.Infrastructure  OllamaClient, McpHost, PolicyEngine, PiiRedactor,
+                              BuiltinToolRunner, EF Core SQLite persistence
+src/EminentAi.Api             ASP.NET Core Minimal API + SSE endpoints on 127.0.0.1:5210
+web/                          React 19 + Vite + Tailwind UI
 vscode-ext/                   VS Code extension: chat sidebar, FIM completions, agent edits
 ```
 
-## Run
+## Prerequisites
 
 ```bash
-# prerequisites
 brew services start ollama
-ollama pull qwen2.5-coder:7b && ollama pull qwen2.5-coder:1.5b-base
-
-# start Mailpit (required for password reset emails)
-docker compose up -d mailpit    # SMTP :1025 · web UI http://localhost:8025
-
-# everything at once
-./start.sh
-# or individually:
-dotnet run --project src/LocalForge.Api      # http://127.0.0.1:5210
-cd web && npm install && npm run dev         # http://localhost:5173
+ollama pull qwen2.5-coder:7b
+ollama pull qwen2.5-coder:1.5b-base
+npm install --prefix web
+npm install --prefix vscode-ext
 ```
 
-> **Schema note:** the database schema changed in this revision. Delete the old
-> `src/LocalForge.Api/localforge.db*` files once before starting.
+Mailpit is used only for local password-reset emails:
 
-## Password reset
+```bash
+docker compose up -d mailpit
+```
 
-The admin portal supports self-service password reset via email:
+Mailpit SMTP runs on `127.0.0.1:1025`; its web UI is `http://localhost:8025`.
 
-1. Click **Forgot password?** on the login screen.
-2. Enter your admin email. A reset link is sent to Mailpit.
-3. Open Mailpit at [http://localhost:8025](http://localhost:8025) and click the link.
-4. Set your new password in the form (the `?token=` in the URL pre-fills the reset form).
-5. The old session is invalidated; log in with the new password.
+## Run
 
-**Mailpit** is a local mail-catcher — no email leaves your machine. SMTP config lives under
-`LocalForge:Smtp` in `appsettings.json`; the default points to `127.0.0.1:1025`.
+Start everything:
 
-> To reset via SQLite directly (no email required):
-> ```bash
-> python3 -c "
-> import base64, hashlib, os, sys
-> pw = sys.argv[1].encode()
-> salt = os.urandom(16)
-> dk = hashlib.pbkdf2_hmac('sha256', pw, salt, 100000, dklen=32)
-> print(base64.b64encode(salt).decode() + '.' + base64.b64encode(dk).decode())
-> " 'YourNewPassword'
-> sqlite3 src/LocalForge.Api/localforge.db \
->   "UPDATE AdminUsers SET PasswordHash='<hash>' WHERE Email='you@example.com';"
-> ```
+```bash
+./start.sh
+```
+
+Or run each service manually:
+
+```bash
+dotnet run --project src/EminentAi.Api --urls http://127.0.0.1:5210
+cd web && npm run dev
+```
+
+Open `http://localhost:5173`.
+
+The backend uses `src/EminentAi.Api/appsettings.json`. Important settings:
+
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| `ConnectionStrings:Default` | `Data Source=eminentai.db` | Local SQLite database |
+| `EminentAi:OllamaUrl` | `http://127.0.0.1:11434` | Ollama API |
+| `EminentAi:WorkspaceRoot` | empty | Sandbox root for filesystem and shell tools |
+| `EminentAi:AllowedOrigins` | Vite localhost origins | CORS allowlist |
+| `EminentAi:ApiToken` | empty | Optional API token; required for non-loopback binding |
+| `EminentAi:Smtp` | Mailpit defaults | Password-reset email transport |
 
 ## Modes
 
-- **Chat** — streaming conversation, persisted to SQLite. Regenerate creates a *sibling*
-  message (never overwrites); fork branches a conversation.
-- **Plan** — read-only: produces an editable numbered plan (JSON-validated with repair
-  retries), promotable to Agent mode.
-- **Agent** — autonomous loop with budgets (steps / tokens / wall-clock), loop detection,
-  and a tool-call repair layer for small models. Ships with two built-in connectors that
-  need zero setup: `filesystem` and `shell`, both sandboxed to `LocalForge:WorkspaceRoot`
-  (defaults to `~/LocalForgeWorkspace`). External MCP connectors (stdio) can be registered
-  via `POST /api/connectors`.
+- **Chat**: streaming conversation persisted to SQLite. Regenerate creates a sibling message; fork creates a new branch.
+- **Plan**: read-only planning mode that returns validated JSON with repair retries.
+- **Agent**: autonomous execution with step/token/time budgets, loop detection, tool-call repair, policy checks, and human approval for writes.
 
-## Security model
+Built-in connectors:
 
-- Binds `127.0.0.1` only; refuses non-loopback binding unless `LOCALFORGE_API_TOKEN` is set.
-- CORS allowlist (Vite origins only), rate limiting, security headers.
-- Policy engine: `ReadOnly` profile **denies** mutations, `ReadWrite` **asks** (human-in-the-loop
-  is non-optional for writes), `Blocked` denies all. Explicit deny rules always win.
-  Stripe-style refunds/payouts/transfers can never be allow-listed.
-- Shell tool: always requires approval + command denylist (`rm -rf`, `sudo`, `curl | sh`, …)
-  + 60 s timeout + workspace-scoped cwd. Filesystem writes require approval; path traversal blocked.
-- Taint escalation: after the agent reads external (MCP) data, even allow-listed writes ask.
-- Tool results are truncated, PII/secret-redacted, and wrapped as untrusted data
-  (`<tool_result trust="untrusted">`) with a standing system rule against embedded instructions.
-- PII redactor masks Stripe/AWS/GitHub/Slack/Google keys, JWTs, private key blocks,
-  passwords, cards, SSNs before anything is persisted or sent to the model.
+| Connector | Purpose | Safety |
+| --- | --- | --- |
+| `filesystem` | Read/write files under `EminentAi:WorkspaceRoot` | Writes require approval |
+| `shell` | Run commands from the workspace root | Always approval-gated, timeout-limited, denylisted |
 
-## API (shared by web UI and VS Code extension)
+External stdio MCP connectors can be registered through `/api/connectors`.
+
+## Security Model
+
+- Backend binds to `127.0.0.1` by default.
+- Non-loopback binding requires `EMINENTAI_API_TOKEN` or `EminentAi:ApiToken`.
+- CORS is restricted to local Vite origins.
+- Global rate limiting and security headers are enabled.
+- Admin routes require a session unless a global API token is configured.
+- PII/secret redaction runs before persistence or model calls.
+- Tool results are treated as untrusted model input.
+- Filesystem writes and shell execution require approval.
+- Shell execution is command-denylisted, timeout-limited, and workspace-scoped.
+
+## API
 
 | Method | Route | Purpose |
-|---|---|---|
-| GET  | `/api/health` · `/api/models` | health + model list with tier tags |
-| GET/POST/DELETE | `/api/conversations` | conversation CRUD |
-| POST | `/api/branches/{id}/messages` | streaming chat (SSE) |
-| POST | `/api/messages/{id}/regenerate` | sibling regenerate (SSE) |
-| POST | `/api/branches/{id}/fork` | branch from a message |
-| POST | `/api/chat` | stateless chat for the VS Code extension (SSE) |
-| POST | `/api/plan` | goal → validated plan JSON |
-| POST | `/api/agent/runs` | start agent run; response **is** the SSE event stream |
-| POST | `/api/agent/runs/{id}/approvals/{stepId}` | approve/reject (+ remember as policy rule) |
-| POST | `/api/agent/runs/{id}/cancel` | cancel a run |
+| --- | --- | --- |
+| GET | `/api/health` | Backend health |
+| GET | `/api/models` | Ollama model list with tier tags |
+| GET/POST/DELETE | `/api/conversations` | Conversation CRUD |
+| POST | `/api/branches/{id}/messages` | Streaming persisted chat via SSE |
+| POST | `/api/messages/{id}/regenerate` | Sibling regenerate via SSE |
+| POST | `/api/branches/{id}/fork` | Fork from a message |
+| POST | `/api/chat` | Stateless streaming chat for the VS Code extension |
+| POST | `/api/plan` | Goal to validated plan JSON |
+| POST | `/api/agent/runs` | Start an agent run; response is SSE |
+| POST | `/api/agent/runs/{id}/approvals/{stepId}` | Approve/reject a tool step |
+| POST | `/api/agent/runs/{id}/cancel` | Cancel a run |
 | GET/POST/DELETE | `/api/connectors` | MCP connector registry |
 
-## VS Code extension
+## Password Reset
+
+1. Start Mailpit with `docker compose up -d mailpit`.
+2. Click **Forgot password?** on the login screen.
+3. Enter the admin email.
+4. Open `http://localhost:8025`.
+5. Click the reset link and set a new password.
+
+Manual SQLite reset:
 
 ```bash
-cd vscode-ext && npm install && npm run package
-code --install-extension localforge-copilot-0.1.0.vsix   # or F5 for the dev host
+python3 -c "
+import base64, hashlib, os, sys
+pw = sys.argv[1].encode()
+salt = os.urandom(16)
+dk = hashlib.pbkdf2_hmac('sha256', pw, salt, 100000, dklen=32)
+print(base64.b64encode(salt).decode() + '.' + base64.b64encode(dk).decode())
+" 'YourNewPassword'
+
+sqlite3 src/EminentAi.Api/eminentai.db \
+  "UPDATE AdminUsers SET PasswordHash='<hash>' WHERE Email='you@example.com';"
 ```
 
-Chat sidebar (talks to the backend, falls back to direct Ollama), inline FIM completions
-(`qwen2.5-coder:1.5b-base`), explain/fix/refactor/tests commands, `LocalForge: Agent Edit`
-(runs the backend agent with approval prompts), status-bar model switcher.
+## VS Code Extension
 
-> Agent file edits land in the backend's sandbox (`LocalForge:WorkspaceRoot`). Point that
-> setting at your project folder in `appsettings.json` to let the agent edit it.
+Development host:
+
+```bash
+cd vscode-ext
+npm install
+npm run compile
+```
+
+Open the repository in VS Code, press `F5`, and launch the extension development host.
+
+Installable VSIX:
+
+```bash
+cd vscode-ext
+npm install
+npm run package
+npx @vscode/vsce package
+code --install-extension eminentai-copilot-0.1.0.vsix
+```
+
+Features:
+
+- Activity-bar chat sidebar backed by `/api/chat`.
+- Direct Ollama fallback when the backend is offline.
+- Inline FIM completions through Ollama `/api/generate`.
+- Selection commands: explain, fix, refactor, generate tests.
+- `EminentAi: Agent Edit (multi-file)` for backend agent runs with approval prompts.
+- Status-bar health check and model switcher.
+
+Detailed implementation and diagrams are in `VS_CODE_EXTENSION.md`.
+
+## Verify
+
+```bash
+dotnet build EminentAi.slnx
+dotnet test EminentAi.slnx --no-build
+cd web && npm run build && npm run lint
+cd ../vscode-ext && npm run compile && npm run package
+```

@@ -2,9 +2,9 @@ import * as vscode from "vscode";
 import { ApiClient, AgentEvent } from "./apiClient";
 import { ChatViewProvider } from "./chatView";
 
-export function registerCommands(ctx: vscode.ExtensionContext, api: ApiClient) {
+export function registerCommands(ctx: vscode.ExtensionContext, api: ApiClient, tokenKey: string) {
   const onSelection = (id: string, instruction: string) =>
-    vscode.commands.registerCommand(`localforge.${id}`, async () => {
+    vscode.commands.registerCommand(`eminentai.${id}`, async () => {
       const ed = vscode.window.activeTextEditor;
       if (!ed) { return; }
       const sel = ed.document.getText(ed.selection);
@@ -13,7 +13,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, api: ApiClient) {
         return;
       }
       const lang = ed.document.languageId;
-      await vscode.commands.executeCommand("localforge.chat.focus");
+      await vscode.commands.executeCommand("eminentai.chat.focus");
       ChatViewProvider.current?.post({
         type: "prefill",
         prompt: `${instruction}\n\n\`\`\`${lang}\n${sel}\n\`\`\``
@@ -26,19 +26,47 @@ export function registerCommands(ctx: vscode.ExtensionContext, api: ApiClient) {
     onSelection("refactor", "Refactor for readability and testability. Explain each change:"),
     onSelection("tests", "Write thorough unit tests:"),
 
-    vscode.commands.registerCommand("localforge.agentEdit", async () => {
+    vscode.commands.registerCommand("eminentai.signIn", async () => {
+      const email = await vscode.window.showInputBox({
+        prompt: "EminentAi admin email",
+        ignoreFocusOut: true
+      });
+      if (!email) { return; }
+
+      const password = await vscode.window.showInputBox({
+        prompt: "EminentAi admin password",
+        password: true,
+        ignoreFocusOut: true
+      });
+      if (!password) { return; }
+
+      try {
+        const result = await api.login(email, password);
+        await ctx.secrets.store(tokenKey, result.token);
+        vscode.window.showInformationMessage(`Signed in to EminentAi as ${result.admin.email}`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`EminentAi sign-in failed: ${(e as Error).message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand("eminentai.signOut", async () => {
+      await ctx.secrets.delete(tokenKey);
+      vscode.window.showInformationMessage("Signed out of EminentAi.");
+    }),
+
+    vscode.commands.registerCommand("eminentai.agentEdit", async () => {
       const goal = await vscode.window.showInputBox({
         prompt: "What should the agent change in this workspace?"
       });
       if (!goal) { return; }
 
-      const cfg = vscode.workspace.getConfiguration("localforge");
+      const cfg = vscode.workspace.getConfiguration("eminentai");
       const model = cfg.get<string>("chatModel")!;
       const ac = new AbortController();
       let runId: string | undefined;
 
       await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: "LocalForge Agent", cancellable: true },
+        { location: vscode.ProgressLocation.Notification, title: "EminentAi Agent", cancellable: true },
         async (progress, token) => {
           token.onCancellationRequested(async () => {
             if (runId) { await api.cancel(runId); }
@@ -59,19 +87,19 @@ export function registerCommands(ctx: vscode.ExtensionContext, api: ApiClient) {
       );
     }),
 
-    vscode.commands.registerCommand("localforge.pickModel", async () => {
+    vscode.commands.registerCommand("eminentai.pickModel", async () => {
       const models = await api.listModels();
       if (models.length === 0) {
-        vscode.window.showWarningMessage("No models found — is the LocalForge backend (and Ollama) running?");
+        vscode.window.showWarningMessage("No models found — is the EminentAi backend (and Ollama) running?");
         return;
       }
-      const cfg = vscode.workspace.getConfiguration("localforge");
+      const cfg = vscode.workspace.getConfiguration("eminentai");
       const pick = await vscode.window.showQuickPick(models, {
         placeHolder: `Current: ${cfg.get<string>("chatModel")}`
       });
       if (pick) {
         await cfg.update("chatModel", pick, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage(`LocalForge chat model set to ${pick}`);
+        vscode.window.showInformationMessage(`EminentAi chat model set to ${pick}`);
       }
     })
   );

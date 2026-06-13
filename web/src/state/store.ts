@@ -127,14 +127,14 @@ let agentAbort: AbortController | null = null;
 let itemSeq = 0;
 const nextId = () => `t_${++itemSeq}`;
 
-const storedTheme = (localStorage.getItem('localforge.theme') as Theme | null) ?? 'system';
+const storedTheme = (localStorage.getItem('eminentai.theme') as Theme | null) ?? 'system';
 const storedArchivedIds: string[] = (() => {
-  try { return JSON.parse(localStorage.getItem('localforge.archivedIds') ?? '[]'); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem('eminentai.archivedIds') ?? '[]'); } catch { return []; }
 })();
-const storedStepBudget = Number(localStorage.getItem('localforge.stepBudget') ?? 15);
+const storedStepBudget = Number(localStorage.getItem('eminentai.stepBudget') ?? 15);
 const storedConnectors: string[] = (() => {
   try {
-    return JSON.parse(localStorage.getItem('localforge.agentConnectors') ?? '["filesystem","shell"]');
+    return JSON.parse(localStorage.getItem('eminentai.agentConnectors') ?? '["filesystem","shell"]');
   } catch { return ['filesystem', 'shell']; }
 })();
 
@@ -142,7 +142,7 @@ export const useStore = create<AppState>((set, get) => ({
   // ── theme ─────────────────────────────────────────────────────────────────
   theme: storedTheme,
   setTheme: (theme) => {
-    localStorage.setItem('localforge.theme', theme);
+    localStorage.setItem('eminentai.theme', theme);
     set({ theme });
   },
 
@@ -160,9 +160,9 @@ export const useStore = create<AppState>((set, get) => ({
 
   // ── models ────────────────────────────────────────────────────────────────
   models: [],
-  selectedModel: localStorage.getItem('localforge.model') ?? '',
+  selectedModel: localStorage.getItem('eminentai.model') ?? '',
   setSelectedModel: (m) => {
-    localStorage.setItem('localforge.model', m);
+    localStorage.setItem('eminentai.model', m);
     set({ selectedModel: m });
   },
   loadModels: async () => {
@@ -231,7 +231,7 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => {
       if (s.archivedIds.includes(id)) return s;
       const archivedIds = [...s.archivedIds, id];
-      localStorage.setItem('localforge.archivedIds', JSON.stringify(archivedIds));
+      localStorage.setItem('eminentai.archivedIds', JSON.stringify(archivedIds));
       return {
         archivedIds,
         ...(s.activeConversationId === id
@@ -244,7 +244,7 @@ export const useStore = create<AppState>((set, get) => ({
   unarchiveConversation: (id) => {
     set((s) => {
       const archivedIds = s.archivedIds.filter((aid) => aid !== id);
-      localStorage.setItem('localforge.archivedIds', JSON.stringify(archivedIds));
+      localStorage.setItem('eminentai.archivedIds', JSON.stringify(archivedIds));
       return { archivedIds };
     });
   },
@@ -412,12 +412,12 @@ export const useStore = create<AppState>((set, get) => ({
   agentStepBudget: Math.min(Math.max(storedStepBudget || 15, 1), 50),
   setAgentStepBudget: (n) => {
     const clamped = Math.min(Math.max(n, 1), 50);
-    localStorage.setItem('localforge.stepBudget', String(clamped));
+    localStorage.setItem('eminentai.stepBudget', String(clamped));
     set({ agentStepBudget: clamped });
   },
   agentConnectors: storedConnectors,
   setAgentConnectors: (cs) => {
-    localStorage.setItem('localforge.agentConnectors', JSON.stringify(cs));
+    localStorage.setItem('eminentai.agentConnectors', JSON.stringify(cs));
     set({ agentConnectors: cs });
   },
 
@@ -577,12 +577,12 @@ export const useStore = create<AppState>((set, get) => ({
   authError: undefined,
 
   loadAdmin: async () => {
-    if (!localStorage.getItem('localforge.adminToken')) return;
+    if (!localStorage.getItem('eminentai.adminToken')) return;
     set({ authLoading: true, authError: undefined });
     try {
       set({ admin: await api.me(), authLoading: false });
     } catch {
-      localStorage.removeItem('localforge.adminToken');
+      localStorage.removeItem('eminentai.adminToken');
       set({ admin: undefined, authLoading: false });
     }
   },
@@ -591,7 +591,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ authLoading: true, authError: undefined });
     try {
       const result = await api.register(fullName, email, password);
-      localStorage.setItem('localforge.adminToken', result.token);
+      localStorage.setItem('eminentai.adminToken', result.token);
       set({ admin: result.admin, authLoading: false });
     } catch (err) {
       set({ authLoading: false, authError: (err as Error).message });
@@ -602,7 +602,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ authLoading: true, authError: undefined });
     try {
       const result = await api.login(email, password);
-      localStorage.setItem('localforge.adminToken', result.token);
+      localStorage.setItem('eminentai.adminToken', result.token);
       set({ admin: result.admin, authLoading: false });
     } catch (err) {
       set({ authLoading: false, authError: (err as Error).message || 'Login failed' });
@@ -610,7 +610,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   logoutAdmin: () => {
-    localStorage.removeItem('localforge.adminToken');
+    localStorage.removeItem('eminentai.adminToken');
     set({ admin: undefined });
   },
 

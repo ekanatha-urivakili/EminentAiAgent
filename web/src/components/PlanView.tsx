@@ -35,7 +35,7 @@ export function PlanView() {
         </div>
         <h1 className="text-2xl font-bold tracking-tight mb-2">Plan mode</h1>
         <p className="text-muted-foreground text-sm text-center max-w-md">
-          Describe a goal below. EminentAI drafts an editable, numbered plan —
+          Describe a goal below. EminentAi drafts an editable, numbered plan —
           read-only, no tools executed — which you can promote to Agent mode.
         </p>
       </div>

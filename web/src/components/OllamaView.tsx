@@ -133,7 +133,7 @@ function InstallGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
               </div>
               <p className="text-xs text-muted-foreground">
                 Ollama listens on <code className="bg-muted px-1 rounded">http://127.0.0.1:11434</code> by default.
-                You can also click <span className="font-medium">Start Ollama</span> above — EminentAI will launch it for you.
+                You can also click <span className="font-medium">Start Ollama</span> above — EminentAi will launch it for you.
               </p>
             </div>
           </section>

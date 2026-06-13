@@ -83,7 +83,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <div className="flex items-center gap-3 mb-6">
           <BrandLogo compact className="h-11 w-11" />
           <div>
-            <h1 className="text-xl font-semibold">EminentAI Admin</h1>
+            <h1 className="text-xl font-semibold">EminentAi Admin</h1>
             <p className="text-sm text-muted-foreground">
               {mode === 'register' ? 'Create your admin profile'
                 : mode === 'forgot' ? 'Reset your password'

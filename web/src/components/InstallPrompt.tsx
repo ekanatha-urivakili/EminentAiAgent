@@ -65,7 +65,7 @@ export function InstallPrompt() {
       <div className="flex items-center gap-3">
         <img src="/brand/eminentai-app-icon.svg" alt="" className="h-11 w-11 rounded-xl" />
         <div className="min-w-0 flex-1">
-          <div className="font-semibold">Install EminentAI</div>
+          <div className="font-semibold">Install EminentAi</div>
           <div className="text-xs text-muted-foreground">Add the local AI app to your home screen or desktop.</div>
         </div>
         <button onClick={close} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground" title="Dismiss install prompt">

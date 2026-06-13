@@ -1,6 +1,6 @@
 {
-  "name": "localforge-copilot",
-  "displayName": "LocalForge Copilot (Ollama)",
+  "name": "eminentai-copilot",
+  "displayName": "EminentAi Copilot (Ollama)",
   "description": "Local Ollama Copilot Platform",
   "version": "0.1.0",
   "engines": {
@@ -14,93 +14,101 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "localforge",
-          "title": "LocalForge",
+          "id": "eminentai",
+          "title": "EminentAi",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "localforge": [
+      "eminentai": [
         {
           "type": "webview",
-          "id": "localforge.chat",
+          "id": "eminentai.chat",
           "name": "Chat"
         }
       ]
     },
     "commands": [
       {
-        "command": "localforge.explain",
-        "title": "LocalForge: Explain Selection"
+        "command": "eminentai.explain",
+        "title": "EminentAi: Explain Selection"
       },
       {
-        "command": "localforge.fix",
-        "title": "LocalForge: Fix Selection"
+        "command": "eminentai.fix",
+        "title": "EminentAi: Fix Selection"
       },
       {
-        "command": "localforge.refactor",
-        "title": "LocalForge: Refactor Selection"
+        "command": "eminentai.refactor",
+        "title": "EminentAi: Refactor Selection"
       },
       {
-        "command": "localforge.tests",
-        "title": "LocalForge: Generate Tests"
+        "command": "eminentai.tests",
+        "title": "EminentAi: Generate Tests"
       },
       {
-        "command": "localforge.agentEdit",
-        "title": "LocalForge: Agent Edit (multi-file)"
+        "command": "eminentai.agentEdit",
+        "title": "EminentAi: Agent Edit (multi-file)"
       },
       {
-        "command": "localforge.pickModel",
-        "title": "LocalForge: Switch Model"
+        "command": "eminentai.pickModel",
+        "title": "EminentAi: Switch Model"
+      },
+      {
+        "command": "eminentai.signIn",
+        "title": "EminentAi: Sign In"
+      },
+      {
+        "command": "eminentai.signOut",
+        "title": "EminentAi: Sign Out"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "localforge.explain",
+          "command": "eminentai.explain",
           "when": "editorHasSelection",
-          "group": "localforge@1"
+          "group": "eminentai@1"
         },
         {
-          "command": "localforge.fix",
+          "command": "eminentai.fix",
           "when": "editorHasSelection",
-          "group": "localforge@2"
+          "group": "eminentai@2"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "localforge.explain",
+        "command": "eminentai.explain",
         "key": "ctrl+alt+e",
         "mac": "cmd+alt+e"
       }
     ],
     "configuration": {
-      "title": "LocalForge",
+      "title": "EminentAi",
       "properties": {
-        "localforge.backendUrl": {
+        "eminentai.backendUrl": {
           "type": "string",
           "default": "http://127.0.0.1:5210"
         },
-        "localforge.ollamaUrl": {
+        "eminentai.ollamaUrl": {
           "type": "string",
           "default": "http://127.0.0.1:11434",
           "description": "Fallback when backend is offline"
         },
-        "localforge.chatModel": {
+        "eminentai.chatModel": {
           "type": "string",
           "default": "qwen2.5-coder:7b"
         },
-        "localforge.fimModel": {
+        "eminentai.fimModel": {
           "type": "string",
           "default": "qwen2.5-coder:1.5b-base"
         },
-        "localforge.inlineCompletions": {
+        "eminentai.inlineCompletions": {
           "type": "boolean",
           "default": true
         },
-        "localforge.maxPrefixTokens": {
+        "eminentai.maxPrefixTokens": {
           "type": "number",
           "default": 2000
         }
@@ -116,7 +124,7 @@
   "devDependencies": {
     "@types/node": "^18.11.18",
     "@types/vscode": "^1.95.0",
-    "esbuild": "^0.20.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.0.0"
   }
 }

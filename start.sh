@@ -1,5 +1,5 @@
 #!/bin/bash
-# EminentAI startup: backend (ASP.NET Core, 127.0.0.1:5210) + web UI (Vite, :5173).
+# EminentAi startup: backend (ASP.NET Core, 127.0.0.1:5210) + web UI (Vite, :5173).
 set -e
 
 # ── kill any stale processes on the ports we need ────────────────────────────
@@ -20,7 +20,7 @@ kill_port 5173
 # ── cleanup on Ctrl+C ────────────────────────────────────────────────────────
 cleanup() {
     echo ""
-    echo "Stopping EminentAI..."
+    echo "Stopping EminentAi..."
     kill $(jobs -p) 2>/dev/null || true
     exit 0
 }
@@ -33,8 +33,8 @@ if ! curl -s --max-time 2 http://127.0.0.1:11434/api/tags > /dev/null; then
     echo "   Then pull models: ollama pull qwen2.5-coder:7b"
 fi
 
-echo "🚀 Starting EminentAI backend on http://127.0.0.1:5210 ..."
-dotnet run --project src/LocalForge.Api --urls http://127.0.0.1:5210 &
+echo "🚀 Starting EminentAi backend on http://127.0.0.1:5210 ..."
+dotnet run --project src/EminentAi.Api --urls http://127.0.0.1:5210 &
 
 echo "📦 Starting web UI ..."
 (cd web && npm run dev) &
@@ -43,5 +43,5 @@ sleep 4
 echo "🌐 Opening http://localhost:5173 ..."
 open http://localhost:5173 2>/dev/null || true
 
-echo "✅ EminentAI is running. Press Ctrl+C to stop."
+echo "✅ EminentAi is running. Press Ctrl+C to stop."
 wait

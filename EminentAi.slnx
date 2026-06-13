@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EminentAi.Api/EminentAi.Api.csproj" />
+    <Project Path="src/EminentAi.Application/EminentAi.Application.csproj" />
+    <Project Path="src/EminentAi.Domain/EminentAi.Domain.csproj" />
+    <Project Path="src/EminentAi.Infrastructure/EminentAi.Infrastructure.csproj" />
+  </Folder>
+</Solution>

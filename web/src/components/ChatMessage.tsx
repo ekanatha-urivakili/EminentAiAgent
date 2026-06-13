@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  BrainCircuit,
   Check,
   Copy,
   Download,
@@ -8,7 +9,9 @@ import {
   FileText,
   Flame,
   GitBranch,
+  ListChecks,
   RefreshCw,
+  Search,
   Share2,
   ThumbsDown,
   ThumbsUp,
@@ -21,6 +24,14 @@ import type { ChatMsg, ChatSource } from '../lib/types';
 
 type Feedback = 'liked' | 'disliked' | undefined;
 type ExportFormat = 'pdf' | 'markdown' | 'docx' | 'txt';
+type ActionStatus = 'Copied' | 'Liked' | 'Disliked' | 'Shared' | 'Exported' | 'Unavailable' | undefined;
+
+const thinkingSteps = [
+  { label: 'Reading your prompt', detail: 'Identifying the language, intent, and context.', icon: Search },
+  { label: 'Planning the answer', detail: 'Choosing the clearest structure before writing.', icon: BrainCircuit },
+  { label: 'Checking edge cases', detail: 'Looking for details that could change the explanation.', icon: ListChecks },
+  { label: 'Composing response', detail: 'Turning the reasoning into a useful answer.', icon: Flame },
+];
 
 const sourceUrlPattern = /https?:\/\/[^\s)\]>"]+/g;
 const markdownLinkPattern = /\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g;
@@ -75,6 +86,24 @@ function downloadBlob(fileName: string, blob: Blob) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Clipboard is unavailable');
 }
 
 function escapeXml(value: string) {
@@ -193,21 +222,95 @@ function makeDocx(content: string) {
   ]);
 }
 
+function ThinkingIndicator({ hasContent }: { hasContent: boolean }) {
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (hasContent) return undefined;
+    const timer = window.setInterval(() => {
+      setStep((current) => (current + 1) % thinkingSteps.length);
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, [hasContent]);
+
+  const current = hasContent
+    ? { label: 'Writing response', detail: 'Streaming tokens into the answer.', icon: Flame }
+    : thinkingSteps[step];
+  const Icon = current.icon;
+
+  if (hasContent) {
+    return (
+      <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-border bg-background/70 px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70 animate-ping" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+        </span>
+        <span>{current.label}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full max-w-xl rounded-2xl border border-border bg-background/85 p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-rose-500 text-white shadow-sm">
+          <Icon size={17} />
+          <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-background bg-emerald-500" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-sm font-medium leading-tight">{current.label}</p>
+            <div className="flex items-center gap-1" aria-hidden="true">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.2s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/75 [animation-delay:-0.1s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/50" />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">{current.detail}</p>
+          <div className="mt-3 grid grid-cols-4 gap-1.5" aria-hidden="true">
+            {thinkingSteps.map((item, index) => (
+              <div
+                key={item.label}
+                className={cn(
+                  'h-1.5 rounded-full transition-colors duration-300',
+                  index <= step ? 'bg-primary' : 'bg-muted',
+                )}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ChatMessage({ message }: { message: ChatMsg }) {
   const [copied, setCopied] = useState(false);
   const [forking, setForking] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>();
   const [exportOpen, setExportOpen] = useState(false);
+  const [actionStatus, setActionStatus] = useState<ActionStatus>();
   const regenerate = useStore((s) => s.regenerate);
   const forkConversation = useStore((s) => s.forkConversation);
   const isStreaming = useStore((s) => s.isStreaming);
   const isUser = message.role === 'user';
+  const hasAssistantContent = !isUser && message.content.trim().length > 0;
   const sources = useMemo(() => extractSources(message), [message]);
 
+  const showStatus = (status: ActionStatus) => {
+    setActionStatus(status);
+    window.setTimeout(() => setActionStatus(undefined), 1600);
+  };
+
   const copy = async () => {
-    await navigator.clipboard.writeText(message.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await copyText(message.content);
+      setCopied(true);
+      showStatus('Copied');
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      showStatus('Unavailable');
+    }
   };
 
   const fork = async () => {
@@ -218,38 +321,49 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
   };
 
   const share = async () => {
-    if (navigator.share) {
-      await navigator.share({ title: 'EminentAI response', text: message.content });
-      return;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'EminentAi response', text: message.content });
+        showStatus('Shared');
+        return;
+      }
+      await copy();
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') await copy();
     }
-    await copy();
   };
 
   const exportMessage = (format: ExportFormat) => {
     setExportOpen(false);
     if (format === 'pdf') {
       const win = window.open('', '_blank');
-      if (!win) return;
-      win.document.write(`<!doctype html><html><head><title>EminentAI response</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55;max-width:760px;margin:48px auto;padding:0 24px;white-space:pre-wrap;color:#111}</style></head><body>${escapeXml(message.content)}</body></html>`);
+      if (!win) {
+        showStatus('Unavailable');
+        return;
+      }
+      win.document.write(`<!doctype html><html><head><title>EminentAi response</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.55;max-width:760px;margin:48px auto;padding:0 24px;white-space:pre-wrap;color:#111}</style></head><body>${escapeXml(message.content)}</body></html>`);
       win.document.close();
       win.focus();
       win.print();
+      showStatus('Exported');
       return;
     }
 
     if (format === 'docx') {
       downloadBlob(safeFileName(message.id, 'docx'), makeDocx(message.content));
+      showStatus('Exported');
       return;
     }
 
     const extension = format === 'markdown' ? 'md' : 'txt';
     const type = format === 'markdown' ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8';
     downloadBlob(safeFileName(message.id, extension), new Blob([message.content], { type }));
+    showStatus('Exported');
   };
 
   return (
-    <div className={cn('py-4 sm:py-5 w-full flex group', isUser ? 'justify-end' : 'justify-start bg-muted/30')}>
-      <div className={cn('max-w-3xl w-full px-3 sm:px-4 flex gap-2 sm:gap-4', isUser && 'flex-row-reverse')}>
+    <div className={cn('py-4 sm:py-5 w-full flex group', isUser ? 'justify-end' : 'justify-center bg-muted/30')}>
+      <div className={cn('max-w-5xl w-full px-3 sm:px-4 flex gap-2 sm:gap-4', isUser && 'flex-row-reverse justify-end')}>
         <div
           className={cn(
             'w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white mt-0.5 ring-2 ring-background shadow-sm',
@@ -261,7 +375,7 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
 
         <div
           className={cn(
-            'min-w-0 max-w-[calc(100%-2.25rem)] sm:max-w-[min(42rem,calc(100%-3rem))] pt-1 text-sm md:text-[15px] leading-relaxed flex flex-col',
+            'min-w-0 max-w-[calc(100%-2.25rem)] sm:max-w-[min(52rem,calc(100%-3rem))] pt-1 text-sm md:text-[15px] leading-relaxed flex flex-col',
             isUser && 'items-end',
           )}
         >
@@ -283,10 +397,8 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
             </>
           ) : (
             <>
-              <MarkdownRenderer content={message.content} />
-              {message.streaming && (
-                <span className="inline-block w-2 h-4 bg-foreground/70 animate-pulse rounded-sm mt-1" />
-              )}
+              {hasAssistantContent && <MarkdownRenderer content={message.content} />}
+              {message.streaming && <ThinkingIndicator hasContent={hasAssistantContent} />}
             </>
           )}
 
@@ -328,7 +440,11 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
                 {!isUser && (
                   <>
                     <button
-                      onClick={() => setFeedback(feedback === 'liked' ? undefined : 'liked')}
+                      onClick={() => {
+                        const nextFeedback = feedback === 'liked' ? undefined : 'liked';
+                        setFeedback(nextFeedback);
+                        showStatus(nextFeedback ? 'Liked' : undefined);
+                      }}
                       className={cn(
                         'p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors',
                         feedback === 'liked' && 'text-emerald-500',
@@ -338,7 +454,11 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
                       <ThumbsUp size={14} />
                     </button>
                     <button
-                      onClick={() => setFeedback(feedback === 'disliked' ? undefined : 'disliked')}
+                      onClick={() => {
+                        const nextFeedback = feedback === 'disliked' ? undefined : 'disliked';
+                        setFeedback(nextFeedback);
+                        showStatus(nextFeedback ? 'Disliked' : undefined);
+                      }}
                       className={cn(
                         'p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors',
                         feedback === 'disliked' && 'text-red-500',
@@ -410,6 +530,9 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
                 )}
                 {!isUser && message.tokensOut != null && (
                   <span className="text-[11px] ml-1">· {message.tokensOut} tok</span>
+                )}
+                {!isUser && actionStatus && (
+                  <span className="text-[11px] font-medium ml-1" aria-live="polite">{actionStatus}</span>
                 )}
               </div>
             </>

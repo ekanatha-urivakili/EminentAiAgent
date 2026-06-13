@@ -6,7 +6,7 @@ export interface SseEvent {
 }
 
 function authHeaders(): HeadersInit {
-  const token = localStorage.getItem('localforge.adminToken');
+  const token = localStorage.getItem('eminentai.adminToken');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -206,7 +206,7 @@ export const api = {
   uploadCv: async (file: File): Promise<{ name: string }> => {
     const form = new FormData();
     form.append('file', file);
-    const token = localStorage.getItem('localforge.adminToken');
+    const token = localStorage.getItem('eminentai.adminToken');
     const res = await fetch(`${BASE}/api/cvs/upload`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},

@@ -1,8 +1,8 @@
-# EminentAI Agent Architecture
+# EminentAi Agent Architecture
 
 ## Purpose
 
-This document describes the implemented architecture of the EminentAI Agent project, currently branded in code as `LocalForge`. It covers the .NET backend, React web UI, VS Code extension, Ollama integration, MCP connector host, persistence model, agent loop, security controls, and job-search workflow.
+This document describes the implemented architecture of the EminentAi Agent project, currently branded in code as `EminentAi`. It covers the .NET backend, React web UI, VS Code extension, Ollama integration, MCP connector host, persistence model, agent loop, security controls, and job-search workflow.
 
 The project is a local-first AI copilot platform:
 
@@ -20,21 +20,21 @@ The project is a local-first AI copilot platform:
 ```text
 .
 ├── src
-│   ├── LocalForge.Domain
+│   ├── EminentAi.Domain
 │   │   └── Models.cs
-│   ├── LocalForge.Application
+│   ├── EminentAi.Application
 │   │   ├── Abstractions
 │   │   ├── Agent
 │   │   ├── Chat
 │   │   ├── Planning
 │   │   └── Security
-│   ├── LocalForge.Infrastructure
+│   ├── EminentAi.Infrastructure
 │   │   ├── Mcp
 │   │   ├── Ollama
 │   │   ├── Persistence
 │   │   ├── Security
 │   │   └── Tools
-│   └── LocalForge.Api
+│   └── EminentAi.Api
 │       ├── Program.cs
 │       └── JobSearchService.cs
 ├── web
@@ -65,7 +65,7 @@ flowchart TB
     Extension -->|fallback chat/FIM| Ollama[Ollama Runtime]
 
     Api -->|HTTP /api/chat /api/tags /api/pull| Ollama
-    Api -->|EF Core| Db[(SQLite localforge.db)]
+    Api -->|EF Core| Db[(SQLite eminentai.db)]
     Api -->|stdio MCP| McpServers[MCP Servers]
     Api -->|filesystem/process| LocalTools[Built-in filesystem + shell tools]
     Api -->|SMTP| Mailpit[Mailpit]
@@ -82,14 +82,14 @@ flowchart LR
         CodeExt[VS Code Extension]
     end
 
-    subgraph ApiHost[LocalForge.Api]
+    subgraph ApiHost[EminentAi.Api]
         Middleware[Headers, CORS, rate limiting, optional API token]
         Routes[Minimal API routes]
         Sse[SSE writer]
         Bootstrap[SQLite bootstrap]
     end
 
-    subgraph Application[LocalForge.Application]
+    subgraph Application[EminentAi.Application]
         ChatService[ChatService]
         Planner[PlannerService]
         Agent[AgentOrchestrator]
@@ -98,7 +98,7 @@ flowchart LR
         Mutations[MutationHeuristics]
     end
 
-    subgraph Infrastructure[LocalForge.Infrastructure]
+    subgraph Infrastructure[EminentAi.Infrastructure]
         OllamaClient[OllamaClient]
         McpHost[McpHost]
         Builtins[BuiltinToolRunner]
@@ -107,7 +107,7 @@ flowchart LR
         Repos[Repositories]
     end
 
-    subgraph Domain[LocalForge.Domain]
+    subgraph Domain[EminentAi.Domain]
         Entities[Conversation, Message, AgentRun, ConnectorConfig, PolicyRule]
     end
 
@@ -137,7 +137,7 @@ flowchart TB
         Api[ASP.NET Core API 127.0.0.1:5210]
         Ollama[Ollama 127.0.0.1:11434]
         Sqlite[(SQLite file)]
-        Workspace[LocalForge workspace root]
+        Workspace[EminentAi workspace root]
         Docker[Docker Compose]
         Mailpit[Mailpit SMTP :1025 Web :8025]
     end
@@ -153,9 +153,9 @@ flowchart TB
 
 ## Project Responsibilities
 
-### `LocalForge.Domain`
+### `EminentAi.Domain`
 
-`LocalForge.Domain` contains persistence entities and enums. It has no infrastructure dependencies.
+`EminentAi.Domain` contains persistence entities and enums. It has no infrastructure dependencies.
 
 Primary model groups:
 
@@ -166,9 +166,9 @@ Primary model groups:
 
 The domain currently keeps models simple and mutable for EF Core. Regeneration is represented by sibling assistant messages through `ParentMessageId`, and conversation branching is represented by `Branch.ParentBranchId`.
 
-### `LocalForge.Application`
+### `EminentAi.Application`
 
-`LocalForge.Application` owns use cases and cross-cutting abstractions.
+`EminentAi.Application` owns use cases and cross-cutting abstractions.
 
 Key implementation files:
 
@@ -180,9 +180,9 @@ Key implementation files:
 - `Security/MutationHeuristics.cs`: classifies mutating tools and hard-denied operations.
 - `Abstractions/*`: interfaces for repositories, Ollama, MCP, policy, redaction, and built-in tools.
 
-### `LocalForge.Infrastructure`
+### `EminentAi.Infrastructure`
 
-`LocalForge.Infrastructure` implements external adapters.
+`EminentAi.Infrastructure` implements external adapters.
 
 Key implementation files:
 
@@ -191,13 +191,13 @@ Key implementation files:
 - `Tools/BuiltinToolRunner.cs`: provides built-in `filesystem.*` and `shell.run` tools.
 - `Security/PolicyEngine.cs`: evaluates connector rules and remembers approval decisions.
 - `Security/PiiRedactor.cs`: regex redaction for common tokens, keys, cards, SSNs, private keys, and auth headers.
-- `Persistence/LocalForgeDbContext.cs`: EF Core mappings and indexes.
+- `Persistence/EminentAiDbContext.cs`: EF Core mappings and indexes.
 - `Persistence/ConversationRepository.cs`: conversation, branch, and message persistence.
 - `Persistence/AgentRunRepository.cs`: agent run and step persistence with `IDbContextFactory`.
 
-### `LocalForge.Api`
+### `EminentAi.Api`
 
-`LocalForge.Api` is a single ASP.NET Core Minimal API host.
+`EminentAi.Api` is a single ASP.NET Core Minimal API host.
 
 Implemented concerns:
 
@@ -368,7 +368,7 @@ Important event families:
 sequenceDiagram
     participant U as User
     participant Web as Web UI
-    participant Api as LocalForge.Api
+    participant Api as EminentAi.Api
     participant Chat as ChatService
     participant Redactor as PiiRedactor
     participant Ollama as Ollama
@@ -424,7 +424,7 @@ Branching copies messages from a source branch through a selected message into a
 ```mermaid
 sequenceDiagram
     participant Web as Web UI
-    participant Api as LocalForge.Api
+    participant Api as EminentAi.Api
     participant Planner as PlannerService
     participant Ollama as Ollama
 
@@ -513,7 +513,7 @@ Each loop iteration:
 ```mermaid
 sequenceDiagram
     participant Web as Web UI
-    participant Api as LocalForge.Api
+    participant Api as EminentAi.Api
     participant Agent as AgentOrchestrator
     participant Policy as PolicyEngine
     participant Broker as ApprovalBroker
@@ -558,7 +558,7 @@ filesystem.search_files(query)
 
 Controls:
 
-- Paths are resolved under `LocalForge:WorkspaceRoot`.
+- Paths are resolved under `EminentAi:WorkspaceRoot`.
 - Path traversal is blocked with full-path comparison.
 - Reads are limited to 1 MB.
 - Listings are capped.
@@ -658,7 +658,7 @@ Hard-denied examples:
 ### Implemented Controls
 
 - Loopback binding by default.
-- Refuses non-loopback binding unless `LOCALFORGE_API_TOKEN` or `LocalForge:ApiToken` is configured.
+- Refuses non-loopback binding unless `EMINENTAI_API_TOKEN` or `EminentAi:ApiToken` is configured.
 - CORS allowlist for Vite origins.
 - Global fixed-window rate limiter.
 - Security headers:
@@ -692,7 +692,7 @@ These gaps are current implementation facts and should be treated as architectur
 ```mermaid
 sequenceDiagram
     participant Web as Web UI
-    participant Api as LocalForge.Api
+    participant Api as EminentAi.Api
     participant Db as SQLite
     participant Mail as Mailpit
 
@@ -722,7 +722,7 @@ sequenceDiagram
 
 ## Job Search Architecture
 
-The job-search module is implemented in `LocalForge.Api/JobSearchService.cs` and exposed through `/api/jobs/*` and `/api/cvs/*`.
+The job-search module is implemented in `EminentAi.Api/JobSearchService.cs` and exposed through `/api/jobs/*` and `/api/cvs/*`.
 
 ### Components
 
@@ -730,7 +730,7 @@ The job-search module is implemented in `LocalForge.Api/JobSearchService.cs` and
 - `IndeedDirectBuffer`: in-memory buffer for externally ingested Indeed jobs.
 - `JobRunCache`: singleton storing latest `JobSearchRunResult`.
 - `ReedAdapter`: fetches Reed API jobs when `REED_API_KEY` is configured.
-- `CvLoader`: reads CV files from `LocalForge:CvFolder` or `CVs`.
+- `CvLoader`: reads CV files from `EminentAi:CvFolder` or `CVs`.
 - `JobFilter`: applies user criteria.
 - `JobScorer`: scores jobs using criteria and CV keywords.
 - `ReportGenerator`: produces markdown report text.
@@ -782,7 +782,7 @@ flowchart LR
     App --> Composer[Composer]
 
     Store[Zustand store] --> ApiClient[web/src/lib/api.ts]
-    ApiClient --> Backend[LocalForge.Api]
+    ApiClient --> Backend[EminentAi.Api]
     Chat --> Store
     Plan --> Store
     Agent --> Store
@@ -805,13 +805,13 @@ The Zustand store owns most client behavior:
 
 ```mermaid
 flowchart TD
-    Activation[extension.ts activate] --> Config[Read localforge settings]
+    Activation[extension.ts activate] --> Config[Read eminentai settings]
     Config --> ApiClient[ApiClient]
     Activation --> ChatProvider[ChatViewProvider]
     Activation --> Commands[registerCommands]
     Activation --> Fim[Inline completion provider]
 
-    ChatProvider -->|POST /api/chat SSE| Backend[LocalForge.Api]
+    ChatProvider -->|POST /api/chat SSE| Backend[EminentAi.Api]
     ChatProvider -->|fallback /api/chat| Ollama[Ollama]
     Fim -->|/api/generate FIM| Ollama
     Commands -->|selection prompts| ChatProvider
@@ -919,14 +919,14 @@ Recommended next step: move bootstrap SQL to EF Core migrations once schema stab
 
 ## Configuration
 
-`src/LocalForge.Api/appsettings.json`:
+`src/EminentAi.Api/appsettings.json`:
 
 ```json
 {
   "ConnectionStrings": {
-    "Default": "Data Source=localforge.db"
+    "Default": "Data Source=eminentai.db"
   },
-  "LocalForge": {
+  "EminentAi": {
     "OllamaUrl": "http://127.0.0.1:11434",
     "WorkspaceRoot": "",
     "AllowedOrigins": ["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -934,8 +934,8 @@ Recommended next step: move bootstrap SQL to EF Core migrations once schema stab
     "Smtp": {
       "Host": "127.0.0.1",
       "Port": 1025,
-      "FromAddress": "noreply@localforge.local",
-      "FromName": "LocalForge",
+      "FromAddress": "noreply@eminentai.local",
+      "FromName": "EminentAi",
       "AppBaseUrl": "http://localhost:5173"
     }
   }
@@ -944,7 +944,7 @@ Recommended next step: move bootstrap SQL to EF Core migrations once schema stab
 
 Environment variables:
 
-- `LOCALFORGE_API_TOKEN`: optional global API token, required for non-loopback binding.
+- `EMINENTAI_API_TOKEN`: optional global API token, required for non-loopback binding.
 - `REED_API_KEY`: enables Reed job source.
 - Ollama environment variables can tune model residency outside this app.
 
@@ -991,7 +991,7 @@ Known performance risks:
 Current verification commands:
 
 ```bash
-dotnet build LocalForge.slnx
+dotnet build EminentAi.slnx
 cd web && npm run build
 cd web && npm run lint
 cd vscode-ext && npm run compile
