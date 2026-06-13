@@ -219,6 +219,8 @@ static string CreateToken() => Convert.ToBase64String(RandomNumberGenerator.GetB
 static string? HashToken(string? token) =>
     string.IsNullOrWhiteSpace(token) ? null : Convert.ToBase64String(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)));
 
+static string EscapeHtml(string value) => WebUtility.HtmlEncode(value);
+
 static async Task SendPasswordResetEmailAsync(IConfiguration config, string toEmail, string resetToken)
 {
     var smtp = config.GetSection("EminentAi:Smtp");
@@ -228,6 +230,7 @@ static async Task SendPasswordResetEmailAsync(IConfiguration config, string toEm
     var fromName = smtp["FromName"] ?? "EminentAi";
     var appBase = smtp["AppBaseUrl"] ?? "http://localhost:5173";
     var resetUrl = $"{appBase}?token={Uri.EscapeDataString(resetToken)}";
+    var escapedResetUrl = EscapeHtml(resetUrl);
 
 #pragma warning disable CS0618 // SmtpClient is deprecated but works fine with Mailpit on localhost
     using var client = new SmtpClient(host, port) { EnableSsl = false, Credentials = CredentialCache.DefaultNetworkCredentials };
@@ -235,15 +238,37 @@ static async Task SendPasswordResetEmailAsync(IConfiguration config, string toEm
     {
         Subject = "Reset your EminentAi password",
         Body = $"""
-            Someone requested a password reset for your EminentAi admin account.
-
-            Click the link below to set a new password (valid for 1 hour):
-            {resetUrl}
-
-            If you did not request this, you can safely ignore this email.
+            <!doctype html>
+            <html>
+            <body style="margin:0;padding:24px;font-family:Arial,sans-serif;color:#111827;background:#ffffff;">
+              <div style="max-width:520px;">
+                <h1 style="font-size:20px;margin:0 0 16px;">Reset your EminentAi password</h1>
+                <p style="font-size:15px;line-height:1.5;margin:0 0 16px;">
+                  Someone requested a password reset for your EminentAi admin account.
+                </p>
+                <p style="font-size:15px;line-height:1.5;margin:0 0 24px;">
+                  Click the button below to set a new password. This link is valid for 1 hour.
+                </p>
+                <a href="{escapedResetUrl}" target="_blank" rel="noopener noreferrer"
+                   style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;font-weight:700;border-radius:8px;padding:12px 18px;">
+                  Reset password
+                </a>
+                <p style="font-size:13px;line-height:1.5;margin:24px 0 0;color:#6b7280;">
+                  If you did not request this, you can safely ignore this email.
+                </p>
+              </div>
+            </body>
+            </html>
             """,
-        IsBodyHtml = false,
+        IsBodyHtml = true,
     };
+    mail.AlternateViews.Add(AlternateView.CreateAlternateViewFromString($"""
+        Someone requested a password reset for your EminentAi admin account.
+
+        Use the reset password button in the HTML email to set a new password. This link is valid for 1 hour.
+
+        If you did not request this, you can safely ignore this email.
+        """, null, "text/plain"));
     await client.SendMailAsync(mail);
 #pragma warning restore CS0618
 }
@@ -458,6 +483,26 @@ app.MapGet("/api/conversations/{id:guid}", async (Guid id, IConversationReposito
                 })
             })
         })
+    });
+});
+
+app.MapPatch("/api/conversations/{id:guid}", async (Guid id, [FromBody] UpdateConversationRequest request, IConversationRepository repo, CancellationToken ct) =>
+{
+    var title = request.Title?.Trim();
+    if (string.IsNullOrWhiteSpace(title))
+        return Results.BadRequest(new { error = "title is required" });
+
+    var conversation = await repo.GetConversationAsync(id, ct);
+    if (conversation is null) return Results.NotFound();
+
+    conversation.Title = title;
+    await repo.SaveChangesAsync(ct);
+    return Results.Ok(new
+    {
+        conversation.Id,
+        conversation.Title,
+        conversation.CreatedAt,
+        conversation.ModelDefault
     });
 });
 
@@ -1030,6 +1075,7 @@ internal static class SseJson
 }
 
 public record CreateConversationRequest(string? Title, string Model, string? SystemPrompt);
+public record UpdateConversationRequest(string? Title);
 public record StatelessChatRequest(string Model, List<StatelessChatMessage> Messages);
 public record StatelessChatMessage(string Role, string Content);
 public record SendMessageRequest(string Content, string? ModelOverride, List<SendAttachmentRequest>? Attachments);

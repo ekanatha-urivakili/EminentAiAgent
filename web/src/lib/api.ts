@@ -93,6 +93,11 @@ export const api = {
     ),
   getConversation: (id: string) =>
     request<import('./types').ConversationDetail>(`/api/conversations/${id}`),
+  renameConversation: (id: string, title: string) =>
+    request<import('./types').ConversationSummary>(`/api/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    }),
   deleteConversation: (id: string) =>
     request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
 

@@ -2,13 +2,24 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Briefcase, RefreshCw, Upload, Trash2, CheckCircle2, XCircle, AlertCircle,
   ChevronDown, ChevronUp, Star, Wifi, WifiOff, FileText, Settings, Activity,
-  Plus, X,
+  Plus, X, HelpCircle, Copy, PlayCircle,
 } from 'lucide-react';
 import { useStore } from '../state/store';
 import { cn } from '../lib/utils';
 import type { IndeedJobInput, JobSearchCriteria, JobMatchResult, SourceHealthInfo } from '../lib/types';
 
 type Tab = 'results' | 'settings' | 'cvs' | 'sources';
+
+const indeedExamplePayload = '[{"jobkey":"abc123","jobTitle":"Senior Software Engineer","companyName":"Example Ltd","formattedLocation":"Remote","jobUrl":"https://uk.indeed.com/viewjob?jk=abc123"}]';
+const indeedCurlCommand = `curl -X POST http://127.0.0.1:5210/api/jobs/ingest_indeed \\
+  -H "Content-Type: application/json" \\
+  -d '{"clearFirst":true,"jobs":${indeedExamplePayload}}'`;
+const reedSetupCommand = 'export REED_API_KEY="your_reed_api_key"';
+const gmailSetupCommand = 'Set GMAIL_CREDENTIALS_JSON and GMAIL_USER_EMAIL in Source Configuration, then Save Settings.';
+
+async function copyText(text: string): Promise<void> {
+  await navigator.clipboard.writeText(text);
+}
 
 export function JobSearchView() {
   const [tab, setTab] = useState<Tab>('results');
@@ -36,10 +47,10 @@ export function JobSearchView() {
   }, [loadJobResults, loadJobSettings, loadJobSources, loadCvFiles]);
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: 'results', label: 'Results', icon: <Briefcase size={15} /> },
-    { key: 'settings', label: 'Settings', icon: <Settings size={15} /> },
-    { key: 'cvs', label: 'CVs', icon: <FileText size={15} /> },
-    { key: 'sources', label: 'Sources', icon: <Activity size={15} /> },
+    { key: 'results', label: 'Results', icon: <Briefcase size={16} /> },
+    { key: 'settings', label: 'Settings', icon: <Settings size={16} /> },
+    { key: 'cvs', label: 'CVs', icon: <FileText size={16} /> },
+    { key: 'sources', label: 'Sources', icon: <Activity size={16} /> },
   ];
 
   return (
@@ -48,10 +59,10 @@ export function JobSearchView() {
       <div className="border-b border-border px-6 pt-5 pb-0">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-xl font-semibold flex items-center gap-2">
-              <Briefcase size={20} /> Job Search Agent
+            <h1 className="text-2xl font-semibold flex items-center gap-2">
+              <Briefcase size={22} /> Job Search Agent
             </h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
+            <p className="text-base text-muted-foreground mt-0.5">
               Automated job discovery, filtering, and CV scoring
             </p>
           </div>
@@ -59,9 +70,9 @@ export function JobSearchView() {
             <button
               onClick={() => void runJobSearch()}
               disabled={jobLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-sm font-medium"
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-base font-medium"
             >
-              <RefreshCw size={15} className={cn(jobLoading && 'animate-spin')} />
+              <RefreshCw size={16} className={cn(jobLoading && 'animate-spin')} />
               {jobLoading ? 'Searching…' : 'Run Search'}
             </button>
           )}
@@ -74,7 +85,7 @@ export function JobSearchView() {
               key={t.key}
               onClick={() => setTab(t.key)}
               className={cn(
-                'flex items-center gap-1.5 px-4 py-2 text-sm rounded-t-lg border-b-2 transition-colors',
+                'flex items-center gap-1.5 px-4 py-2.5 text-base rounded-t-lg border-b-2 transition-colors',
                 tab === t.key
                   ? 'border-primary text-foreground font-medium'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -103,7 +114,13 @@ export function JobSearchView() {
           <CvsTab files={cvFiles} onUpload={uploadCv} onDelete={deleteCv} onReload={loadCvFiles} />
         )}
         {tab === 'sources' && (
-          <SourcesTab sources={jobSources} onRefresh={loadJobSources} onIngestIndeed={ingestIndeedJobs} />
+          <SourcesTab
+            sources={jobSources}
+            onRefresh={loadJobSources}
+            onIngestIndeed={ingestIndeedJobs}
+            settings={jobSettings}
+            onSave={saveJobSettings}
+          />
         )}
       </div>
     </div>
@@ -124,8 +141,8 @@ function ResultsTab({
   if (loading && !results) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
-        <RefreshCw size={32} className="animate-spin" />
-        <span>Searching across sources…</span>
+        <RefreshCw size={36} className="animate-spin" />
+        <span className="text-base">Searching across sources…</span>
       </div>
     );
   }
@@ -133,8 +150,8 @@ function ResultsTab({
   if (error) {
     return (
       <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
-        <AlertCircle size={18} />
-        <span className="text-sm">{error}</span>
+        <AlertCircle size={20} />
+        <span className="text-base">{error}</span>
       </div>
     );
   }
@@ -142,10 +159,10 @@ function ResultsTab({
   if (!results) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground">
-        <Briefcase size={48} className="opacity-20" />
+        <Briefcase size={56} className="opacity-20" />
         <div className="text-center">
-          <p className="font-medium">No results yet</p>
-          <p className="text-sm mt-1">Configure your settings and click Run Search to start</p>
+          <p className="font-medium text-lg">No results yet</p>
+          <p className="text-base mt-1">Configure your settings and click Run Search to start</p>
         </div>
       </div>
     );
@@ -170,7 +187,7 @@ function ResultsTab({
           color="muted"
         />
         {results.finishedAt && (
-          <span className="text-xs text-muted-foreground self-center">
+          <span className="text-sm text-muted-foreground self-center">
             Run at {new Date(results.startedAt).toLocaleTimeString()}
           </span>
         )}
@@ -182,7 +199,7 @@ function ResultsTab({
           <span
             key={s.source}
             className={cn(
-              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium',
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium',
               s.status === 'Succeeded'
                 ? 'bg-green-500/10 text-green-600 dark:text-green-400'
                 : s.status === 'Failed'
@@ -190,7 +207,7 @@ function ResultsTab({
                   : 'bg-muted text-muted-foreground',
             )}
           >
-            {s.status === 'Succeeded' ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
+            {s.status === 'Succeeded' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
             {s.source}: {s.jobsFetched} jobs
           </span>
         ))}
@@ -199,14 +216,14 @@ function ResultsTab({
       {/* Rejected summary */}
       {Object.keys(results.rejectedSummary).length > 0 && (
         <details className="group">
-          <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <summary className="cursor-pointer text-base text-muted-foreground hover:text-foreground transition-colors">
             Rejected jobs breakdown
           </summary>
           <div className="mt-2 grid grid-cols-2 md:grid-cols-3 gap-2">
             {(Object.entries(results.rejectedSummary) as [string, number][])
               .sort(([, a], [, b]) => b - a)
               .map(([reason, count]) => (
-                <div key={reason} className="flex justify-between text-xs bg-muted/50 rounded-lg px-3 py-1.5">
+                <div key={reason} className="flex justify-between text-sm bg-muted/50 rounded-lg px-3 py-1.5">
                   <span className="text-muted-foreground">{reason}</span>
                   <span className="font-mono font-medium">{count}</span>
                 </div>
@@ -218,8 +235,8 @@ function ResultsTab({
       {/* Recommended section */}
       {recommended.length > 0 && (
         <section>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
-            <Star size={13} className="text-amber-500" /> Recommended ({recommended.length})
+          <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <Star size={14} className="text-amber-500" /> Recommended ({recommended.length})
           </h3>
           <div className="space-y-3">
             {recommended.map((m) => <JobCard key={m.posting.id} match={m} />)}
@@ -230,7 +247,7 @@ function ResultsTab({
       {/* Other matches */}
       {rest.length > 0 && (
         <section>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-3">
             Other matches ({rest.length})
           </h3>
           <div className="space-y-3">
@@ -241,8 +258,8 @@ function ResultsTab({
 
       {results.matches.length === 0 && (
         <div className="text-center py-12 text-muted-foreground">
-          <p className="font-medium">No matching jobs found</p>
-          <p className="text-sm mt-1">Try adjusting your search criteria or check source status</p>
+          <p className="font-medium text-lg">No matching jobs found</p>
+          <p className="text-base mt-1">Try adjusting your search criteria or check source status</p>
         </div>
       )}
     </div>
@@ -252,16 +269,16 @@ function ResultsTab({
 function StatPill({ label, value, color }: { label: string; value: number; color: 'default' | 'green' | 'muted' }) {
   return (
     <div className={cn(
-      'px-4 py-2 rounded-xl border text-center min-w-[80px]',
+      'px-5 py-3 rounded-xl border text-center min-w-[100px]',
       color === 'green' ? 'border-green-500/30 bg-green-500/5' :
       color === 'muted' ? 'border-border bg-muted/30' :
       'border-border bg-muted/50',
     )}>
       <div className={cn(
-        'text-2xl font-bold',
+        'text-3xl font-bold',
         color === 'green' ? 'text-green-600 dark:text-green-400' : 'text-foreground',
       )}>{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-xs text-muted-foreground uppercase font-semibold tracking-wide">{label}</div>
     </div>
   );
 }
@@ -280,20 +297,20 @@ function JobCard({ match }: { match: JobMatchResult }) {
       'border rounded-xl transition-all',
       recommended ? 'border-green-500/30 bg-green-500/5' : 'border-border bg-card',
     )}>
-      <div className="p-4">
+      <div className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               {recommended && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400 bg-green-500/10 px-2 py-0.5 rounded-full">
-                  <Star size={10} /> Recommended
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-500/10 px-2 py-0.5 rounded-full uppercase tracking-tight">
+                  <Star size={11} /> Recommended
                 </span>
               )}
-              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+              <span className="text-xs font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-full uppercase tracking-tight">
                 {posting.source}
               </span>
             </div>
-            <h3 className="font-semibold mt-1 text-base leading-tight">
+            <h3 className="font-semibold mt-1 text-lg leading-tight">
               {posting.url ? (
                 <a
                   href={posting.url}
@@ -305,18 +322,18 @@ function JobCard({ match }: { match: JobMatchResult }) {
                 </a>
               ) : posting.title}
             </h3>
-            <p className="text-sm text-muted-foreground mt-0.5">
+            <p className="text-base text-muted-foreground mt-0.5">
               {posting.company} · {posting.location}
             </p>
           </div>
 
-          <div className={cn('flex-shrink-0 border px-3 py-1.5 rounded-lg text-center min-w-[56px]', scoreColor)}>
-            <div className="text-lg font-bold leading-none">{score}</div>
-            <div className="text-[10px] mt-0.5">score</div>
+          <div className={cn('flex-shrink-0 border px-3 py-1.5 rounded-lg text-center min-w-[64px]', scoreColor)}>
+            <div className="text-xl font-bold leading-none">{score}</div>
+            <div className="text-[10px] uppercase font-bold mt-1">score</div>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 mt-3 text-xs">
+        <div className="flex flex-wrap gap-2 mt-4 text-sm">
           {posting.employmentType && (
             <span className="bg-muted px-2 py-1 rounded-md">{posting.employmentType}</span>
           )}
@@ -347,15 +364,15 @@ function JobCard({ match }: { match: JobMatchResult }) {
         </div>
 
         {(reasons.length > 0 || risks.length > 0) && (
-          <div className="flex flex-wrap gap-2 mt-2">
+          <div className="flex flex-wrap gap-2 mt-3">
             {reasons.map((r) => (
-              <span key={r} className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                <CheckCircle2 size={11} /> {r}
+              <span key={r} className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+                <CheckCircle2 size={13} /> {r}
               </span>
             ))}
             {risks.map((r) => (
-              <span key={r} className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-                <AlertCircle size={11} /> {r}
+              <span key={r} className="flex items-center gap-1 text-sm text-amber-600 dark:text-amber-400">
+                <AlertCircle size={13} /> {r}
               </span>
             ))}
           </div>
@@ -364,15 +381,15 @@ function JobCard({ match }: { match: JobMatchResult }) {
         {posting.description && (
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-3 transition-colors"
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mt-4 transition-colors font-medium"
           >
-            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
             {expanded ? 'Hide' : 'Show'} description
           </button>
         )}
 
         {expanded && posting.description && (
-          <p className="mt-2 text-sm text-muted-foreground leading-relaxed whitespace-pre-line line-clamp-10">
+          <p className="mt-3 text-base text-muted-foreground leading-relaxed whitespace-pre-line line-clamp-10">
             {posting.description}
           </p>
         )}
@@ -392,7 +409,6 @@ function SettingsTab({
 }) {
   const [form, setForm] = useState<JobSearchCriteria>(settings);
   const [newKeyword, setNewKeyword] = useState('');
-  const configuredSecrets = new Set(form.configuredSecretKeys);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -448,35 +464,35 @@ function SettingsTab({
   };
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <section className="rounded-xl border border-border bg-card p-4">
-        <h2 className="text-sm font-semibold mb-4">Job Profile</h2>
-        <div className="grid grid-cols-1 gap-4">
+    <div className="max-w-4xl space-y-6 pb-12">
+      <section className="rounded-xl border border-border bg-card p-5">
+        <h2 className="text-lg font-semibold mb-5">Job Profile</h2>
+        <div className="grid grid-cols-1 gap-5">
           <div>
-            <label className="block text-sm font-semibold mb-2">Desired Designations</label>
+            <label className="block text-base font-semibold mb-2">Desired Designations</label>
             <textarea
               rows={3}
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
               placeholder="Senior Software Engineer, Lead Developer, Principal Engineer"
               value={form.desiredDesignations.join(', ')}
               onChange={(e) => updateCsv('desiredDesignations', e.target.value)}
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold mb-2">Skills</label>
+            <label className="block text-base font-semibold mb-2">Skills</label>
             <textarea
               rows={3}
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
               placeholder="C#, ASP.NET Core, React, TypeScript, AWS, Docker"
               value={form.skills.join(', ')}
               onChange={(e) => updateCsv('skills', e.target.value)}
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold mb-2">Excluded Keywords</label>
+            <label className="block text-base font-semibold mb-2">Excluded Keywords</label>
             <textarea
               rows={2}
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
               placeholder="graduate, junior, java only, onsite 5 days"
               value={form.excludedKeywords.join(', ')}
               onChange={(e) => updateCsv('excludedKeywords', e.target.value)}
@@ -485,22 +501,22 @@ function SettingsTab({
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-4 space-y-4">
-        <h2 className="text-sm font-semibold">Schedule</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <section className="rounded-xl border border-border bg-card p-5 space-y-5">
+        <h2 className="text-lg font-semibold">Schedule</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
-            <label className="block text-sm font-semibold mb-2">Time Zone</label>
+            <label className="block text-base font-semibold mb-2">Time Zone</label>
             <input
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
               value={form.timeZone}
               onChange={(e) => setForm((f) => ({ ...f, timeZone: e.target.value }))}
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold mb-2">Run At</label>
+            <label className="block text-base font-semibold mb-2">Run At</label>
             <input
               type="time"
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
               value={form.runAt}
               onChange={(e) => setForm((f) => ({ ...f, runAt: e.target.value }))}
             />
@@ -509,11 +525,11 @@ function SettingsTab({
       </section>
 
       {/* Keywords */}
-      <section>
-        <label className="block text-sm font-semibold mb-2">Job Title Keywords</label>
-        <div className="flex gap-2 mb-2">
+      <section className="p-1">
+        <label className="block text-base font-semibold mb-2">Job Title Keywords</label>
+        <div className="flex gap-2 mb-3">
           <input
-            className="flex-1 bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="flex-1 bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
             placeholder="e.g. Senior Software Engineer"
             value={newKeyword}
             onChange={(e) => setNewKeyword(e.target.value)}
@@ -523,43 +539,43 @@ function SettingsTab({
             onClick={addKeyword}
             className="px-3 py-2 bg-muted border border-border rounded-lg hover:bg-muted/80 transition-colors"
           >
-            <Plus size={16} />
+            <Plus size={18} />
           </button>
         </div>
         <div className="flex flex-wrap gap-2">
           {form.keywords.map((kw) => (
             <span
               key={kw}
-              className="inline-flex items-center gap-1 bg-primary/10 text-primary px-3 py-1 rounded-full text-sm"
+              className="inline-flex items-center gap-1 bg-primary/10 text-primary px-3 py-1.5 rounded-full text-base font-medium"
             >
               {kw}
               <button onClick={() => removeKeyword(kw)} className="hover:text-destructive ml-1 transition-colors">
-                <X size={12} />
+                <X size={14} />
               </button>
             </span>
           ))}
           {form.keywords.length === 0 && (
-            <span className="text-sm text-muted-foreground">No keywords — all titles will be included</span>
+            <span className="text-base text-muted-foreground">No keywords — all titles will be included</span>
           )}
         </div>
       </section>
 
       {/* Location */}
-      <section className="grid grid-cols-2 gap-4">
+      <section className="grid grid-cols-2 gap-5 p-1">
         <div>
-          <label className="block text-sm font-semibold mb-2">Postcode / Location</label>
+          <label className="block text-base font-semibold mb-2">Postcode / Location</label>
           <input
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
             placeholder="e.g. SW1A 1AA"
             value={form.postcode}
             onChange={(e) => setForm((f) => ({ ...f, postcode: e.target.value }))}
           />
         </div>
         <div>
-          <label className="block text-sm font-semibold mb-2">Radius (miles)</label>
+          <label className="block text-base font-semibold mb-2">Radius (miles)</label>
           <input
             type="number"
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
             value={form.radiusMiles}
             min={1}
             max={200}
@@ -569,8 +585,8 @@ function SettingsTab({
       </section>
 
       {/* Posted within */}
-      <section>
-        <label className="block text-sm font-semibold mb-2">
+      <section className="p-1">
+        <label className="block text-base font-semibold mb-2">
           Posted within (days): <span className="text-primary font-mono">{form.postedWithinDays}</span>
         </label>
         <input
@@ -581,20 +597,20 @@ function SettingsTab({
           className="w-full accent-primary"
           onChange={(e) => setForm((f) => ({ ...f, postedWithinDays: Number(e.target.value) }))}
         />
-        <div className="flex justify-between text-xs text-muted-foreground mt-1">
+        <div className="flex justify-between text-sm text-muted-foreground mt-1">
           <span>1 day</span><span>30 days</span><span>60 days</span>
         </div>
       </section>
 
       {/* Employment types */}
-      <section>
-        <label className="block text-sm font-semibold mb-2">Employment Types</label>
-        <div className="flex gap-3">
+      <section className="p-1">
+        <label className="block text-base font-semibold mb-2">Employment Types</label>
+        <div className="flex gap-4">
           {['Permanent', 'Contract', 'Part-time'].map((t) => (
-            <label key={t} className="flex items-center gap-2 cursor-pointer text-sm">
+            <label key={t} className="flex items-center gap-2 cursor-pointer text-base">
               <input
                 type="checkbox"
-                className="accent-primary w-4 h-4"
+                className="accent-primary w-5 h-5"
                 checked={form.employmentTypes.includes(t)}
                 onChange={() => toggleEmpType(t)}
               />
@@ -604,14 +620,14 @@ function SettingsTab({
         </div>
       </section>
 
-      <section>
-        <label className="block text-sm font-semibold mb-2">Work Modes</label>
-        <div className="flex gap-3">
+      <section className="p-1">
+        <label className="block text-base font-semibold mb-2">Work Modes</label>
+        <div className="flex gap-4">
           {['Remote', 'Hybrid', 'Office'].map((mode) => (
-            <label key={mode} className="flex items-center gap-2 cursor-pointer text-sm">
+            <label key={mode} className="flex items-center gap-2 cursor-pointer text-base">
               <input
                 type="checkbox"
-                className="accent-primary w-4 h-4"
+                className="accent-primary w-5 h-5"
                 checked={form.workModes.includes(mode)}
                 onChange={() => toggleWorkMode(mode)}
               />
@@ -622,12 +638,12 @@ function SettingsTab({
       </section>
 
       {/* Salary thresholds */}
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-3 gap-5 p-1">
         <div>
-          <label className="block text-sm font-semibold mb-2">Min Salary (£/yr)</label>
+          <label className="block text-base font-semibold mb-2">Min Salary (£/yr)</label>
           <input
             type="number"
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
             placeholder="0"
             value={form.minimumPermanentSalaryGbp || ''}
             min={0}
@@ -636,10 +652,10 @@ function SettingsTab({
           />
         </div>
         <div>
-          <label className="block text-sm font-semibold mb-2">Min Day Rate (£)</label>
+          <label className="block text-base font-semibold mb-2">Min Day Rate (£)</label>
           <input
             type="number"
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
             placeholder="0"
             value={form.minimumContractDayRateGbp || ''}
             min={0}
@@ -648,10 +664,10 @@ function SettingsTab({
           />
         </div>
         <div>
-          <label className="block text-sm font-semibold mb-2">Min Contract (months)</label>
+          <label className="block text-base font-semibold mb-2">Min Contract (months)</label>
           <input
             type="number"
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
             placeholder="0"
             value={form.minimumContractMonths || ''}
             min={0}
@@ -660,67 +676,10 @@ function SettingsTab({
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-4 space-y-4">
-        <h2 className="text-sm font-semibold">Source Configuration</h2>
-        <div>
-          <label className="block text-sm font-semibold mb-2">Reed API Key</label>
-          <input
-            type="password"
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            placeholder={configuredSecrets.has('REED_API_KEY') ? 'Saved. Enter a new key to replace it.' : 'Paste Reed API key'}
-            value={form.reedApiKey ?? ''}
-            onChange={(e) => setForm((f) => ({ ...f, reedApiKey: e.target.value }))}
-          />
-          {configuredSecrets.has('REED_API_KEY') && (
-            <p className="mt-1 text-xs text-muted-foreground">A Reed key is already configured.</p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-semibold mb-2">Slack Webhook URL</label>
-          <input
-            type="password"
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            placeholder={configuredSecrets.has('SLACK_WEBHOOK_URL') ? 'Saved. Enter a new URL to replace it.' : 'https://hooks.slack.com/services/...'}
-            value={form.slackWebhookUrl ?? ''}
-            onChange={(e) => setForm((f) => ({ ...f, slackWebhookUrl: e.target.value }))}
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-semibold mb-2">Gmail Credentials JSON</label>
-          <textarea
-            rows={5}
-            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
-            placeholder={configuredSecrets.has('GMAIL_CREDENTIALS_JSON') ? 'Saved. Paste new JSON to replace it.' : '{"type":"service_account",...}'}
-            value={form.gmailCredentialsJson ?? ''}
-            onChange={(e) => setForm((f) => ({ ...f, gmailCredentialsJson: e.target.value }))}
-          />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-semibold mb-2">Gmail User Email</label>
-            <input
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-              placeholder="you@your-domain.com"
-              value={form.gmailUserEmail ?? ''}
-              onChange={(e) => setForm((f) => ({ ...f, gmailUserEmail: e.target.value }))}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold mb-2">Gmail Search Query</label>
-            <input
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-              placeholder="label:job-alerts is:unread"
-              value={form.gmailSearchQuery ?? ''}
-              onChange={(e) => setForm((f) => ({ ...f, gmailSearchQuery: e.target.value }))}
-            />
-          </div>
-        </div>
-      </section>
-
       <button
         onClick={() => void handleSave()}
         disabled={saving}
-        className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-sm font-medium"
+        className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-base font-medium"
       >
         {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save Settings'}
       </button>
@@ -766,10 +725,10 @@ function CvsTab({
   };
 
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="max-w-xl space-y-6">
       <div>
-        <h2 className="text-sm font-semibold mb-1">Upload CVs for Better Matching</h2>
-        <p className="text-xs text-muted-foreground">
+        <h2 className="text-lg font-semibold mb-1">Upload CVs for Better Matching</h2>
+        <p className="text-base text-muted-foreground">
           .pdf, .docx, .txt and .md files. Keywords are extracted for scoring.
         </p>
       </div>
@@ -781,16 +740,16 @@ function CvsTab({
         onDrop={(e) => void handleDrop(e)}
         onClick={() => inputRef.current?.click()}
         className={cn(
-          'border-2 border-dashed rounded-xl p-8 flex flex-col items-center gap-3 cursor-pointer transition-colors',
+          'border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-3 cursor-pointer transition-colors',
           dragging ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50',
         )}
       >
-        <Upload size={28} className="text-muted-foreground" />
+        <Upload size={32} className="text-muted-foreground" />
         <div className="text-center">
-          <p className="text-sm font-medium">
+          <p className="text-base font-medium">
             {uploading ? 'Uploading…' : 'Drop a file here or click to browse'}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, TXT, MD</p>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">PDF, DOCX, TXT, MD</p>
         </div>
         <input
           ref={inputRef}
@@ -806,19 +765,19 @@ function CvsTab({
       </div>
 
       {uploadError && (
-        <div className="text-sm text-destructive flex items-center gap-2">
-          <XCircle size={14} /> {uploadError}
+        <div className="text-base text-destructive flex items-center gap-2">
+          <XCircle size={16} /> {uploadError}
         </div>
       )}
 
       {/* File list */}
       {files.length > 0 ? (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Uploaded CVs ({files.length})</h3>
+            <h3 className="text-base font-semibold">Uploaded CVs ({files.length})</h3>
             <button
               onClick={() => void onReload()}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors font-medium"
             >
               Refresh
             </button>
@@ -826,10 +785,10 @@ function CvsTab({
           {files.map((name) => (
             <div
               key={name}
-              className="flex items-center justify-between bg-muted/50 border border-border rounded-lg px-4 py-2.5"
+              className="flex items-center justify-between bg-muted/50 border border-border rounded-lg px-4 py-3"
             >
-              <div className="flex items-center gap-2 text-sm">
-                <FileText size={15} className="text-muted-foreground" />
+              <div className="flex items-center gap-2 text-base">
+                <FileText size={18} className="text-muted-foreground" />
                 <span className="font-mono">{name}</span>
               </div>
               <button
@@ -837,13 +796,13 @@ function CvsTab({
                 className="p-1.5 hover:bg-destructive/10 hover:text-destructive text-muted-foreground rounded-md transition-colors"
                 title="Delete"
               >
-                <Trash2 size={14} />
+                <Trash2 size={18} />
               </button>
             </div>
           ))}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
+        <p className="text-base text-muted-foreground font-medium">
           No CVs uploaded yet. Add a CV to improve match scoring.
         </p>
       )}
@@ -874,6 +833,108 @@ function getNumber(record: Record<string, unknown>, keys: string[]): number | un
     if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
   }
   return undefined;
+}
+
+type SourceName = 'Reed' | 'Indeed Direct' | 'Gmail Alerts';
+
+const sourceHelp: Record<SourceName, { title: string; body: string; command: string }> = {
+  Reed: {
+    title: 'Reed API',
+    body: 'Ready when REED_API_KEY is saved in settings or available as an environment variable before the API server starts.',
+    command: reedSetupCommand,
+  },
+  'Indeed Direct': {
+    title: 'Indeed Direct',
+    body: 'Ready when at least one Indeed job has been imported into the in-memory buffer. Use the import box below to run the ingest endpoint from this screen.',
+    command: indeedCurlCommand,
+  },
+  'Gmail Alerts': {
+    title: 'Gmail Alerts',
+    body: 'Ready when Gmail credentials JSON and Gmail user email are saved. The current backend reports configured credentials, but the Gmail fetch adapter still needs implementation before alerts can be searched.',
+    command: gmailSetupCommand,
+  },
+};
+
+function isSourceName(source: string): source is SourceName {
+  return source === 'Reed' || source === 'Indeed Direct' || source === 'Gmail Alerts';
+}
+
+function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    await copyText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleCopy()}
+      className="inline-flex items-center gap-1.5 px-2 py-1 border border-border rounded-md text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+      title={label}
+    >
+      <Copy size={12} />
+      {copied ? 'Copied' : label}
+    </button>
+  );
+}
+
+function HelpPopover({
+  title,
+  body,
+  copyText: copyValue,
+}: {
+  title: string;
+  body: string;
+  copyText: string;
+}) {
+  return (
+    <details className="relative group">
+      <summary className="list-none cursor-pointer inline-flex items-center text-muted-foreground hover:text-foreground">
+        <HelpCircle size={15} />
+      </summary>
+      <div className="absolute z-20 mt-2 w-72 rounded-xl border border-border bg-popover p-3 shadow-lg text-sm text-popover-foreground space-y-3">
+        <div>
+          <p className="font-semibold text-foreground">{title}</p>
+          <p className="mt-1 text-muted-foreground">{body}</p>
+        </div>
+        <div className="flex justify-end">
+          <CopyButton value={copyValue} />
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function CommandBlock({ label, command }: { label: string; command: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
+        <CopyButton value={command} />
+      </div>
+      <pre className="overflow-x-auto whitespace-pre-wrap text-xs font-mono text-foreground">{command}</pre>
+    </div>
+  );
+}
+
+function SourceSetupHelp({ sourceName }: { sourceName: SourceName }) {
+  const help = sourceHelp[sourceName];
+
+  return (
+    <div className="rounded-lg border border-border bg-card/70 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-foreground">{help.title}</p>
+          <p className="mt-1">{help.body}</p>
+        </div>
+        <HelpPopover title={`${help.title} help`} body={help.body} copyText={help.command} />
+      </div>
+      <CommandBlock label="Copy setup" command={help.command} />
+    </div>
+  );
 }
 
 function parseIndeedPayload(raw: string): IndeedJobInput[] {
@@ -920,14 +981,39 @@ function SourcesTab({
   sources,
   onRefresh,
   onIngestIndeed,
+  settings,
+  onSave,
 }: {
   sources: SourceHealthInfo[];
   onRefresh: () => Promise<void>;
   onIngestIndeed: (jobs: IndeedJobInput[], clearFirst?: boolean) => Promise<void>;
+  settings: JobSearchCriteria;
+  onSave: (s: JobSearchCriteria) => Promise<void>;
 }) {
   const [indeedJson, setIndeedJson] = useState('');
   const [ingesting, setIngesting] = useState(false);
   const [ingestMessage, setIngestMessage] = useState<string>();
+  const [showActivateHelp, setShowActivateHelp] = useState(false);
+
+  const [form, setForm] = useState<JobSearchCriteria>(settings);
+  const configuredSecrets = new Set(form.configuredSecretKeys);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setForm(settings);
+  }, [settings]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(form);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const ingestIndeed = async () => {
     setIngestMessage(undefined);
@@ -951,49 +1037,175 @@ function SourcesTab({
   };
 
   return (
-    <div className="space-y-4 max-w-3xl">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Source Health</h2>
+    <div className="space-y-5 max-w-3xl">
+      <div className="bg-muted/30 border border-border rounded-xl overflow-hidden">
+        <button
+          onClick={() => setShowActivateHelp((v) => !v)}
+          className="w-full flex items-center justify-between p-5 text-left hover:bg-muted/40 transition-colors"
+        >
+          <p className="font-semibold text-foreground text-base">How to activate sources</p>
+          {showActivateHelp ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+        </button>
+
+        {showActivateHelp && (
+          <div className="p-5 pt-0 text-sm text-muted-foreground space-y-4">
+            <SourceSetupHelp sourceName="Reed" />
+            <SourceSetupHelp sourceName="Indeed Direct" />
+            <SourceSetupHelp sourceName="Gmail Alerts" />
+          </div>
+        )}
+      </div>
+
+      <section className="rounded-xl border border-border bg-card p-5 space-y-5">
+        <h2 className="text-lg font-semibold">Source Configuration</h2>
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <label className="block text-base font-semibold">Reed API Key</label>
+            <HelpPopover
+              title="Reed API setup"
+              body="Create a Reed developer key, paste it here, then save settings. You can also set REED_API_KEY before starting the API server."
+              copyText={reedSetupCommand}
+            />
+          </div>
+          <input
+            type="password"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder={configuredSecrets.has('REED_API_KEY') ? 'Saved. Enter a new key to replace it.' : 'Paste Reed API key'}
+            value={form.reedApiKey ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, reedApiKey: e.target.value }))}
+          />
+          {configuredSecrets.has('REED_API_KEY') && (
+            <p className="mt-1 text-sm text-muted-foreground font-medium">A Reed key is already configured.</p>
+          )}
+        </div>
+        <div>
+          <label className="block text-base font-semibold mb-2">Slack Webhook URL</label>
+          <input
+            type="password"
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder={configuredSecrets.has('SLACK_WEBHOOK_URL') ? 'Saved. Enter a new URL to replace it.' : 'https://hooks.slack.com/services/...'}
+            value={form.slackWebhookUrl ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, slackWebhookUrl: e.target.value }))}
+          />
+        </div>
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <label className="block text-base font-semibold">Gmail Credentials JSON</label>
+            <HelpPopover
+              title="Gmail alerts setup"
+              body="Paste Gmail API credentials JSON, set the mailbox email below, and use a search query that matches job alert emails. Current backend health can validate the settings, but Gmail fetching still needs the adapter implementation."
+              copyText={gmailSetupCommand}
+            />
+          </div>
+          <textarea
+            rows={5}
+            className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+            placeholder={configuredSecrets.has('GMAIL_CREDENTIALS_JSON') ? 'Saved. Paste new JSON to replace it.' : '{"type":"service_account",...}'}
+            value={form.gmailCredentialsJson ?? ''}
+            onChange={(e) => setForm((f) => ({ ...f, gmailCredentialsJson: e.target.value }))}
+          />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-base font-semibold">Gmail User Email</label>
+              <HelpPopover
+                title="Mailbox to scan"
+                body="Use the Gmail account that receives job alerts. The Gmail credentials must be allowed to read this mailbox."
+                copyText="GMAIL_USER_EMAIL=you@your-domain.com"
+              />
+            </div>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="you@your-domain.com"
+              value={form.gmailUserEmail ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, gmailUserEmail: e.target.value }))}
+            />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-base font-semibold">Gmail Search Query</label>
+              <HelpPopover
+                title="Gmail query"
+                body="Use Gmail search syntax to narrow alerts, for example unread emails in a job-alerts label."
+                copyText="label:job-alerts is:unread"
+              />
+            </div>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
+              placeholder="label:job-alerts is:unread"
+              value={form.gmailSearchQuery ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, gmailSearchQuery: e.target.value }))}
+            />
+          </div>
+        </div>
+        <button
+          onClick={() => void handleSave()}
+          disabled={saving}
+          className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-base font-medium"
+        >
+          {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save Source Settings'}
+        </button>
+      </section>
+
+      <div className="flex items-center justify-between pt-2">
+        <h2 className="text-lg font-semibold">Source Health</h2>
         <button
           onClick={() => void onRefresh()}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors font-medium"
         >
-          <RefreshCw size={12} /> Refresh
+          <RefreshCw size={14} /> Refresh
         </button>
       </div>
 
       {sources.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Loading sources…</p>
+        <p className="text-base text-muted-foreground font-medium">Loading sources…</p>
       ) : (
-        sources.map((s) => <SourceCard key={s.source} source={s} />)
+        <div className="grid gap-3">
+          {sources.map((s) => <SourceCard key={s.source} source={s} />)}
+        </div>
       )}
 
-      <div className="p-4 bg-muted/30 border border-border rounded-xl text-xs text-muted-foreground space-y-2">
-        <p className="font-medium text-foreground">How to activate sources</p>
-        <p>
-          <strong>Reed API:</strong> Set the <code className="bg-muted px-1 rounded">REED_API_KEY</code> environment
-          variable before starting the server. Get a free key at{' '}
-          <span className="font-mono">reed.co.uk/developers/jobseeker</span>.
-        </p>
-        <p>
-          <strong>Indeed Direct:</strong> POST normalized job data to{' '}
-          <code className="bg-muted px-1 rounded">POST /api/jobs/ingest_indeed</code> using an MCP client or any
-          HTTP caller. The buffer is in-memory and resets on server restart.
-        </p>
-      </div>
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              Indeed Direct Import
+              <HelpPopover
+                title="Indeed Direct import"
+                body="Paste jobs from your Indeed source, browser automation, MCP plugin, or scraper output. Click Import Indeed Jobs to run the ingest endpoint from this screen."
+                copyText={indeedCurlCommand}
+              />
+            </h2>
+            <p className="text-base text-muted-foreground mt-1">
+              Paste an array of Indeed jobs, or an object with a jobs/results array. Fields like jobkey, jobTitle,
+              companyName, formattedLocation, jobUrl, description, and snippet are accepted.
+            </p>
+          </div>
+          <button
+            onClick={() => setIndeedJson(indeedExamplePayload)}
+            className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+          >
+            <PlayCircle size={15} />
+            Load sample
+          </button>
+        </div>
 
-      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <CommandBlock
+          label="Equivalent ingest command"
+          command={indeedCurlCommand}
+        />
+
         <div>
-          <h2 className="text-sm font-semibold">Indeed Direct Import</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            Paste an array of Indeed jobs, or an object with a jobs/results array. Fields like jobkey, jobTitle,
-            companyName, formattedLocation, jobUrl, description, and snippet are accepted.
+          <p className="text-base text-muted-foreground mt-1">
+            Running import here calls <code className="bg-muted px-1 rounded">POST /api/jobs/ingest_indeed</code> directly.
+            Once jobs are buffered, Indeed Direct turns ready until the API server restarts or you clear/replace the buffer.
           </p>
         </div>
         <textarea
           rows={8}
-          className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
-          placeholder='[{"jobkey":"abc123","jobTitle":"Senior Software Engineer","companyName":"Example Ltd","formattedLocation":"Remote","jobUrl":"https://uk.indeed.com/viewjob?jk=abc123"}]'
+          className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+          placeholder={indeedExamplePayload}
           value={indeedJson}
           onChange={(e) => setIndeedJson(e.target.value)}
         />
@@ -1001,12 +1213,12 @@ function SourcesTab({
           <button
             onClick={() => void ingestIndeed()}
             disabled={ingesting || !indeedJson.trim()}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-sm font-medium"
+            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-60 transition-colors text-base font-medium"
           >
-            <Upload size={14} />
+            <Upload size={18} />
             {ingesting ? 'Importing…' : 'Import Indeed Jobs'}
           </button>
-          {ingestMessage && <span className="text-xs text-muted-foreground">{ingestMessage}</span>}
+          {ingestMessage && <span className="text-sm text-muted-foreground font-medium">{ingestMessage}</span>}
         </div>
       </div>
     </div>
@@ -1014,20 +1226,29 @@ function SourcesTab({
 }
 
 function SourceCard({ source }: { source: SourceHealthInfo }) {
+  const help = isSourceName(source.source) ? sourceHelp[source.source] : undefined;
+
   return (
     <div className={cn(
-      'border rounded-xl p-4 space-y-2',
+      'border rounded-xl p-5 space-y-3',
       source.ready ? 'border-green-500/30 bg-green-500/5' : 'border-border bg-card',
     )}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {source.ready
-            ? <Wifi size={16} className="text-green-500" />
-            : <WifiOff size={16} className="text-muted-foreground" />}
-          <span className="font-semibold">{source.source}</span>
+            ? <Wifi size={18} className="text-green-500" />
+            : <WifiOff size={18} className="text-muted-foreground" />}
+          <span className="font-semibold text-base">{source.source}</span>
+          {help && (
+            <HelpPopover
+              title={`${source.source} status`}
+              body={help.body}
+              copyText={help.command}
+            />
+          )}
         </div>
         <span className={cn(
-          'text-xs px-2 py-0.5 rounded-full font-medium',
+          'text-sm px-2.5 py-1 rounded-full font-bold uppercase tracking-tight',
           source.ready
             ? 'bg-green-500/10 text-green-600 dark:text-green-400'
             : 'bg-muted text-muted-foreground',
@@ -1036,20 +1257,20 @@ function SourceCard({ source }: { source: SourceHealthInfo }) {
         </span>
       </div>
 
-      <div className="text-xs text-muted-foreground space-y-0.5">
-        <p><span className="font-medium text-foreground">Mode:</span> {source.mode}</p>
+      <div className="text-sm text-muted-foreground space-y-1 font-medium">
+        <p><span className="font-bold text-foreground uppercase text-xs tracking-wider mr-1">Mode:</span> {source.mode}</p>
         {source.bufferedJobs > 0 && (
-          <p><span className="font-medium text-foreground">Buffered:</span> {source.bufferedJobs} jobs</p>
+          <p><span className="font-bold text-foreground uppercase text-xs tracking-wider mr-1">Buffered:</span> {source.bufferedJobs} jobs</p>
         )}
         {source.requiredSecret && !source.ready && (
           <p className="text-amber-600 dark:text-amber-400">
-            <AlertCircle size={11} className="inline mr-1" />
+            <AlertCircle size={13} className="inline mr-1" />
             {source.requiredSecret}
           </p>
         )}
         {source.lastError && (
           <p className="text-destructive">
-            <XCircle size={11} className="inline mr-1" />
+            <XCircle size={13} className="inline mr-1" />
             {source.lastError}
           </p>
         )}

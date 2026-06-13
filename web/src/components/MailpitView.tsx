@@ -89,17 +89,17 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
         onClick={onToggle}
         className="w-full flex items-center justify-between px-5 py-4 bg-muted/40 hover:bg-muted/70 transition-colors text-left"
       >
-        <div className="flex items-center gap-2 font-semibold text-sm">
-          <Download size={16} className="text-muted-foreground" />
+        <div className="flex items-center gap-2 font-semibold text-base">
+          <Download size={18} className="text-muted-foreground" />
           Installation guide — Mailpit local mail catcher
         </div>
-        <ChevronDown size={16} className={cn('text-muted-foreground transition-transform', open && 'rotate-180')} />
+        <ChevronDown size={18} className={cn('text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
 
       {open && (
         <div className="px-5 py-5 space-y-7 border-t border-border">
 
-          <p className="text-sm text-muted-foreground">
+          <p className="text-base text-muted-foreground">
             Mailpit is a lightweight SMTP mail catcher for development. It listens on port <code className="bg-muted px-1 rounded">1025</code> (SMTP)
             and serves a web UI on <code className="bg-muted px-1 rounded">8025</code>. Choose the method that fits your setup:
           </p>
@@ -108,41 +108,41 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
           <section>
             <div className="flex items-center gap-2 mb-3">
               <div className="flex items-center gap-2">
-                <Apple size={16} className="text-muted-foreground" />
-                <h3 className="font-semibold text-sm">Option A — No Docker needed (recommended for macOS)</h3>
+                <Apple size={18} className="text-muted-foreground" />
+                <h3 className="font-semibold text-base">Option A — No Docker needed (recommended for macOS)</h3>
               </div>
               <span className="rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 text-xs font-medium border border-emerald-500/20">Simplest</span>
             </div>
             <div className="space-y-3 ml-0">
               <div>
-                <p className="text-xs text-muted-foreground mb-2 font-medium">macOS — Homebrew</p>
+                <p className="text-sm text-muted-foreground mb-2 font-medium">macOS — Homebrew</p>
                 <div className="space-y-1.5">
                   <CodeLine cmd="brew install axllent/tap/mailpit" />
                   <CodeLine cmd="mailpit" />
                 </div>
-                <p className="text-xs text-muted-foreground mt-1.5">Mailpit starts immediately. SMTP on :1025, web UI at http://localhost:8025.</p>
+                <p className="text-sm text-muted-foreground mt-1.5">Mailpit starts immediately. SMTP on :1025, web UI at http://localhost:8025.</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-2 font-medium">macOS — run as background service (auto-starts on login)</p>
+                <p className="text-sm text-muted-foreground mb-2 font-medium">macOS — run as background service (auto-starts on login)</p>
                 <CodeLine cmd="brew services start axllent/tap/mailpit" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-2 font-medium">Linux / macOS — download binary directly from GitHub releases</p>
+                <p className="text-sm text-muted-foreground mb-2 font-medium">Linux / macOS — download binary directly from GitHub releases</p>
                 <a
                   href="https://github.com/axllent/mailpit/releases"
                   target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline mb-2"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline mb-2"
                 >
-                  <ExternalLink size={12} /> github.com/axllent/mailpit/releases
+                  <ExternalLink size={14} /> github.com/axllent/mailpit/releases
                 </a>
                 <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground font-medium">Or use the installer script (any platform):</p>
+                  <p className="text-sm text-muted-foreground font-medium">Or use the installer script (any platform):</p>
                   <CodeLine cmd="curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/install.sh | bash" />
                   <CodeLine cmd="mailpit" />
                 </div>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground mb-2 font-medium">Windows — download .exe from GitHub releases above, then:</p>
+                <p className="text-sm text-muted-foreground mb-2 font-medium">Windows — download .exe from GitHub releases above, then:</p>
                 <CodeLine cmd="mailpit.exe" />
               </div>
             </div>
@@ -158,16 +158,16 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
           {/* Option B — Docker Compose */}
           <section>
             <div className="flex items-center gap-2 mb-3">
-              <Container size={16} className="text-muted-foreground" />
-              <h3 className="font-semibold text-sm">Option B — Docker Compose (if Docker is already installed)</h3>
+              <Container size={18} className="text-muted-foreground" />
+              <h3 className="font-semibold text-base">Option B — Docker Compose (if Docker is already installed)</h3>
             </div>
             <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 A <code className="bg-muted px-1 rounded">docker-compose.yml</code> is already included in this project.
                 If Docker Desktop (or an alternative) is running, just start the Mailpit service:
               </p>
               <CodeLine cmd="docker compose up -d mailpit" />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 Or click the <span className="font-medium">Start Mailpit</span> button above — EminentAi will run this command for you.
               </p>
             </div>
@@ -176,23 +176,23 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
           {/* Option C — Docker alternatives */}
           <section>
             <div className="flex items-center gap-2 mb-3">
-              <Monitor size={16} className="text-muted-foreground" />
-              <h3 className="font-semibold text-sm">Option C — Docker alternatives (lighter than Docker Desktop)</h3>
+              <Monitor size={18} className="text-muted-foreground" />
+              <h3 className="font-semibold text-base">Option C — Docker alternatives (lighter than Docker Desktop)</h3>
             </div>
-            <div className="space-y-4 text-sm">
+            <div className="space-y-4 text-base">
 
               {/* OrbStack */}
               <div className="rounded-lg border border-border p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-sm">OrbStack</span>
+                  <span className="font-medium text-base">OrbStack</span>
                   <span className="text-xs text-muted-foreground">macOS only · free for personal use</span>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   Fast, lightweight Docker Desktop replacement for macOS. Uses ~50 MB RAM at idle vs ~500 MB for Docker Desktop.
                   Fully compatible with <code className="bg-muted px-1 rounded">docker compose</code>.
                 </p>
-                <a href="https://orbstack.dev" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline">
-                  <ExternalLink size={12} /> orbstack.dev
+                <a href="https://orbstack.dev" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline">
+                  <ExternalLink size={14} /> orbstack.dev
                 </a>
                 <div className="space-y-1.5 mt-2">
                   <CodeLine cmd="brew install orbstack" />
@@ -203,28 +203,28 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
               {/* Rancher Desktop */}
               <div className="rounded-lg border border-border p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-sm">Rancher Desktop</span>
+                  <span className="font-medium text-base">Rancher Desktop</span>
                   <span className="text-xs text-muted-foreground">macOS / Windows / Linux · free, open source</span>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   Open-source Docker alternative with a GUI. Includes both Docker and containerd runtimes.
                 </p>
-                <a href="https://rancherdesktop.io" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline">
-                  <ExternalLink size={12} /> rancherdesktop.io
+                <a href="https://rancherdesktop.io" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline">
+                  <ExternalLink size={14} /> rancherdesktop.io
                 </a>
               </div>
 
               {/* Podman */}
               <div className="rounded-lg border border-border p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-sm">Podman Desktop</span>
+                  <span className="font-medium text-base">Podman Desktop</span>
                   <span className="text-xs text-muted-foreground">macOS / Windows / Linux · free, open source</span>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   Daemonless Docker-compatible runtime. Supports <code className="bg-muted px-1 rounded">docker compose</code> via the Compose plugin.
                 </p>
-                <a href="https://podman-desktop.io" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline">
-                  <ExternalLink size={12} /> podman-desktop.io
+                <a href="https://podman-desktop.io" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline">
+                  <ExternalLink size={14} /> podman-desktop.io
                 </a>
               </div>
 
@@ -234,12 +234,12 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
           {/* Verify */}
           <section>
             <div className="flex items-center gap-2 mb-3">
-              <Terminal size={16} className="text-muted-foreground" />
-              <h3 className="font-semibold text-sm">Verify Mailpit is running</h3>
+              <Terminal size={18} className="text-muted-foreground" />
+              <h3 className="font-semibold text-base">Verify Mailpit is running</h3>
             </div>
             <div className="space-y-2">
               <CodeLine cmd='curl -s http://localhost:8025/api/v1/messages | head -c 100' />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 You should see a JSON object with a <code className="bg-muted px-1 rounded">messages</code> array.
                 Then click <span className="font-medium">Refresh</span> above — the inbox will load.
               </p>
@@ -247,7 +247,7 @@ function MailpitInstallGuide({ open, onToggle }: { open: boolean; onToggle: () =
           </section>
 
           {/* SMTP config reminder */}
-          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-600 dark:text-blue-400 space-y-1">
+          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-sm text-blue-600 dark:text-blue-400 space-y-1">
             <p className="font-semibold">SMTP configuration (already set in this project)</p>
             <p>EminentAi sends password-reset emails via <code className="bg-blue-500/10 px-1 rounded">localhost:1025</code> — the Mailpit SMTP port.
               No credentials required. All outgoing mail is captured here instead of being delivered.</p>
@@ -326,14 +326,14 @@ export function MailpitView() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b border-border px-6 py-4 flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <Mail size={20} className="text-muted-foreground" />
+        <h1 className="text-2xl font-semibold flex items-center gap-2">
+          <Mail size={22} className="text-muted-foreground" />
           Mailpit
           {unread > 0 && (
-            <span className="text-xs bg-primary text-primary-foreground rounded-full px-2 py-0.5">{unread} new</span>
+            <span className="text-sm bg-primary text-primary-foreground rounded-full px-2 py-0.5">{unread} new</span>
           )}
           {total > 0 && unread === 0 && (
-            <span className="text-xs text-muted-foreground">{total} messages</span>
+            <span className="text-sm text-muted-foreground">{total} messages</span>
           )}
         </h1>
 
@@ -341,19 +341,19 @@ export function MailpitView() {
           <button
             onClick={() => void handleStart()}
             disabled={starting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 text-xs font-medium transition-colors disabled:opacity-60"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 text-sm font-medium transition-colors disabled:opacity-60"
             title="Start Mailpit via docker compose"
           >
-            <Play size={13} className={cn(starting && 'animate-pulse')} />
+            <Play size={14} className={cn(starting && 'animate-pulse')} />
             {starting ? 'Starting…' : 'Start Mailpit'}
           </button>
 
           <button
             onClick={() => void load()}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-xs font-medium transition-colors disabled:opacity-60"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-sm font-medium transition-colors disabled:opacity-60"
           >
-            <RefreshCw size={13} className={cn(loading && 'animate-spin')} />
+            <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
             Refresh
           </button>
 
@@ -361,7 +361,7 @@ export function MailpitView() {
             href={MAILPIT_UI}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-xs font-medium transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-sm font-medium transition-colors"
           >
             Open UI ↗
           </a>
@@ -369,7 +369,7 @@ export function MailpitView() {
       </div>
 
       {startMsg && (
-        <div className="px-6 py-2 text-xs text-muted-foreground bg-muted/40 border-b border-border">{startMsg}</div>
+        <div className="px-6 py-2 text-sm text-muted-foreground bg-muted/40 border-b border-border">{startMsg}</div>
       )}
 
       {/* Body */}
@@ -378,8 +378,8 @@ export function MailpitView() {
         {error && (
           <div className="max-w-3xl mx-auto px-5 py-6 space-y-4">
             <div className="flex items-center gap-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
-              <AlertCircle size={16} className="text-destructive flex-shrink-0" />
-              <div className="text-sm">
+              <AlertCircle size={18} className="text-destructive flex-shrink-0" />
+              <div className="text-base">
                 <span className="font-medium text-destructive">Mailpit is not reachable</span>
                 <span className="text-muted-foreground ml-2">{error}</span>
               </div>
@@ -389,14 +389,14 @@ export function MailpitView() {
 
             {/* Quick-start commands */}
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-5 py-4 space-y-3">
-              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold text-sm">
-                <Terminal size={15} /> Quickest way to start — no Docker required
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold text-base">
+                <Terminal size={16} /> Quickest way to start — no Docker required
               </div>
               <div className="space-y-2">
                 <CodeLine cmd="brew install axllent/tap/mailpit" />
                 <CodeLine cmd="mailpit" />
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 Then click <span className="font-medium">Refresh</span> above. SMTP is immediately available on :1025 for password-reset emails.
               </p>
             </div>
@@ -406,12 +406,12 @@ export function MailpitView() {
         {/* Message list + detail (shown when no error) */}
         {!error && (
           <div className="flex h-full min-h-0">
-            <div className={cn('flex flex-col border-r border-border overflow-y-auto custom-scrollbar', selected ? 'hidden md:flex md:w-72 lg:w-80 flex-shrink-0' : 'flex-1')}>
+            <div className={cn('flex flex-col border-r border-border overflow-y-auto custom-scrollbar', selected ? 'hidden md:flex md:w-80 lg:w-96 flex-shrink-0' : 'flex-1')}>
               {!loading && messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center flex-1 py-16 px-6 text-center gap-3">
-                  <Inbox size={32} className="text-muted-foreground opacity-30" />
-                  <p className="text-sm text-muted-foreground">No emails yet.</p>
-                  <p className="text-xs text-muted-foreground">Password reset emails will appear here.</p>
+                  <Inbox size={36} className="text-muted-foreground opacity-30" />
+                  <p className="text-base text-muted-foreground">No emails yet.</p>
+                  <p className="text-sm text-muted-foreground">Password reset emails will appear here.</p>
                 </div>
               )}
 
@@ -425,11 +425,11 @@ export function MailpitView() {
                   )}
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
-                    <span className={cn('text-sm truncate', !m.Read && 'font-semibold')}>{m.Subject || '(no subject)'}</span>
-                    <span className="text-[10px] text-muted-foreground flex-shrink-0">{fmtDate(m.Created)}</span>
+                    <span className={cn('text-base truncate', !m.Read && 'font-semibold')}>{m.Subject || '(no subject)'}</span>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">{fmtDate(m.Created)}</span>
                   </div>
-                  <div className="text-xs text-muted-foreground truncate">{fmtAddr(m.From)}</div>
-                  {m.Snippet && <div className="text-xs text-muted-foreground/70 truncate mt-0.5">{m.Snippet}</div>}
+                  <div className="text-sm text-muted-foreground truncate">{fmtAddr(m.From)}</div>
+                  {m.Snippet && <div className="text-sm text-muted-foreground/70 truncate mt-0.5">{m.Snippet}</div>}
                 </button>
               ))}
             </div>
@@ -438,11 +438,11 @@ export function MailpitView() {
             {selected && (
               <div className="flex-1 flex flex-col min-w-0 overflow-y-auto custom-scrollbar">
                 <div className="px-6 py-4 border-b border-border">
-                  <button onClick={() => setSelected(null)} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mb-3 md:hidden">
-                    <ChevronLeft size={14} /> Back
+                  <button onClick={() => setSelected(null)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-3 md:hidden">
+                    <ChevronLeft size={16} /> Back
                   </button>
-                  <h2 className="text-base font-semibold mb-1">{selected.Subject || '(no subject)'}</h2>
-                  <div className="text-xs text-muted-foreground space-y-0.5">
+                  <h2 className="text-lg font-semibold mb-1">{selected.Subject || '(no subject)'}</h2>
+                  <div className="text-sm text-muted-foreground space-y-0.5">
                     <div><span className="font-medium">From:</span> {fmtAddr(selected.From)}</div>
                     <div><span className="font-medium">To:</span> {selected.To.map(fmtAddr).join(', ')}</div>
                     <div><span className="font-medium">Date:</span> {new Date(selected.Date).toLocaleString()}</div>
@@ -451,17 +451,17 @@ export function MailpitView() {
 
                 <div className="flex-1 px-6 py-4">
                   {detailLoading ? (
-                    <div className="text-sm text-muted-foreground">Loading…</div>
+                    <div className="text-base text-muted-foreground">Loading…</div>
                   ) : selected.HTML ? (
                     <iframe
                       srcDoc={selected.HTML}
                       className="w-full border-0 rounded-lg bg-white"
-                      style={{ minHeight: '400px' }}
+                      style={{ minHeight: '500px' }}
                       sandbox="allow-same-origin"
                       title="Email content"
                     />
                   ) : (
-                    <pre className="text-sm whitespace-pre-wrap font-sans">{selected.Text || '(empty)'}</pre>
+                    <pre className="text-base whitespace-pre-wrap font-sans">{selected.Text || '(empty)'}</pre>
                   )}
                 </div>
               </div>

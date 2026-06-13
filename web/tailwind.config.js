@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+import plugin from 'tailwindcss/plugin';
+
 export default {
   darkMode: 'class',
   content: [
@@ -49,5 +51,10 @@ export default {
       },
     },
   },
-  plugins: [require("@tailwindcss/typography")],
+  plugins: [
+    require("@tailwindcss/typography"),
+    plugin(function({ addVariant }) {
+      addVariant('navy', '.navy &')
+    })
+  ],
 }

@@ -20,9 +20,12 @@ function useTheme() {
   useEffect(() => {
     const root = document.documentElement;
     const apply = () => {
-      const dark = theme === 'dark'
+      const isDark = theme === 'dark'
         || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      root.classList.toggle('dark', dark);
+      const isNavy = theme === 'navy';
+      
+      root.classList.toggle('dark', isDark);
+      root.classList.toggle('navy', isNavy);
     };
     apply();
     const mq = window.matchMedia('(prefers-color-scheme: dark)');

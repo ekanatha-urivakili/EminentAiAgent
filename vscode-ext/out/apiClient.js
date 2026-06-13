@@ -41,6 +41,12 @@ function isRecord(value) {
 function asString(value) {
     return typeof value === "string" ? value : undefined;
 }
+function isBackendModel(value) {
+    return isRecord(value) && typeof value.name === "string" && typeof value.tier === "string";
+}
+function isOllamaTag(value) {
+    return isRecord(value) && typeof value.name === "string";
+}
 class ApiClient {
     backendUrl;
     ollamaUrl;
@@ -189,19 +195,34 @@ class ApiClient {
         }
     }
     async listModels() {
+        const names = new Set();
         try {
             const r = await fetch(`${this.backendUrl()}/api/models`, {
                 headers: await this.backendHeaders()
             });
-            if (!r.ok) {
-                return [];
+            if (r.ok) {
+                const body = await r.json();
+                if (Array.isArray(body)) {
+                    body
+                        .filter(isBackendModel)
+                        .filter(m => m.tier !== "embedding")
+                        .forEach(m => names.add(m.name));
+                }
             }
-            const models = await r.json();
-            return models.filter(m => m.tier !== "embedding").map(m => m.name);
         }
-        catch {
-            return [];
+        catch { /* fall back to Ollama */ }
+        try {
+            const r = await fetch(`${this.ollamaUrl()}/api/tags`, {
+                signal: AbortSignal.timeout(2000)
+            });
+            if (r.ok) {
+                const body = await r.json();
+                const models = isRecord(body) && Array.isArray(body.models) ? body.models : [];
+                models.filter(isOllamaTag).forEach(m => names.add(m.name));
+            }
         }
+        catch { /* no local Ollama models available */ }
+        return [...names].sort((a, b) => a.localeCompare(b));
     }
     /** Starts an agent run; the POST response itself is the SSE event stream. */
     async *runAgent(goal, model, connectors, signal) {

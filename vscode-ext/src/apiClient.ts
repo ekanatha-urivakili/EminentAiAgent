@@ -28,6 +28,8 @@ export type LoginResult = {
 };
 
 type SseFrame = { event: string; data: Record<string, unknown> };
+type BackendModel = { name: string; tier: string };
+type OllamaTag = { name: string };
 
 /** Parses a fetch Response body as Server-Sent Events. */
 async function* readSse(r: Response): AsyncGenerator<SseFrame> {
@@ -66,6 +68,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isBackendModel(value: unknown): value is BackendModel {
+  return isRecord(value) && typeof value.name === "string" && typeof value.tier === "string";
+}
+
+function isOllamaTag(value: unknown): value is OllamaTag {
+  return isRecord(value) && typeof value.name === "string";
 }
 
 export class ApiClient {
@@ -199,16 +209,35 @@ export class ApiClient {
   }
 
   async listModels(): Promise<string[]> {
+    const names = new Set<string>();
+
     try {
       const r = await fetch(`${this.backendUrl()}/api/models`, {
         headers: await this.backendHeaders()
       });
-      if (!r.ok) { return []; }
-      const models = await r.json() as { name: string; tier: string }[];
-      return models.filter(m => m.tier !== "embedding").map(m => m.name);
-    } catch {
-      return [];
-    }
+      if (r.ok) {
+        const body = await r.json() as unknown;
+        if (Array.isArray(body)) {
+          body
+            .filter(isBackendModel)
+            .filter(m => m.tier !== "embedding")
+            .forEach(m => names.add(m.name));
+        }
+      }
+    } catch { /* fall back to Ollama */ }
+
+    try {
+      const r = await fetch(`${this.ollamaUrl()}/api/tags`, {
+        signal: AbortSignal.timeout(2000)
+      });
+      if (r.ok) {
+        const body = await r.json() as unknown;
+        const models = isRecord(body) && Array.isArray(body.models) ? body.models : [];
+        models.filter(isOllamaTag).forEach(m => names.add(m.name));
+      }
+    } catch { /* no local Ollama models available */ }
+
+    return [...names].sort((a, b) => a.localeCompare(b));
   }
 
   /** Starts an agent run; the POST response itself is the SSE event stream. */

@@ -9,6 +9,7 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
   const archivedIds = useStore((s) => s.archivedIds);
   const activeId = useStore((s) => s.activeConversationId);
   const selectConversation = useStore((s) => s.selectConversation);
+  const renameConversation = useStore((s) => s.renameConversation);
   const removeConversation = useStore((s) => s.removeConversation);
   const archiveConversation = useStore((s) => s.archiveConversation);
   const newConversation = useStore((s) => s.newConversation);
@@ -60,56 +61,57 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
         {isOpen ? (
           <>
             <div className="px-3 pb-3 space-y-1">
-              <button onClick={createConversation} className="flex items-center gap-3 w-full p-3 rounded-xl text-base transition-colors bg-muted hover:bg-muted/80">
-                <Edit3 size={21} /> New chat
+              <button onClick={createConversation} className="flex items-center gap-3 w-full p-2.5 rounded-xl text-sm transition-colors bg-muted hover:bg-muted/80">
+                <Edit3 size={18} /> New chat
               </button>
               <button
                 onClick={() => navigate('chat')}
-                className="flex items-center gap-3 w-full p-3 rounded-xl text-base hover:bg-muted transition-colors"
+                className="flex items-center gap-3 w-full p-2.5 rounded-xl text-sm hover:bg-muted transition-colors"
               >
-                <Search size={21} /> Search chats
+                <Search size={18} /> Search chats
               </button>
               <button
                 onClick={() => navigate('library')}
-                className={cn('flex items-center gap-3 w-full p-3 rounded-xl text-base hover:bg-muted transition-colors', appView === 'library' && 'bg-muted')}
+                className={cn('flex items-center gap-3 w-full p-2.5 rounded-xl text-sm hover:bg-muted transition-colors', appView === 'library' && 'bg-muted')}
               >
-                <Library size={21} /> Library
+                <Library size={18} /> Library
               </button>
               <button
                 onClick={() => navigate('ollama')}
-                className={cn('flex items-center gap-3 w-full p-3 rounded-xl text-base hover:bg-muted transition-colors', appView === 'ollama' && 'bg-muted')}
+                className={cn('flex items-center gap-3 w-full p-2.5 rounded-xl text-sm hover:bg-muted transition-colors', appView === 'ollama' && 'bg-muted')}
               >
-                <Cpu size={21} /> Ollama
+                <Cpu size={18} /> Ollama
               </button>
               <button
                 onClick={() => navigate('mailpit')}
-                className={cn('flex items-center gap-3 w-full p-3 rounded-xl text-base hover:bg-muted transition-colors', appView === 'mailpit' && 'bg-muted')}
+                className={cn('flex items-center gap-3 w-full p-2.5 rounded-xl text-sm hover:bg-muted transition-colors', appView === 'mailpit' && 'bg-muted')}
               >
-                <Mail size={21} /> Mailpit
+                <Mail size={18} /> Mailpit
               </button>
               <button
                 onClick={() => navigate('connectors')}
-                className={cn('flex items-center gap-3 w-full p-3 rounded-xl text-base hover:bg-muted transition-colors', appView === 'connectors' && 'bg-muted')}
+                className={cn('flex items-center gap-3 w-full p-2.5 rounded-xl text-sm hover:bg-muted transition-colors', appView === 'connectors' && 'bg-muted')}
               >
-                <Plug size={21} /> MCP Connectors
+                <Plug size={18} /> MCP Connectors
                 {connectors.length > 0 && <span className="ml-auto text-xs font-mono text-muted-foreground">{connectors.length}</span>}
               </button>
               <button
                 onClick={() => navigate('jobs')}
-                className={cn('flex items-center gap-3 w-full p-3 rounded-xl text-base hover:bg-muted transition-colors', appView === 'jobs' && 'bg-muted')}
+                className={cn('flex items-center gap-3 w-full p-2.5 rounded-xl text-sm hover:bg-muted transition-colors', appView === 'jobs' && 'bg-muted')}
               >
-                <Briefcase size={21} /> Job Search Agent
+                <Briefcase size={18} /> Job Search Agent
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-5 space-y-1">
               <div className="px-2 mb-3">
-                <div className="text-lg font-semibold">Recents</div>
+                <div className="text-sm font-semibold">Recents</div>
               </div>
 
               {recentConversations.map((c) => (
                 <ChatRow key={c.id} id={c.id} title={c.title} active={activeId === c.id}
                   onSelect={() => selectAndNavigate(c.id)}
+                  onRename={(title) => renameConversation(c.id, title)}
                   onDelete={() => void removeConversation(c.id)}
                   onArchive={() => archiveConversation(c.id)}
                 />
@@ -148,22 +150,83 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
   );
 }
 
-function ChatRow({ title, active, onSelect, onDelete, onArchive }: {
+function ChatRow({ title, active, onSelect, onRename, onDelete, onArchive }: {
   id: string; title: string; active: boolean;
-  onSelect: () => void; onDelete: () => void; onArchive: () => void;
+  onSelect: () => void; onRename: (title: string) => Promise<void>; onDelete: () => void; onArchive: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(title || 'Untitled');
+  const [saving, setSaving] = useState(false);
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirmDelete) { onDelete(); } else { setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); }
   };
 
+  const startEditing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDraftTitle(title || 'Untitled');
+    setEditing(true);
+  };
+
+  const saveTitle = async () => {
+    const nextTitle = draftTitle.trim();
+    if (!nextTitle || nextTitle === title) {
+      setEditing(false);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onRename(nextTitle);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void saveTitle();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setEditing(false);
+      setDraftTitle(title || 'Untitled');
+    }
+  };
+
   return (
-    <div className={cn('group flex items-center gap-1 w-full rounded-xl text-sm transition-colors', active ? 'bg-muted' : 'hover:bg-muted/60 text-muted-foreground')}>
-      <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left p-2.5">
-        <MessageCircle size={15} className="flex-shrink-0 mt-0.5" />
-        <span className="truncate">{title || 'Untitled'}</span>
+    <div className={cn('group flex items-center gap-1 w-full rounded-xl text-sm transition-colors', active ? 'bg-muted text-foreground' : 'hover:bg-muted/60 text-foreground')}>
+      {editing ? (
+        <div className="flex items-center gap-2 flex-1 min-w-0 px-3 py-2">
+          <MessageCircle size={14} className="flex-shrink-0 text-muted-foreground" />
+          <input
+            autoFocus
+            value={draftTitle}
+            disabled={saving}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onBlur={() => void saveTitle()}
+            onKeyDown={handleEditKeyDown}
+            className="min-w-0 flex-1 bg-background border border-border rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+      ) : (
+        <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left px-3 py-2">
+          <MessageCircle size={14} className="flex-shrink-0 mt-0.5 text-muted-foreground" />
+          <span className="truncate">{title || 'Untitled'}</span>
+        </button>
+      )}
+
+      <button
+        onClick={startEditing}
+        className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0"
+        title="Rename"
+      >
+        <Edit3 size={12} />
       </button>
 
       {/* Archive */}
@@ -203,9 +266,9 @@ export function ArchivedChatRow({ title, active, onSelect, onDelete, onUnarchive
   };
 
   return (
-    <div className={cn('group flex items-center gap-1 w-full rounded-xl text-sm transition-colors', active ? 'bg-muted' : 'hover:bg-muted/60 text-muted-foreground')}>
-      <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left p-2.5">
-        <MessageCircle size={15} className="flex-shrink-0 mt-0.5" />
+    <div className={cn('group flex items-center gap-1 w-full rounded-xl text-base transition-colors', active ? 'bg-muted text-foreground' : 'hover:bg-muted/60 text-foreground')}>
+      <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left px-3 py-2.5">
+        <MessageCircle size={16} className="flex-shrink-0 mt-0.5 text-muted-foreground" />
         <span className="truncate">{title || 'Untitled'}</span>
         <span className="ml-1.5 text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full flex-shrink-0">archived</span>
       </button>

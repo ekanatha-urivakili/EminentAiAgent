@@ -1,6 +1,6 @@
 export type Mode = 'Chat' | 'Plan' | 'Agent';
 export type AppView = 'chat' | 'ollama' | 'library' | 'mailpit' | 'connectors' | 'jobs';
-export type Theme = 'light' | 'dark' | 'system';
+export type Theme = 'light' | 'dark' | 'navy' | 'system';
 
 export interface ModelInfo {
   name: string;

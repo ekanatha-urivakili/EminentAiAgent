@@ -15,7 +15,6 @@ import {
   Share2,
   ThumbsDown,
   ThumbsUp,
-  User,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -25,6 +24,8 @@ import type { ChatMsg, ChatSource } from '../lib/types';
 type Feedback = 'liked' | 'disliked' | undefined;
 type ExportFormat = 'pdf' | 'markdown' | 'docx' | 'txt';
 type ActionStatus = 'Copied' | 'Liked' | 'Disliked' | 'Shared' | 'Exported' | 'Unavailable' | undefined;
+const COLLAPSE_TEXT_LENGTH = 420;
+const COLLAPSE_LINE_COUNT = 3;
 
 const thinkingSteps = [
   { label: 'Reading your prompt', detail: 'Identifying the language, intent, and context.', icon: Search },
@@ -284,12 +285,65 @@ function ThinkingIndicator({ hasContent }: { hasContent: boolean }) {
   );
 }
 
+function UserText({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const shouldCollapse = content.length > COLLAPSE_TEXT_LENGTH || content.split('\n').length > COLLAPSE_LINE_COUNT;
+
+  return (
+    <div className="w-full text-left">
+      <div
+        className={cn(
+          'whitespace-pre-wrap break-words',
+          shouldCollapse && !expanded && 'line-clamp-3',
+        )}
+      >
+        {content}
+      </div>
+      {shouldCollapse && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-1 text-sm font-medium text-primary hover:text-primary/80"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ImagePreview({
+  src,
+  alt,
+  onOpen,
+}: {
+  src: string;
+  alt: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="max-w-full rounded-xl border border-border focus:outline-none focus:ring-2 focus:ring-primary/40"
+      title="Open image"
+    >
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-56 sm:max-h-64 max-w-full rounded-xl object-contain"
+      />
+    </button>
+  );
+}
+
 export function ChatMessage({ message }: { message: ChatMsg }) {
   const [copied, setCopied] = useState(false);
   const [forking, setForking] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>();
   const [exportOpen, setExportOpen] = useState(false);
   const [actionStatus, setActionStatus] = useState<ActionStatus>();
+  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string }>();
   const regenerate = useStore((s) => s.regenerate);
   const forkConversation = useStore((s) => s.forkConversation);
   const isStreaming = useStore((s) => s.isStreaming);
@@ -362,183 +416,198 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
   };
 
   return (
-    <div className={cn('py-4 sm:py-5 w-full flex group', isUser ? 'justify-end' : 'justify-center bg-muted/30')}>
-      <div className={cn('max-w-5xl w-full px-3 sm:px-4 flex gap-2 sm:gap-4', isUser && 'flex-row-reverse justify-end')}>
-        <div
-          className={cn(
-            'w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white mt-0.5 ring-2 ring-background shadow-sm',
-            isUser ? 'bg-blue-600' : 'bg-gradient-to-br from-orange-400 to-rose-500',
-          )}
-        >
-          {isUser ? <User size={15} /> : <Flame size={15} />}
-        </div>
+    <div className={cn('py-6 w-full flex group', isUser ? 'justify-end' : 'justify-start')}>
+      <div className={cn('w-full flex gap-3 sm:gap-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
+        {!isUser && (
+          <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white mt-1 ring-2 ring-background shadow-sm bg-gradient-to-br from-orange-400 to-rose-500">
+            <Flame size={16} />
+          </div>
+        )}
 
         <div
           className={cn(
-            'min-w-0 max-w-[calc(100%-2.25rem)] sm:max-w-[min(52rem,calc(100%-3rem))] pt-1 text-sm md:text-[15px] leading-relaxed flex flex-col',
-            isUser && 'items-end',
+            'min-w-0 flex flex-col',
+            isUser ? 'items-end max-w-[85%] sm:max-w-[75%]' : 'items-start flex-1 max-w-full',
           )}
         >
           {isUser ? (
-            <>
+            <div className="rounded-2xl bg-muted px-4 py-2.5 text-foreground shadow-sm">
               {message.attachments && message.attachments.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
+                <div className="flex flex-wrap gap-2 mb-3 justify-end">
                   {message.attachments.map((attachment, index) => (
-                    <img
+                    <ImagePreview
                       key={`${attachment.name}-${index}`}
                       src={attachment.dataUrl}
                       alt={attachment.name}
-                      className="max-h-56 sm:max-h-64 max-w-full rounded-xl border border-border object-contain"
+                      onOpen={() => setPreviewImage({ src: attachment.dataUrl, alt: attachment.name })}
                     />
                   ))}
                 </div>
               )}
-              {message.content && <div className="whitespace-pre-wrap break-words">{message.content}</div>}
-            </>
+              {message.content && <UserText content={message.content} />}
+            </div>
           ) : (
-            <>
+            <div className="w-full pt-1.5 prose prose-slate dark:prose-invert max-w-none">
               {hasAssistantContent && <MarkdownRenderer content={message.content} />}
               {message.streaming && <ThinkingIndicator hasContent={hasAssistantContent} />}
-            </>
+            </div>
           )}
 
           {!message.streaming && message.content && (
-            <>
-              {!isUser && sources.length > 0 && (
-                <div className="mt-4 rounded-xl border border-border bg-background/70 p-3 text-left">
-                  <div className="text-xs font-medium text-muted-foreground mb-2">Sources</div>
-                  <div className="flex flex-wrap gap-2">
-                    {sources.map((source) => (
-                      <a
-                        key={source.url}
-                        href={source.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex max-w-full sm:max-w-[240px] items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1.5 text-xs hover:bg-muted hover:text-foreground transition-colors"
-                      >
-                        <ExternalLink size={13} />
-                        <span className="truncate">{source.title ?? source.url}</span>
-                      </a>
-                    ))}
+            <div className={cn(
+              'flex flex-wrap items-center gap-1 mt-2 text-muted-foreground transition-opacity',
+              isUser ? 'opacity-0 group-hover:opacity-100' : 'opacity-100',
+              isUser ? 'justify-end pr-2' : 'justify-start',
+            )}>
+              <button
+                onClick={() => void copy()}
+                className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors"
+                title="Copy"
+              >
+                {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+              </button>
+
+              {!isUser && (
+                <>
+                  <button
+                    onClick={() => {
+                      const nextFeedback = feedback === 'liked' ? undefined : 'liked';
+                      setFeedback(nextFeedback);
+                      showStatus(nextFeedback ? 'Liked' : undefined);
+                    }}
+                    className={cn(
+                      'p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors',
+                      feedback === 'liked' && 'text-emerald-500',
+                    )}
+                    title="Like"
+                  >
+                    <ThumbsUp size={14} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      const nextFeedback = feedback === 'disliked' ? undefined : 'disliked';
+                      setFeedback(nextFeedback);
+                      showStatus(nextFeedback ? 'Disliked' : undefined);
+                    }}
+                    className={cn(
+                      'p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors',
+                      feedback === 'disliked' && 'text-red-500',
+                    )}
+                    title="Dislike"
+                  >
+                    <ThumbsDown size={14} />
+                  </button>
+                  <button
+                    onClick={() => void regenerate(message.id)}
+                    disabled={isStreaming}
+                    className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors disabled:opacity-40"
+                    title="Regenerate"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                  <button
+                    onClick={() => void share()}
+                    className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors"
+                    title="Share"
+                  >
+                    <Share2 size={14} />
+                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setExportOpen((open) => !open)}
+                      className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors"
+                      title="Export"
+                    >
+                      <Download size={14} />
+                    </button>
+                    {exportOpen && (
+                      <div className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-border bg-popover p-1.5 shadow-xl z-20 text-left">
+                        <button onClick={() => exportMessage('pdf')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
+                          <FileDown size={14} />
+                          PDF
+                        </button>
+                        <button onClick={() => exportMessage('markdown')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
+                          <FileText size={14} />
+                          Markdown
+                        </button>
+                        <button onClick={() => exportMessage('docx')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
+                          <FileText size={14} />
+                          DOCX
+                        </button>
+                        <button onClick={() => exportMessage('txt')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
+                          <FileText size={14} />
+                          TXT
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
+                </>
               )}
 
-              <div className={cn(
-                'flex flex-wrap items-center gap-1 mt-3 text-muted-foreground transition-opacity',
-                isUser && 'opacity-0 group-hover:opacity-100',
-                isUser && 'justify-end',
-              )}>
+              {isUser && message.id && !message.id.startsWith('u_') && (
                 <button
-                  onClick={() => void copy()}
-                  className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors"
-                  title="Copy"
+                  onClick={() => void fork()}
+                  disabled={forking || isStreaming}
+                  className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors disabled:opacity-40"
+                  title="Fork branch from here"
                 >
-                  {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                  <GitBranch size={14} className={forking ? 'animate-pulse' : ''} />
                 </button>
+              )}
 
-                {!isUser && (
-                  <>
-                    <button
-                      onClick={() => {
-                        const nextFeedback = feedback === 'liked' ? undefined : 'liked';
-                        setFeedback(nextFeedback);
-                        showStatus(nextFeedback ? 'Liked' : undefined);
-                      }}
-                      className={cn(
-                        'p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors',
-                        feedback === 'liked' && 'text-emerald-500',
-                      )}
-                      title="Like"
-                    >
-                      <ThumbsUp size={14} />
-                    </button>
-                    <button
-                      onClick={() => {
-                        const nextFeedback = feedback === 'disliked' ? undefined : 'disliked';
-                        setFeedback(nextFeedback);
-                        showStatus(nextFeedback ? 'Disliked' : undefined);
-                      }}
-                      className={cn(
-                        'p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors',
-                        feedback === 'disliked' && 'text-red-500',
-                      )}
-                      title="Dislike"
-                    >
-                      <ThumbsDown size={14} />
-                    </button>
-                    <button
-                      onClick={() => void regenerate(message.id)}
-                      disabled={isStreaming}
-                      className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors disabled:opacity-40"
-                      title="Regenerate"
-                    >
-                      <RefreshCw size={14} />
-                    </button>
-                    <button
-                      onClick={() => void share()}
-                      className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors"
-                      title="Share"
-                    >
-                      <Share2 size={14} />
-                    </button>
-                    <div className="relative">
-                      <button
-                        onClick={() => setExportOpen((open) => !open)}
-                        className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors"
-                        title="Export"
-                      >
-                        <Download size={14} />
-                      </button>
-                      {exportOpen && (
-                        <div className="absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-border bg-popover p-1.5 shadow-xl z-20 text-left">
-                          <button onClick={() => exportMessage('pdf')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
-                            <FileDown size={14} />
-                            PDF
-                          </button>
-                          <button onClick={() => exportMessage('markdown')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
-                            <FileText size={14} />
-                            Markdown
-                          </button>
-                          <button onClick={() => exportMessage('docx')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
-                            <FileText size={14} />
-                            DOCX
-                          </button>
-                          <button onClick={() => exportMessage('txt')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-muted">
-                            <FileText size={14} />
-                            TXT
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
+              {!isUser && message.model && (
+                <span className="text-[11px] font-mono ml-2 opacity-70">{message.model}</span>
+              )}
+              {!isUser && actionStatus && (
+                <span className="text-[11px] font-medium ml-1" aria-live="polite">{actionStatus}</span>
+              )}
+            </div>
+          )}
 
-                {isUser && message.id && !message.id.startsWith('u_') && (
-                  <button
-                    onClick={() => void fork()}
-                    disabled={forking || isStreaming}
-                    className="p-1.5 hover:bg-muted hover:text-foreground rounded-md transition-colors disabled:opacity-40"
-                    title="Fork branch from here"
-                  >
-                    <GitBranch size={14} className={forking ? 'animate-pulse' : ''} />
-                  </button>
-                )}
-
-                {!isUser && message.model && (
-                  <span className="text-[11px] font-mono ml-2">{message.model}</span>
-                )}
-                {!isUser && message.tokensOut != null && (
-                  <span className="text-[11px] ml-1">· {message.tokensOut} tok</span>
-                )}
-                {!isUser && actionStatus && (
-                  <span className="text-[11px] font-medium ml-1" aria-live="polite">{actionStatus}</span>
-                )}
+          {!isUser && sources.length > 0 && (
+            <div className="mt-4 rounded-xl border border-border bg-muted/30 p-3 text-left w-full max-w-2xl">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                <Search size={12} />
+                Sources
               </div>
-            </>
+              <div className="flex flex-wrap gap-2">
+                {sources.map((source) => (
+                  <a
+                    key={source.url}
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex max-w-[200px] items-center gap-2 rounded-lg border border-border bg-background/50 px-2.5 py-1 text-xs hover:bg-background hover:text-primary transition-colors shadow-sm"
+                  >
+                    <ExternalLink size={11} className="flex-shrink-0" />
+                    <span className="truncate">{source.title ?? source.url}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 p-4 backdrop-blur-sm"
+          onClick={() => setPreviewImage(undefined)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded-full bg-background/80 px-3 py-1.5 text-sm shadow-sm border border-border"
+            onClick={() => setPreviewImage(undefined)}
+          >
+            Close
+          </button>
+          <img
+            src={previewImage.src}
+            alt={previewImage.alt}
+            className="max-h-[88vh] max-w-[92vw] rounded-lg object-contain shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

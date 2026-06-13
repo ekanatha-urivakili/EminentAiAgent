@@ -83,11 +83,11 @@ export function LibraryView() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <CalendarDays size={20} className="text-muted-foreground" />
+        <h1 className="text-2xl font-semibold flex items-center gap-2">
+          <CalendarDays size={22} className="text-muted-foreground" />
           Library
         </h1>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-base">
           <button
             onClick={() => setShowArchived(false)}
             className={cn('px-3 py-1.5 rounded-lg transition-colors', !showArchived ? 'bg-muted font-medium' : 'text-muted-foreground hover:bg-muted/60')}
@@ -100,7 +100,7 @@ export function LibraryView() {
           >
             Archived
             {archivedIds.length > 0 && (
-              <span className="ml-1.5 text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full">
+              <span className="ml-1.5 text-xs bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full">
                 {archivedIds.length}
               </span>
             )}
@@ -111,16 +111,16 @@ export function LibraryView() {
       {/* Search + filters */}
       <div className="px-6 py-3 border-b border-border space-y-3">
         <div className="relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by title…"
-            className="w-full rounded-xl border border-input bg-background py-2.5 pl-9 pr-9 text-sm outline-none focus:border-primary"
+            className="w-full rounded-xl border border-input bg-background py-2.5 pl-10 pr-10 text-base outline-none focus:border-primary"
           />
           {query && (
             <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              <X size={14} />
+              <X size={15} />
             </button>
           )}
         </div>
@@ -132,7 +132,7 @@ export function LibraryView() {
               key={f.key}
               onClick={() => setTimeFilter(f.key)}
               className={cn(
-                'px-3 py-1 rounded-full text-xs font-medium transition-colors border',
+                'px-3 py-1 rounded-full text-sm font-medium transition-colors border',
                 timeFilter === f.key
                   ? 'bg-primary text-primary-foreground border-primary'
                   : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground',
@@ -148,8 +148,8 @@ export function LibraryView() {
       <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-3">
         <div className="max-w-3xl mx-auto space-y-1">
           {filtered.length === 0 ? (
-            <div className="py-16 text-center text-muted-foreground text-sm">
-              <MessageCircle size={32} className="mx-auto mb-3 opacity-30" />
+            <div className="py-16 text-center text-muted-foreground text-base">
+              <MessageCircle size={36} className="mx-auto mb-3 opacity-30" />
               {query ? 'No chats match your search.' : showArchived ? 'No archived chats.' : 'No chats in this time range.'}
             </div>
           ) : (
@@ -197,10 +197,10 @@ function LibraryRow({ title, createdAt, model, active, onSelect, onDelete, onArc
       )}
       onClick={onSelect}
     >
-      <MessageCircle size={16} className="flex-shrink-0 text-muted-foreground" />
+      <MessageCircle size={18} className="flex-shrink-0 text-muted-foreground" />
       <div className="flex-1 min-w-0">
-        <div className="truncate text-sm font-medium">{title || 'Untitled'}</div>
-        <div className="text-[11px] text-muted-foreground mt-0.5">
+        <div className="truncate text-base font-medium">{title || 'Untitled'}</div>
+        <div className="text-xs text-muted-foreground mt-0.5">
           {new Date(createdAt).toLocaleString()} · {model}
         </div>
       </div>
@@ -210,14 +210,14 @@ function LibraryRow({ title, createdAt, model, active, onSelect, onDelete, onArc
           className="p-1.5 rounded-md hover:bg-background text-muted-foreground hover:text-foreground transition-colors"
           title="Archive"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
         </button>
         <button
           onClick={handleDelete}
           className={cn('p-1.5 rounded-md transition-colors', confirmDelete ? 'bg-destructive/15 text-destructive' : 'hover:bg-background text-muted-foreground hover:text-destructive')}
           title={confirmDelete ? 'Tap again to delete' : 'Delete'}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
         </button>
       </div>
     </div>

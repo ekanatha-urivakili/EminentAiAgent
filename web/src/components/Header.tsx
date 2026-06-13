@@ -1,4 +1,4 @@
-import { Settings, Sun, Moon, Monitor, UserCircle, LogOut, Menu } from 'lucide-react';
+import { Settings, Sun, Moon, Monitor, UserCircle, LogOut, Menu, Palette } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -9,6 +9,7 @@ const themes: { value: Theme; icon: typeof Sun; label: string }[] = [
   { value: 'light', icon: Sun, label: 'Light' },
   { value: 'system', icon: Monitor, label: 'System' },
   { value: 'dark', icon: Moon, label: 'Dark' },
+  { value: 'navy', icon: Palette, label: 'Navy' },
 ];
 
 export function Header({ toggleSidebar, onOpenSettings }: { sidebarOpen: boolean; toggleSidebar: () => void; onOpenSettings: () => void }) {

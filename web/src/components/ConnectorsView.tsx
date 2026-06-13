@@ -291,35 +291,35 @@ function SuggestedCard({ mcp, registeredId, onEnable, onDisable, busy }: Suggest
       <div className="p-4">
         <div className="flex items-start gap-3">
           <div className={cn(
-            'w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5',
+            'w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5',
             isEnabled ? 'bg-primary/15' : 'bg-muted',
           )}>
-            <Plug size={14} className={isEnabled ? 'text-primary' : 'text-muted-foreground'} />
+            <Plug size={16} className={isEnabled ? 'text-primary' : 'text-muted-foreground'} />
           </div>
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="font-semibold text-sm">{mcp.name}</span>
+              <span className="font-semibold text-base">{mcp.name}</span>
               {mcp.openSource && (
-                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
                   open source
                 </span>
               )}
-              <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded-full border', POLICY_COLOR[mcp.policyProfile])}>
+              <span className={cn('text-xs font-semibold px-1.5 py-0.5 rounded-full border', POLICY_COLOR[mcp.policyProfile])}>
                 {mcp.policyProfile}
               </span>
               {mcp.roles.map((r) => (
-                <span key={r} className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded-full border', ROLE_BADGE[r])}>
+                <span key={r} className={cn('text-xs font-semibold px-1.5 py-0.5 rounded-full border', ROLE_BADGE[r])}>
                   {ROLE_DISPLAY[r]}
                 </span>
               ))}
             </div>
 
-            <p className="text-xs text-muted-foreground mb-2">{mcp.description}</p>
+            <p className="text-sm text-muted-foreground mb-2">{mcp.description}</p>
 
             {isEnabled && (
               <div className="flex items-center gap-1.5 mt-2 p-2 rounded-lg bg-background border border-border">
-                <code className="text-[11px] font-mono text-muted-foreground flex-1 truncate">{mcp.command}</code>
+                <code className="text-xs font-mono text-muted-foreground flex-1 truncate">{mcp.command}</code>
                 <CopyButton text={mcp.command} />
               </div>
             )}
@@ -327,7 +327,7 @@ function SuggestedCard({ mcp, registeredId, onEnable, onDisable, busy }: Suggest
             {mcp.envRequired && mcp.envRequired.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-2">
                 {mcp.envRequired.map((env) => (
-                  <span key={env} className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded border border-border text-muted-foreground">
+                  <span key={env} className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded border border-border text-muted-foreground">
                     {env}
                   </span>
                 ))}
@@ -344,7 +344,7 @@ function SuggestedCard({ mcp, registeredId, onEnable, onDisable, busy }: Suggest
                 className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                 title="Documentation"
               >
-                <ExternalLink size={13} />
+                <ExternalLink size={15} />
               </a>
             )}
             <button
@@ -357,10 +357,10 @@ function SuggestedCard({ mcp, registeredId, onEnable, onDisable, busy }: Suggest
               title={isEnabled ? 'Disable' : 'Enable'}
             >
               {busy
-                ? <Loader2 size={22} className="animate-spin" />
+                ? <Loader2 size={24} className="animate-spin" />
                 : isEnabled
-                  ? <ToggleRight size={28} />
-                  : <ToggleLeft size={28} />}
+                  ? <ToggleRight size={32} />
+                  : <ToggleLeft size={32} />}
             </button>
           </div>
         </div>
@@ -368,28 +368,28 @@ function SuggestedCard({ mcp, registeredId, onEnable, onDisable, busy }: Suggest
         {/* Inline config form for connectors that need customisation */}
         {expanded && !isEnabled && (
           <div className="mt-4 pt-4 border-t border-border space-y-3">
-            <p className="text-xs text-muted-foreground">Edit the command before enabling:</p>
+            <p className="text-sm text-muted-foreground">Edit the command before enabling:</p>
             <div className="flex items-center gap-2">
               <input
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
-                className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
               <CopyButton text={command} />
             </div>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => { setExpanded(false); setCommand(mcp.command); }}
-                className="px-3 py-1.5 text-xs rounded-lg border border-border hover:bg-muted transition-colors"
+                className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={() => void handleAdd()}
                 disabled={busy || !command.trim()}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
               >
-                {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                 Enable
               </button>
             </div>
@@ -437,56 +437,56 @@ function CustomConnectorForm({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 space-y-4">
-      <p className="text-sm font-semibold">Add custom connector</p>
+      <p className="text-base font-semibold">Add custom connector</p>
 
       {error && (
-        <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
-          <AlertTriangle size={14} className="flex-shrink-0" />
+        <div className="flex items-center gap-2 text-base text-red-600 dark:text-red-400">
+          <AlertTriangle size={16} className="flex-shrink-0" />
           {error}
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2 sm:col-span-1">
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Name *</label>
+          <label className="text-sm font-medium text-muted-foreground mb-1 block">Name *</label>
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value.toLowerCase().replace(/\s+/g, '-') })}
             placeholder="my-mcp-server"
-            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
 
         <div className="col-span-2 sm:col-span-1">
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Transport *</label>
+          <label className="text-sm font-medium text-muted-foreground mb-1 block">Transport *</label>
           <div className="relative">
             <select
               value={form.transport}
               onChange={(e) => setForm({ ...form, transport: e.target.value as ConnectorTransport })}
-              className="w-full appearance-none bg-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="w-full appearance-none bg-background border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
               {TRANSPORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
-            <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           </div>
         </div>
 
         <div className="col-span-2">
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">
+          <label className="text-sm font-medium text-muted-foreground mb-1 block">
             {form.transport === 'stdio' ? 'Command *' : 'URL *'}
           </label>
           <input
             value={form.commandOrUrl}
             onChange={(e) => setForm({ ...form, commandOrUrl: e.target.value })}
             placeholder={form.transport === 'stdio' ? 'npx my-mcp-server' : 'http://localhost:3001/sse'}
-            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-base font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
 
         <div className="col-span-2">
-          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Policy profile</label>
+          <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Policy profile</label>
           <div className="grid gap-2 sm:grid-cols-3">
             {POLICY_OPTIONS.map((o) => (
               <button
@@ -500,8 +500,8 @@ function CustomConnectorForm({ onDone }: { onDone: () => void }) {
                     : 'border-border bg-background text-muted-foreground hover:border-border/80',
                 )}
               >
-                <div className="text-xs font-semibold">{o.label}</div>
-                <div className="text-[10px] opacity-70">{o.desc}</div>
+                <div className="text-sm font-semibold">{o.label}</div>
+                <div className="text-xs opacity-70">{o.desc}</div>
               </button>
             ))}
           </div>
@@ -509,15 +509,15 @@ function CustomConnectorForm({ onDone }: { onDone: () => void }) {
       </div>
 
       <div className="flex gap-2 justify-end">
-        <button onClick={onDone} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors">
+        <button onClick={onDone} className="px-4 py-2 text-base rounded-lg border border-border hover:bg-muted transition-colors">
           Cancel
         </button>
         <button
           onClick={() => void handleAdd()}
           disabled={saving}
-          className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+          className="flex items-center gap-2 px-4 py-2 text-base rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
         >
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+          {saving ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
           Add connector
         </button>
       </div>
@@ -580,15 +580,15 @@ export function ConnectorsView() {
       {/* Page header */}
       <div>
         <div className="flex items-center gap-3 mb-1">
-          <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Plug size={18} className="text-primary" />
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Plug size={20} className="text-primary" />
           </div>
-          <h1 className="text-xl font-bold">MCP Connectors</h1>
+          <h1 className="text-2xl font-bold">MCP Connectors</h1>
         </div>
-        <p className="text-sm text-muted-foreground ml-12">
+        <p className="text-base text-muted-foreground ml-12">
           Connect external tools and data sources to the agent via the Model Context Protocol.
-          Built-in <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">filesystem</code> and{' '}
-          <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">shell</code> are always available.
+          Built-in <code className="font-mono text-sm bg-muted px-1 py-0.5 rounded">filesystem</code> and{' '}
+          <code className="font-mono text-sm bg-muted px-1 py-0.5 rounded">shell</code> are always available.
         </p>
       </div>
 
@@ -596,8 +596,8 @@ export function ConnectorsView() {
       <section className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h2 className="font-semibold">Suggested</h2>
-            <p className="text-xs text-muted-foreground">Curated open-source MCPs for everyday engineering and product work.</p>
+            <h2 className="text-lg font-semibold">Suggested</h2>
+            <p className="text-sm text-muted-foreground">Curated open-source MCPs for everyday engineering and product work.</p>
           </div>
 
           {/* Role filter tabs */}
@@ -607,7 +607,7 @@ export function ConnectorsView() {
                 key={role}
                 onClick={() => setRoleFilter(role)}
                 className={cn(
-                  'px-3 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap',
+                  'px-3 py-1 text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
                   roleFilter === role
                     ? 'bg-background text-foreground shadow-sm border border-border'
                     : 'text-muted-foreground hover:text-foreground',
@@ -640,15 +640,15 @@ export function ConnectorsView() {
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="font-semibold">Custom connectors</h2>
-            <p className="text-xs text-muted-foreground">Your manually registered MCP servers.</p>
+            <h2 className="text-lg font-semibold">Custom connectors</h2>
+            <p className="text-sm text-muted-foreground">Your manually registered MCP servers.</p>
           </div>
           {!showCustomForm && (
             <button
               onClick={() => setShowCustomForm(true)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 text-base rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              <Plus size={14} />
+              <Plus size={16} />
               Add custom
             </button>
           )}
@@ -660,8 +660,8 @@ export function ConnectorsView() {
 
         {customConnectors.length === 0 && !showCustomForm ? (
           <div className="flex flex-col items-center justify-center py-10 text-muted-foreground border border-dashed border-border rounded-xl gap-2">
-            <Plug size={22} className="opacity-30" />
-            <p className="text-sm">No custom connectors yet.</p>
+            <Plug size={24} className="opacity-30" />
+            <p className="text-base">No custom connectors yet.</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -672,17 +672,17 @@ export function ConnectorsView() {
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="font-mono text-sm font-semibold">{c.name}</span>
-                    <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-full border', POLICY_COLOR[c.policyProfile])}>
+                    <span className="font-mono text-base font-semibold">{c.name}</span>
+                    <span className={cn('text-xs font-semibold px-2 py-0.5 rounded-full border', POLICY_COLOR[c.policyProfile])}>
                       {c.policyProfile}
                     </span>
                     {!c.enabled && (
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border text-muted-foreground bg-muted">
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full border text-muted-foreground bg-muted">
                         disabled
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span className="font-mono bg-muted px-1.5 py-0.5 rounded">{c.transport}</span>
                     <span className="truncate max-w-xs">{c.commandOrUrl}</span>
                     <CopyButton text={c.commandOrUrl} />
@@ -695,8 +695,8 @@ export function ConnectorsView() {
                   title="Remove connector"
                 >
                   {deletingId === c.id
-                    ? <Loader2 size={14} className="animate-spin" />
-                    : <Trash2 size={14} />}
+                    ? <Loader2 size={16} className="animate-spin" />
+                    : <Trash2 size={16} />}
                 </button>
               </div>
             ))}
@@ -706,8 +706,8 @@ export function ConnectorsView() {
 
       {/* ── How to link ── */}
       <section className="space-y-3">
-        <h2 className="font-semibold">How to link an MCP server</h2>
-        <div className="rounded-xl border border-border bg-muted/30 p-5 space-y-3 text-sm">
+        <h2 className="text-lg font-semibold">How to link an MCP server</h2>
+        <div className="rounded-xl border border-border bg-muted/30 p-5 space-y-3 text-base">
           <p className="text-muted-foreground">Enable a connector above, then reference it by name in the Agent settings or pass it directly in an agent run. The agent resolves the name to the registered command at runtime.</p>
           <div className="space-y-2">
             {[
@@ -715,15 +715,15 @@ export function ConnectorsView() {
               { label: 'SSE (HTTP stream)', cmd: 'http://localhost:3001/sse' },
             ].map(({ label, cmd }) => (
               <div key={label}>
-                <p className="text-xs text-muted-foreground mb-1">{label}</p>
+                <p className="text-sm text-muted-foreground mb-1">{label}</p>
                 <div className="flex items-center gap-2 bg-background border border-border rounded-lg px-3 py-2">
-                  <code className="text-xs font-mono flex-1 text-foreground">{cmd}</code>
+                  <code className="text-sm font-mono flex-1 text-foreground">{cmd}</code>
                   <CopyButton text={cmd} />
                 </div>
               </div>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             For connectors requiring environment variables, set them in your shell before starting the backend:{' '}
             <code className="font-mono bg-background border border-border px-1.5 py-0.5 rounded">export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...</code>
           </p>

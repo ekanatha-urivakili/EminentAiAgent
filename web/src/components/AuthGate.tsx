@@ -4,6 +4,7 @@ import { useStore } from '../state/store';
 import { BrandLogo } from './BrandLogo';
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
+const mailpitUrl = 'http://localhost:8025';
 
 function getResetToken(): string | null {
   return new URLSearchParams(window.location.search).get('token');
@@ -27,10 +28,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [infoMsg, setInfoMsg] = useState('');
   const [localError, setLocalError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   if (admin) return <>{children}</>;
 
-  const clearMessages = () => { setInfoMsg(''); setLocalError(''); };
+  const clearMessages = () => { setInfoMsg(''); setLocalError(''); setForgotSent(false); };
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -50,8 +52,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setLoading(true);
       const res = await forgotPassword(email);
       setLoading(false);
-      if (res.ok) setInfoMsg(res.message ?? 'Check your email for the reset link.');
-      else setLocalError(res.error ?? 'Something went wrong.');
+      if (res.ok) {
+        setInfoMsg(res.message ?? 'Check your email for the reset link.');
+        setForgotSent(true);
+      } else {
+        setLocalError(res.error ?? 'Something went wrong.');
+      }
       return;
     }
 
@@ -121,9 +127,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
           )}
 
           {(mode === 'login' || mode === 'register') && (
-            <input value={password} onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password" type="password" required
-              className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" />
+            <div>
+              <input value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password" type="password" required
+                className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" />
+              {mode === 'login' && (
+                <div className="mt-2 flex justify-end">
+                  <button type="button" onClick={() => { setMode('forgot'); clearMessages(); }}
+                    className="text-sm font-medium text-primary hover:text-primary/80 underline underline-offset-4">
+                    Forgot password?
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {mode === 'reset' && (
@@ -140,15 +156,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         {infoMsg && <p className="mt-3 text-sm text-green-600 dark:text-green-400">{infoMsg}</p>}
-
-        {/* Forgot password link — only shown in login mode */}
-        {mode === 'login' && (
-          <div className="mt-2 text-right">
-            <button type="button" onClick={() => { setMode('forgot'); clearMessages(); }}
-              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">
-              Forgot password?
-            </button>
-          </div>
+        {mode === 'forgot' && forgotSent && (
+          <a
+            href={mailpitUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 flex w-full items-center justify-center rounded-lg border border-border bg-background py-2.5 text-sm font-medium hover:bg-muted transition-colors"
+          >
+            Open Mailpit
+          </a>
         )}
 
         <button type="submit" disabled={isWorking}

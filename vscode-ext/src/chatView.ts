@@ -159,24 +159,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     body { font-family: var(--vscode-font-family); padding: 0; display: flex; flex-direction: column; height: 100vh; margin: 0; background: var(--vscode-sideBar-background); color: var(--vscode-sideBar-foreground); }
     
-    .toolbar { 
-      display: flex; 
-      gap: 4px; 
-      padding: 8px; 
-      border-bottom: 1px solid var(--vscode-divider);
-      background: var(--vscode-sideBar-background);
-      z-index: 10;
-    }
-    
     select {
-      background: var(--vscode-dropdown-background);
-      color: var(--vscode-dropdown-foreground);
-      border: 1px solid var(--vscode-dropdown-border);
-      border-radius: 4px;
+      appearance: none;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
+      border-radius: 999px;
       font-size: 11px;
-      padding: 2px 4px;
+      line-height: 1;
+      padding: 6px 22px 6px 10px;
       outline: none;
-      max-width: 120px;
+      max-width: min(45vw, 150px);
+      min-height: 28px;
+      background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+      background-position: calc(100% - 12px) 11px, calc(100% - 8px) 11px;
+      background-size: 4px 4px, 4px 4px;
+      background-repeat: no-repeat;
+    }
+
+    select:focus {
+      border-color: var(--vscode-focusBorder);
     }
 
     #messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px; }
@@ -226,49 +228,89 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       background: var(--vscode-sideBar-background);
     }
 
+    .composer-shell {
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
+      border-radius: 18px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+    }
+
+    .composer-shell:focus-within {
+      border-color: var(--vscode-focusBorder);
+    }
+
     textarea { 
       width: 100%; 
-      min-height: 60px; 
+      min-height: 56px; 
       max-height: 200px;
       box-sizing: border-box; 
       resize: none;
-      background: var(--vscode-input-background); 
+      background: transparent; 
       color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border, transparent); 
-      border-radius: 6px; 
-      padding: 8px 10px; 
+      border: 0;
+      padding: 12px 14px 6px; 
       font-family: inherit;
       font-size: var(--font-size);
       outline: none;
-    }
-    
-    textarea:focus {
-      border-color: var(--vscode-focusBorder);
     }
 
     .composer-footer {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 6px;
+      gap: 8px;
+      padding: 6px 8px 8px;
     }
 
-    .hint { font-size: 10px; opacity: 0.5; }
+    .composer-left,
+    .composer-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .composer-left {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .local-note {
+      color: var(--vscode-descriptionForeground);
+      font-size: 10px;
+      line-height: 1.2;
+      margin-top: 8px;
+      text-align: center;
+    }
     
     button.icon-btn { 
-      background: none; 
-      border: none; 
-      color: var(--vscode-foreground); 
+      background: var(--vscode-input-background); 
+      border: 1px solid var(--vscode-input-border, var(--vscode-widget-border)); 
+      color: var(--vscode-foreground);
       cursor: pointer; 
-      opacity: 0.7;
-      padding: 4px;
+      padding: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 4px;
+      border-radius: 999px;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
     }
     
-    button.icon-btn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+    button.icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+
+    button.primary {
+      background: var(--vscode-button-background);
+      border-color: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    button.primary:hover {
+      background: var(--vscode-button-hoverBackground);
+      border-color: var(--vscode-button-hoverBackground);
+    }
     
     .loading-dots:after {
       content: ' .';
@@ -284,28 +326,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   </style>
 </head>
 <body>
-  <div class="toolbar">
-    <select id="mode-select" title="Change Mode">
-      <option value="Chat">Chat</option>
-      <option value="Plan">Plan</option>
-      <option value="Agent">Agent</option>
-    </select>
-    <select id="model-select" title="Change Model">
-      <option value="">Loading models...</option>
-    </select>
-    <div style="flex:1"></div>
-    <button class="icon-btn" id="clear" title="Clear Chat">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-    </button>
-  </div>
-  
   <div id="messages"></div>
   
   <div class="composer">
-    <textarea id="prompt" placeholder="Ask EminentAi…"></textarea>
-    <div class="composer-footer">
-      <span class="hint">Enter to send · Shift+Enter for newline</span>
+    <div class="composer-shell">
+      <textarea id="prompt" placeholder="Message EminentAi..."></textarea>
+      <div class="composer-footer">
+        <div class="composer-left">
+          <button class="icon-btn" id="clear" title="Clear chat">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <select id="model-select" title="Ollama model">
+            <option value="">Loading models...</option>
+          </select>
+          <select id="mode-select" title="Mode">
+            <option value="Chat">Chat</option>
+            <option value="Plan">Plan</option>
+            <option value="Agent">Agent</option>
+          </select>
+        </div>
+        <div class="composer-right">
+          <button class="icon-btn primary" id="send" title="Send">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
+    <div class="local-note">EminentAi runs entirely on this machine. Your data stays local.</div>
   </div>
 
   <script nonce="${nonce}">
@@ -314,6 +361,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const messages = document.getElementById('messages');
     const modelSelect = document.getElementById('model-select');
     const modeSelect = document.getElementById('mode-select');
+    const sendButton = document.getElementById('send');
     let currentAssistantEl = null;
 
     // Notify extension we are ready to receive init data
@@ -345,18 +393,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           el.textContent = 'Thought: ' + ev.text;
           break;
         case 'tool_call':
-          el.textContent = '→ Running ' + ev.tool + '...';
+          el.textContent = 'Running ' + ev.tool + '...';
           el.className += ' tool-call';
           break;
         case 'tool_result':
-          el.textContent = '✓ ' + ev.tool + ' result received';
+          el.textContent = ev.tool + ' result received';
           el.className += ' tool-result';
           break;
         case 'done':
           addMsg('assistant', 'Agent Result', ev.answer);
           return;
         case 'error':
-          el.textContent = '❌ Error: ' + ev.message;
+          el.textContent = 'Error: ' + ev.message;
           el.className += ' err';
           break;
         default:
@@ -367,27 +415,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       messages.scrollTop = messages.scrollHeight;
     }
 
+    function submitPrompt() {
+      const text = promptEl.value.trim();
+      if (!text) return;
+      addMsg('user', 'You', text);
+      
+      if (modeSelect.value === 'Agent') {
+        const status = document.createElement('div');
+        status.className = 'agent-event';
+        status.innerHTML = 'Starting agent<span class="loading-dots"></span>';
+        messages.appendChild(status);
+      } else {
+        currentAssistantEl = addMsg('assistant', modeSelect.value === 'Plan' ? 'Plan' : 'EminentAi', '');
+      }
+      
+      vscode.postMessage({ type: 'send', text });
+      promptEl.value = '';
+      promptEl.style.height = 'auto';
+    }
+
     promptEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        const text = promptEl.value.trim();
-        if (!text) return;
-        addMsg('user', 'You', text);
-        
-        if (modeSelect.value === 'Agent') {
-          const status = document.createElement('div');
-          status.className = 'agent-event';
-          status.innerHTML = 'Starting agent<span class="loading-dots"></span>';
-          messages.appendChild(status);
-        } else {
-          currentAssistantEl = addMsg('assistant', 'EminentAi', '');
-        }
-        
-        vscode.postMessage({ type: 'send', text });
-        promptEl.value = '';
-        promptEl.style.height = 'auto';
+        submitPrompt();
       }
     });
+
+    sendButton.addEventListener('click', submitPrompt);
 
     promptEl.addEventListener('input', () => {
       promptEl.style.height = 'auto';
@@ -400,7 +454,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     modeSelect.addEventListener('change', () => {
       vscode.postMessage({ type: 'setMode', mode: modeSelect.value });
-      promptEl.placeholder = modeSelect.value === 'Agent' ? 'Give the agent a goal…' : 'Ask EminentAi…';
+      promptEl.placeholder = modeSelect.value === 'Agent' ? 'Give the agent a goal...' : 'Message EminentAi...';
     });
 
     document.getElementById('clear').addEventListener('click', () => {
@@ -420,12 +474,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           if (m === msg.selectedModel) opt.selected = true;
           modelSelect.appendChild(opt);
         });
+        if (msg.models.length === 0 && msg.selectedModel) {
+          const opt = document.createElement('option');
+          opt.value = msg.selectedModel;
+          opt.textContent = msg.selectedModel;
+          opt.selected = true;
+          modelSelect.appendChild(opt);
+        }
         modeSelect.value = msg.mode;
-        promptEl.placeholder = msg.mode === 'Agent' ? 'Give the agent a goal…' : 'Ask EminentAi…';
+        promptEl.placeholder = msg.mode === 'Agent' ? 'Give the agent a goal...' : 'Message EminentAi...';
       } else if (msg.type === 'token') {
         if (currentAssistantEl) {
           currentAssistantEl.textContent += msg.text;
           messages.scrollTop = messages.scrollHeight;
+        }
+      } else if (msg.type === 'clear_last_token') {
+        if (currentAssistantEl) {
+          currentAssistantEl.textContent = '';
         }
       } else if (msg.type === 'error') {
         if (currentAssistantEl) { 

@@ -64,6 +64,36 @@
     --input: 215 27.9% 16.9%;
     --ring: 216 12.2% 83.9%;
   }
+
+  .navy {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 222 47% 18%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 222 47% 18%;
+    --muted-foreground: 217 32% 70%;
+
+    --accent: 222 47% 18%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 222 47% 18%;
+    --input: 222 47% 18%;
+    --ring: 212 91% 60%;
+  }
 }
 
 @layer base {
@@ -73,11 +103,16 @@
   html {
     color-scheme: light;
   }
-  html.dark {
+  html.dark, html.navy {
     color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    letter-spacing: 0;
+    font-weight: 400;
   }
   body, .bg-background, .bg-card, .bg-muted {
     transition: background-color 0.25s ease, border-color 0.25s ease;
@@ -107,18 +142,23 @@
   background: transparent;
 }
 
-.dark .markdown-code-block .hljs {
+.dark .markdown-code-block .hljs, .navy .markdown-code-block .hljs {
   color: #d6e2ff;
 }
 
 .dark .markdown-code-block .hljs-comment,
-.dark .markdown-code-block .hljs-quote {
+.dark .markdown-code-block .hljs-quote,
+.navy .markdown-code-block .hljs-comment,
+.navy .markdown-code-block .hljs-quote {
   color: #76839a;
 }
 
 .dark .markdown-code-block .hljs-keyword,
 .dark .markdown-code-block .hljs-selector-tag,
-.dark .markdown-code-block .hljs-subst {
+.dark .markdown-code-block .hljs-subst,
+.navy .markdown-code-block .hljs-keyword,
+.navy .markdown-code-block .hljs-selector-tag,
+.navy .markdown-code-block .hljs-subst {
   color: #ff7b72;
 }
 
@@ -126,20 +166,33 @@
 .dark .markdown-code-block .hljs-title,
 .dark .markdown-code-block .hljs-section,
 .dark .markdown-code-block .hljs-attribute,
-.dark .markdown-code-block .hljs-name {
+.dark .markdown-code-block .hljs-name,
+.navy .markdown-code-block .hljs-string,
+.navy .markdown-code-block .hljs-title,
+.navy .markdown-code-block .hljs-section,
+.navy .markdown-code-block .hljs-attribute,
+.navy .markdown-code-block .hljs-name {
   color: #a5d6ff;
 }
 
 .dark .markdown-code-block .hljs-number,
 .dark .markdown-code-block .hljs-literal,
 .dark .markdown-code-block .hljs-variable,
-.dark .markdown-code-block .hljs-template-variable {
+.dark .markdown-code-block .hljs-template-variable,
+.navy .markdown-code-block .hljs-number,
+.navy .markdown-code-block .hljs-literal,
+.navy .markdown-code-block .hljs-variable,
+.navy .markdown-code-block .hljs-template-variable {
   color: #79c0ff;
 }
 
 .dark .markdown-code-block .hljs-type,
 .dark .markdown-code-block .hljs-built_in,
 .dark .markdown-code-block .hljs-symbol,
-.dark .markdown-code-block .hljs-bullet {
+.dark .markdown-code-block .hljs-bullet,
+.navy .markdown-code-block .hljs-type,
+.navy .markdown-code-block .hljs-built_in,
+.navy .markdown-code-block .hljs-symbol,
+.navy .markdown-code-block .hljs-bullet {
   color: #d2a8ff;
 }

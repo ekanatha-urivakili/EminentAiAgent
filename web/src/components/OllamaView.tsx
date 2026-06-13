@@ -458,33 +458,33 @@ export function OllamaView() {
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border pb-6 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Cpu size={16} /> Local model runtime
+          <div className="flex items-center gap-2 text-base text-muted-foreground">
+            <Cpu size={18} /> Local model runtime
           </div>
-          <h1 className="mt-2 text-2xl sm:text-3xl font-semibold tracking-tight">Ollama</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          <h1 className="mt-2 text-3xl sm:text-4xl font-semibold tracking-tight">Ollama</h1>
+          <p className="mt-2 max-w-2xl text-base text-muted-foreground">
             Manage the local Ollama runtime and inspect models installed on this machine.
           </p>
         </div>
         <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-2 text-sm">
+          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-2 text-base">
             <span className={ollamaOk ? 'h-2 w-2 rounded-full bg-emerald-500' : 'h-2 w-2 rounded-full bg-red-500'} />
             {ollamaOk ? 'Running' : 'Stopped'}
           </div>
-          <button onClick={() => void start()} disabled={busy !== undefined} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
-            <Play size={15} /> Start Ollama
+          <button onClick={() => void start()} disabled={busy !== undefined} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-base hover:bg-muted disabled:opacity-50">
+            <Play size={16} /> Start Ollama
           </button>
-          <button onClick={() => void stop()} disabled={busy !== undefined} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
-            <Square size={14} /> Stop Ollama
+          <button onClick={() => void stop()} disabled={busy !== undefined} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-base hover:bg-muted disabled:opacity-50">
+            <Square size={15} /> Stop Ollama
           </button>
-          <button onClick={() => void refresh()} disabled={busy !== undefined} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm hover:bg-muted disabled:opacity-50">
-            <RefreshCw size={15} className={busy === 'refresh' ? 'animate-spin' : ''} /> Refresh
+          <button onClick={() => void refresh()} disabled={busy !== undefined} className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-base hover:bg-muted disabled:opacity-50">
+            <RefreshCw size={16} className={busy === 'refresh' ? 'animate-spin' : ''} /> Refresh
           </button>
         </div>
       </div>
 
       {message && (
-        <div className="rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">{message}</div>
+        <div className="rounded-lg border border-border bg-muted/50 px-4 py-3 text-base text-muted-foreground">{message}</div>
       )}
 
       {/* Installation guide (auto-open when Ollama is offline) */}

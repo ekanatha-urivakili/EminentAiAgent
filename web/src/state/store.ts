@@ -41,6 +41,7 @@ interface AppState {
   loadConversations: () => Promise<void>;
   newConversation: () => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
+  renameConversation: (id: string, title: string) => Promise<void>;
   removeConversation: (id: string) => Promise<void>;
   archiveConversation: (id: string) => void;
   unarchiveConversation: (id: string) => void;
@@ -213,6 +214,13 @@ export const useStore = create<AppState>((set, get) => ({
       mode: 'Chat',
       appView: 'chat',
     });
+  },
+
+  renameConversation: async (id, title) => {
+    const updated = await api.renameConversation(id, title);
+    set((s) => ({
+      conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+    }));
   },
 
   removeConversation: async (id) => {

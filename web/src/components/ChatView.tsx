@@ -94,7 +94,7 @@ export function ChatView() {
           <p className="text-muted-foreground text-sm mb-8 text-center max-w-md">
             Private, local-first AI. Your prompts never leave your machine.
           </p>
-          <div className="grid gap-3 sm:grid-cols-3 max-w-2xl w-full">
+          <div className="grid gap-3 sm:grid-cols-3 max-w-3xl w-full">
             {suggestions.map(({ icon: Icon, text }) => (
               <button
                 key={text}
@@ -115,7 +115,7 @@ export function ChatView() {
     <div className="flex flex-col">
       <BranchSwitcher />
       <div className="pb-72 sm:pb-56">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6">
           {messages.map((m) => (
             <ChatMessage key={m.id} message={m} />
           ))}

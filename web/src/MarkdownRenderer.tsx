@@ -12,7 +12,7 @@ interface MarkdownRendererProps {
 
 export function MarkdownRenderer({ content }: MarkdownRendererProps) {
   return (
-    <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none prose-pre:bg-transparent prose-pre:m-0 prose-pre:p-0 prose-pre:rounded-lg">
+    <div className="prose prose-base dark:prose-invert max-w-none prose-p:leading-7 prose-li:leading-7 prose-pre:bg-transparent prose-pre:m-0 prose-pre:p-0 prose-pre:rounded-lg">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight]}

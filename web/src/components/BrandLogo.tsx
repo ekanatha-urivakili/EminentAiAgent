@@ -21,12 +21,12 @@ export function BrandLogo({ compact = false, className }: BrandLogoProps) {
       <img
         src="/brand/eminentai-wordmark-light.svg"
         alt="EminentAi"
-        className="h-full w-full object-contain dark:hidden"
+        className="h-full w-full object-contain dark:hidden navy:hidden"
       />
       <img
         src="/brand/eminentai-wordmark-dark.svg"
         alt="EminentAi"
-        className="hidden h-full w-full object-contain dark:block"
+        className="hidden h-full w-full object-contain dark:block navy:block"
       />
     </span>
   );
