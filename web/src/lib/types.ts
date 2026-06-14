@@ -153,6 +153,8 @@ export interface JobSearchCriteria {
   gmailCredentialsJson?: string;
   gmailUserEmail?: string;
   gmailSearchQuery?: string;
+  indeedIngestScript?: string;
+  indeedPullScript?: string;
   configuredSecretKeys: string[];
 }
 

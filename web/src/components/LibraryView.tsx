@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Search, X, MessageCircle, CalendarDays } from 'lucide-react';
+import { Search, X, MessageCircle, CalendarDays, Archive, Trash2 } from 'lucide-react';
 import { useStore } from '../state/store';
 import { ArchivedChatRow } from './Sidebar';
 import { cn } from '../lib/utils';
@@ -204,20 +204,20 @@ function LibraryRow({ title, createdAt, model, active, onSelect, onDelete, onArc
           {new Date(createdAt).toLocaleString()} · {model}
         </div>
       </div>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+      <div className="flex items-center gap-1 transition-opacity flex-shrink-0">
         <button
           onClick={(e) => { e.stopPropagation(); onArchive(); }}
           className="p-1.5 rounded-md hover:bg-background text-muted-foreground hover:text-foreground transition-colors"
           title="Archive"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+          <Archive size={14} />
         </button>
         <button
           onClick={handleDelete}
           className={cn('p-1.5 rounded-md transition-colors', confirmDelete ? 'bg-destructive/15 text-destructive' : 'hover:bg-background text-muted-foreground hover:text-destructive')}
           title={confirmDelete ? 'Tap again to delete' : 'Delete'}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          <Trash2 size={14} />
         </button>
       </div>
     </div>

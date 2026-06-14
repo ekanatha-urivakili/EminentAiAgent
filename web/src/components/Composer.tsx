@@ -40,7 +40,7 @@ function fileTypeIcon(type: string) {
   return <FileText size={14} />;
 }
 
-type VoiceStatus = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'denied' | 'error';
+type VoiceStatus = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'denied' | 'error' | 'insecure';
 
 // ── Whisper install guide ──────────────────────────────────────────────────
 function CopyBtn({ text }: { text: string }) {
@@ -61,12 +61,24 @@ function CmdLine({ cmd }: { cmd: string }) {
   );
 }
 
-function WhisperGuide({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+function WhisperGuide({
+  open,
+  onToggle,
+  onStart,
+  starting,
+  startMessage,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onStart: () => void;
+  starting: boolean;
+  startMessage?: string;
+}) {
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
       <button onClick={onToggle} className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-amber-500/10 transition-colors">
         <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">
-          Whisper server not running — voice input requires whisper.cpp on localhost:8082
+          Whisper server not running — voice input requires whisper.cpp on backend host (port 8082)
         </div>
         <ChevronDownIcon size={16} className={cn('text-amber-500 transition-transform flex-shrink-0 ml-2', open && 'rotate-180')} />
       </button>
@@ -74,13 +86,27 @@ function WhisperGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
         <div className="px-4 pb-4 space-y-4 border-t border-amber-500/20">
           <p className="text-sm text-muted-foreground mt-3">
             EminentAi uses <strong>whisper.cpp</strong> — a fast, open-source local speech recognition server.
-            No cloud calls, no API keys. Pick any install method:
+            The backend proxies your requests to it. No cloud calls, no data leaves your machine.
           </p>
+
+          <div className="rounded-lg border border-amber-500/20 bg-background/70 p-3 space-y-2">
+            <button
+              onClick={onStart}
+              disabled={starting}
+              className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+            >
+              {starting ? 'Starting Whisper...' : 'Start Whisper'}
+            </button>
+            <p className="text-xs text-muted-foreground">
+              Uses your local <code className="bg-muted px-1 rounded">whisper-server</code> and starts it on <code className="bg-muted px-1 rounded">127.0.0.1:8082</code>.
+            </p>
+            {startMessage && <p className="text-xs text-muted-foreground">{startMessage}</p>}
+          </div>
 
           <div className="space-y-1.5">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">macOS — Homebrew (easiest)</p>
             <CmdLine cmd="brew install whisper-cpp" />
-            <CmdLine cmd='whisper-server -m "$(brew --prefix)/share/whisper-cpp/models/ggml-base.en.bin" -p 8082' />
+            <CmdLine cmd='whisper-server -m "$(brew --prefix)/share/whisper-cpp/models/ggml-base.en.bin" --host 127.0.0.1 --port 8082' />
             <p className="text-xs text-muted-foreground">If the model file is missing, download it first:</p>
             <CmdLine cmd="whisper-cpp-download-ggml-model base.en" />
           </div>
@@ -89,7 +115,7 @@ function WhisperGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Linux / macOS — build from source</p>
             <CmdLine cmd="git clone https://github.com/ggerganov/whisper.cpp && cd whisper.cpp" />
             <CmdLine cmd="make -j && bash models/download-ggml-model.sh base.en" />
-            <CmdLine cmd="./build/bin/whisper-server -m models/ggml-base.en.bin -p 8082" />
+            <CmdLine cmd="./build/bin/whisper-server -m models/ggml-base.en.bin --host 127.0.0.1 --port 8082" />
           </div>
 
           <div className="space-y-1.5">
@@ -98,7 +124,7 @@ function WhisperGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
               className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
               <ExternalLink size={12} /> Download pre-built binary from GitHub releases
             </a>
-            <CmdLine cmd="whisper-server.exe -m models/ggml-base.en.bin -p 8082" />
+            <CmdLine cmd="whisper-server.exe -m models/ggml-base.en.bin --host 127.0.0.1 --port 8082" />
           </div>
 
           <div className="rounded-md bg-muted/60 border border-border px-3 py-2 text-xs text-muted-foreground space-y-1">
@@ -110,7 +136,7 @@ function WhisperGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Once the server is running, click the mic button to start recording. Whisper transcribes locally — no data leaves your machine.
+            Once the server is running on the <strong>backend host</strong>, click the mic button to start recording.
           </p>
         </div>
       )}
@@ -127,6 +153,8 @@ export function Composer() {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle');
   const [showWhisperGuide, setShowWhisperGuide] = useState(false);
+  const [startingWhisper, setStartingWhisper] = useState(false);
+  const [whisperStartMessage, setWhisperStartMessage] = useState<string>();
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>(() => loadRecent());
 
   const modeMenuRef = useRef<HTMLDivElement>(null);
@@ -169,6 +197,23 @@ export function Composer() {
   useEffect(() => () => { mediaRecorderRef.current?.stop(); }, []);
 
   const busy = isStreaming || agentStatus === 'running' || agentStatus === 'waiting_approval';
+
+  const startWhisper = async () => {
+    setStartingWhisper(true);
+    setWhisperStartMessage(undefined);
+    try {
+      const result = await api.startWhisper();
+      setWhisperStartMessage(result.message);
+      if (result.running) {
+        setVoiceStatus('idle');
+        setShowWhisperGuide(false);
+      }
+    } catch (err) {
+      setWhisperStartMessage((err as Error).message);
+    } finally {
+      setStartingWhisper(false);
+    }
+  };
 
   const readFileAsDataUrl = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -220,6 +265,14 @@ export function Composer() {
   const removeAttachment = (i: number) => setAttachments((prev) => prev.filter((_, j) => j !== i));
   const removeTextAttachment = (i: number) => setTextAttachments((prev) => prev.filter((_, j) => j !== i));
 
+  // ── TTS Warm-up (needed for iOS/Safari) ──────────────────────────────────
+  const warmUpVoice = () => {
+    if (!voiceModeEnabled || !window.speechSynthesis) return;
+    const utterance = new SpeechSynthesisUtterance('');
+    utterance.volume = 0;
+    window.speechSynthesis.speak(utterance);
+  };
+
   // ── Voice STT via whisper.cpp ──────────────────────────────────────────
   const toggleVoice = async () => {
     // Stop if already recording
@@ -227,6 +280,15 @@ export function Composer() {
       mediaRecorderRef.current?.stop();
       return;
     }
+
+    // Secure context check
+    if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      setVoiceStatus('insecure');
+      return;
+    }
+
+    // Warm up TTS while we wait for mic permission
+    warmUpVoice();
 
     // Request mic permission
     setVoiceStatus('requesting');
@@ -239,7 +301,15 @@ export function Composer() {
     }
 
     audioChunksRef.current = [];
-    const recorder = new MediaRecorder(stream);
+    
+    // Select supported mime type (prefer webm, fallback to mp4 for iOS)
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/mp4')
+      ? 'audio/mp4'
+      : undefined;
+
+    const recorder = new MediaRecorder(stream, { mimeType });
     mediaRecorderRef.current = recorder;
 
     recorder.ondataavailable = (e) => {
@@ -257,7 +327,9 @@ export function Composer() {
         setShowWhisperGuide(false);
         // Auto-focus textarea after transcription
         setTimeout(() => textareaRef.current?.focus(), 50);
-      } catch {
+      } catch (err) {
+        setWhisperStartMessage((err as Error).message);
+        setShowWhisperGuide(true);
         setVoiceStatus('error');
       }
     };
@@ -272,6 +344,10 @@ export function Composer() {
     if (busy || !selectedModel) return;
     if (textAttachments.length > 0) text += textAttachments.map((a) => `\n\n<file name="${a.name}">\n${a.content}\n</file>`).join('');
     if (!text.trim() && attachments.length === 0) return;
+    
+    // Warm up voice on send if enabled
+    warmUpVoice();
+    
     // Stop TTS on new user message
     window.speechSynthesis?.cancel();
     setInput(''); setAttachments([]); setTextAttachments([]);
@@ -454,7 +530,7 @@ export function Composer() {
               </button>
 
               <button
-                onClick={() => { toggleVoiceMode(); window.speechSynthesis?.cancel(); }}
+                onClick={() => { toggleVoiceMode(); window.speechSynthesis?.cancel(); warmUpVoice(); }}
                 className={cn(
                   'flex h-10 w-10 items-center justify-center rounded-full bg-foreground text-background shadow-md transition-all hover:scale-105',
                   voiceModeEnabled && 'ring-2 ring-primary/30',
@@ -481,9 +557,10 @@ export function Composer() {
         <div className="text-center text-xs text-muted-foreground tracking-wide opacity-70">
           {voiceStatus === 'requesting' ? 'Requesting microphone access…'
             : voiceStatus === 'recording' ? 'Recording… click mic again to stop and transcribe'
-            : voiceStatus === 'transcribing' ? 'Transcribing with Whisper…'
+            : voiceStatus === 'transcribing' ? 'Transcribing via backend…'
             : voiceStatus === 'denied' ? 'Microphone permission denied. Allow access in browser settings.'
-            : voiceStatus === 'error' ? 'Could not reach whisper.cpp server. See setup guide below.'
+            : voiceStatus === 'insecure' ? 'Microphone requires a secure context (HTTPS) or localhost.'
+            : voiceStatus === 'error' ? 'Could not reach whisper server. See setup guide below.'
             : voiceModeEnabled ? 'Voice mode on — AI responses will be read aloud.'
             : mode === 'Agent' ? 'Write actions always require your approval.'
             : 'EminentAi runs entirely on this machine. Your data stays local.'}
@@ -498,7 +575,13 @@ export function Composer() {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.15 }}
             >
-              <WhisperGuide open={showWhisperGuide} onToggle={() => setShowWhisperGuide((v) => !v)} />
+              <WhisperGuide
+                open={showWhisperGuide}
+                onToggle={() => setShowWhisperGuide((v) => !v)}
+                onStart={() => void startWhisper()}
+                starting={startingWhisper}
+                startMessage={whisperStartMessage}
+              />
             </motion.div>
           )}
         </AnimatePresence>

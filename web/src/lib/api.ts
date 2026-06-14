@@ -227,17 +227,30 @@ export const api = {
   deleteCv: (filename: string) =>
     request<void>(`/api/cvs/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
 
+  startWhisper: () =>
+    request<{ running: boolean; message: string }>('/api/whisper/start', { method: 'POST' }),
   transcribeAudio: async (blob: Blob): Promise<string> => {
     const form = new FormData();
     form.append('file', blob, 'audio.webm');
-    form.append('response_format', 'json');
-    const res = await fetch('http://localhost:8082/inference', {
+    const token = localStorage.getItem('eminentai.adminToken');
+    const res = await fetch(`${BASE}/api/transcribe`, {
       method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: form,
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(60000),
     });
-    if (!res.ok) throw new Error(`whisper:${res.status}`);
+    if (!res.ok) {
+      let detail = `transcribe:${res.status}`;
+      try {
+        const body = await res.json() as { detail?: string; error?: string };
+        detail = body.error ?? body.detail ?? detail;
+      } catch { /* keep status */ }
+      throw new Error(detail);
+    }
     const data = await res.json() as { text: string };
     return (data.text ?? '').trim();
   },
+
+  runIndeedIngestScript: () => request<unknown>('/api/jobs/indeed/ingest-script', { method: 'POST' }),
+  runIndeedPullScript: () => request<unknown>('/api/jobs/indeed/pull-script', { method: 'POST' }),
 };

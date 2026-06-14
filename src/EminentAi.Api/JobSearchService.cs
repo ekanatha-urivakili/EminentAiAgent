@@ -63,6 +63,8 @@ public sealed record JobSearchCriteria
     public string? GmailCredentialsJson { get; init; }
     public string? GmailUserEmail { get; init; }
     public string? GmailSearchQuery { get; init; } = "label:job-alerts is:unread";
+    public string? IndeedIngestScript { get; init; } = "/Users/ekanathareddyurivakili/Documents/GitHub/AiJobSearchAgent/ingest_indeed.sh";
+    public string? IndeedPullScript { get; init; } = "/Users/ekanathareddyurivakili/Documents/GitHub/AiJobSearchAgent/ingest_jobs.sh";
     public List<string> ConfiguredSecretKeys { get; init; } = new();
 }
 

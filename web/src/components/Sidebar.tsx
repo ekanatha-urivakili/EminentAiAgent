@@ -223,31 +223,31 @@ function ChatRow({ title, active, onSelect, onRename, onDelete, onArchive }: {
 
       <button
         onClick={startEditing}
-        className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0"
+        className="p-1.5 rounded-md hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
         title="Rename"
       >
-        <Edit3 size={12} />
+        <Edit3 size={14} />
       </button>
 
       {/* Archive */}
       <button
         onClick={(e) => { e.stopPropagation(); onArchive(); }}
-        className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0"
+        className="p-1.5 rounded-md hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
         title="Archive"
       >
-        <Archive size={13} />
+        <Archive size={14} />
       </button>
 
       {/* Delete — tap once to arm, again to confirm */}
       <button
         onClick={handleDelete}
         className={cn(
-          'p-1.5 mr-1 rounded-md opacity-0 group-hover:opacity-100 transition-all flex-shrink-0',
-          confirmDelete ? 'opacity-100 bg-destructive/15 text-destructive' : 'hover:bg-destructive/10 hover:text-destructive text-muted-foreground',
+          'p-1.5 mr-1 rounded-md transition-all flex-shrink-0',
+          confirmDelete ? 'opacity-100 bg-destructive/15 text-destructive' : 'opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive text-muted-foreground',
         )}
         title={confirmDelete ? 'Tap again to delete' : 'Delete'}
       >
-        <Trash2 size={13} />
+        <Trash2 size={14} />
       </button>
     </div>
   );
@@ -266,17 +266,28 @@ export function ArchivedChatRow({ title, active, onSelect, onDelete, onUnarchive
   };
 
   return (
-    <div className={cn('group flex items-center gap-1 w-full rounded-xl text-base transition-colors', active ? 'bg-muted text-foreground' : 'hover:bg-muted/60 text-foreground')}>
-      <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left px-3 py-2.5">
-        <MessageCircle size={16} className="flex-shrink-0 mt-0.5 text-muted-foreground" />
+    <div className={cn('group flex items-center gap-1 w-full rounded-xl text-sm transition-colors', active ? 'bg-muted text-foreground' : 'hover:bg-muted/60 text-foreground')}>
+      <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left px-3 py-2">
+        <MessageCircle size={14} className="flex-shrink-0 mt-0.5 text-muted-foreground" />
         <span className="truncate">{title || 'Untitled'}</span>
         <span className="ml-1.5 text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-full flex-shrink-0">archived</span>
       </button>
-      <button onClick={(e) => { e.stopPropagation(); onUnarchive(); }} className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground transition-all flex-shrink-0" title="Unarchive">
-        <ArchiveRestore size={13} />
+      <button 
+        onClick={(e) => { e.stopPropagation(); onUnarchive(); }} 
+        className="p-1.5 rounded-md hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0"
+        title="Unarchive"
+      >
+        <ArchiveRestore size={14} />
       </button>
-      <button onClick={handleDelete} className={cn('p-1.5 mr-1 rounded-md opacity-0 group-hover:opacity-100 transition-all flex-shrink-0', confirmDelete ? 'opacity-100 bg-destructive/15 text-destructive' : 'hover:bg-destructive/10 hover:text-destructive text-muted-foreground')} title={confirmDelete ? 'Tap again to delete' : 'Delete'}>
-        <Trash2 size={13} />
+      <button 
+        onClick={handleDelete} 
+        className={cn(
+          'p-1.5 mr-1 rounded-md transition-all flex-shrink-0',
+          confirmDelete ? 'opacity-100 bg-destructive/15 text-destructive' : 'hover:bg-destructive/10 hover:text-destructive text-muted-foreground',
+        )}
+        title={confirmDelete ? 'Tap again to delete' : 'Delete'}
+      >
+        <Trash2 size={14} />
       </button>
     </div>
   );

@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Mail;
 using System.Threading.RateLimiting;
+using System.Text.RegularExpressions;
 using EminentAi.Api.JobSearch;
 using EminentAi.Application.Abstractions;
 using EminentAi.Application.Agent;
@@ -116,6 +117,7 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 
 var app = builder.Build();
 Process? managedOllamaProcess = null;
+Process? managedWhisperProcess = null;
 
 app.UseCors();
 app.UseRateLimiter();
@@ -206,6 +208,44 @@ static string StripDataUrlPrefix(string data)
 {
     var comma = data.IndexOf(',', StringComparison.Ordinal);
     return comma >= 0 ? data[(comma + 1)..] : data;
+}
+
+static async Task<bool> IsWhisperHealthyAsync(CancellationToken ct)
+{
+    try
+    {
+        using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        var response = await probe.GetAsync("http://127.0.0.1:8082/health", ct);
+        return response.IsSuccessStatusCode;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
+static string? FindWhisperServer()
+{
+    var candidates = new[]
+    {
+        Environment.GetEnvironmentVariable("WHISPER_SERVER_PATH"),
+        "/opt/homebrew/bin/whisper-server",
+        "/usr/local/bin/whisper-server",
+        "whisper-server"
+    };
+    return candidates.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && (path == "whisper-server" || File.Exists(path)));
+}
+
+static string? FindWhisperModel()
+{
+    var candidates = new[]
+    {
+        Environment.GetEnvironmentVariable("WHISPER_MODEL_PATH"),
+        "/opt/homebrew/share/whisper-cpp/models/ggml-base.en.bin",
+        "/usr/local/share/whisper-cpp/models/ggml-base.en.bin",
+        Path.Combine(Directory.GetCurrentDirectory(), "whisper.cpp", "models", "ggml-base.en.bin")
+    };
+    return candidates.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path));
 }
 
 static string? GetBearerToken(HttpRequest request)
@@ -975,6 +1015,153 @@ app.MapDelete("/api/connectors/{id:guid}", async (Guid id, IDbContextFactory<Emi
     db.Connectors.Remove(connector);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
+});
+
+app.MapPost("/api/jobs/indeed/ingest-script", async (IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
+{
+    var criteria = await LoadJobCriteriaAsync(dbFactory, ct);
+    if (string.IsNullOrWhiteSpace(criteria.IndeedIngestScript))
+        return Results.BadRequest(new { error = "Indeed Ingest Script is not configured in settings." });
+
+    try
+    {
+        var result = await RunIndeedScriptAsync(criteria.IndeedIngestScript, ct);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: 500);
+    }
+});
+
+app.MapPost("/api/jobs/indeed/pull-script", async (IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
+{
+    var criteria = await LoadJobCriteriaAsync(dbFactory, ct);
+    if (string.IsNullOrWhiteSpace(criteria.IndeedPullScript))
+        return Results.BadRequest(new { error = "Indeed Pull Script is not configured in settings." });
+
+    try
+    {
+        var result = await RunIndeedScriptAsync(criteria.IndeedPullScript, ct);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: 500);
+    }
+});
+
+static async Task<object> RunIndeedScriptAsync(string command, CancellationToken ct)
+{
+    // Reusing safety logic: block dangerous commands.
+    // (This regex is a copy of the one in BuiltinToolRunner for simplicity in this file)
+    var dangerous = new Regex(@"(rm\s+(-[a-z]*[rf][a-z]*\s+)+|sudo\b|mkfs|dd\s+if=|:\(\)\s*\{|chmod\s+777\s+/|curl[^|]*\|\s*(ba)?sh|wget[^|]*\|\s*(ba)?sh|>\s*/dev/sd|shutdown\b|reboot\b|launchctl\b|killall\b)", RegexOptions.IgnoreCase);
+    if (dangerous.IsMatch(command))
+        throw new UnauthorizedAccessException("Command blocked by the shell denylist.");
+
+    var isWindows = OperatingSystem.IsWindows();
+    var psi = new ProcessStartInfo
+    {
+        FileName = isWindows ? "cmd.exe" : "/bin/bash",
+        Arguments = isWindows ? $"/c {command}" : $"-c \"{command.Replace("\"", "\\\"")}\"",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    };
+
+    using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start script process");
+    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    timeoutCts.CancelAfter(TimeSpan.FromSeconds(120)); // Generous timeout for scraper scripts
+
+    var stdoutTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+    var stderrTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+
+    try { await process.WaitForExitAsync(timeoutCts.Token); }
+    catch (OperationCanceledException)
+    {
+        try { process.Kill(entireProcessTree: true); } catch { }
+        throw new TimeoutException("Script timed out after 120s.");
+    }
+
+    return new { exitCode = process.ExitCode, stdout = await stdoutTask, stderr = await stderrTask };
+}
+
+// ---------------------------------------------------------------------------
+// Transcription Proxy (for mobile/remote access to local whisper.cpp)
+// ---------------------------------------------------------------------------
+app.MapGet("/api/whisper/health", async (CancellationToken ct) =>
+{
+    return Results.Ok(new { running = await IsWhisperHealthyAsync(ct) });
+});
+
+app.MapPost("/api/whisper/start", async (CancellationToken ct) =>
+{
+    if (await IsWhisperHealthyAsync(ct))
+        return Results.Ok(new { running = true, message = "Whisper is already running." });
+    if (managedWhisperProcess is { HasExited: false })
+        return Results.Ok(new { running = true, message = "Whisper start is already in progress." });
+
+    var serverPath = FindWhisperServer();
+    if (serverPath is null)
+        return Results.Problem("whisper-server not found. Install it with: brew install whisper-cpp", statusCode: 500);
+
+    var modelPath = FindWhisperModel();
+    if (modelPath is null)
+        return Results.Problem("Whisper model not found. Run: whisper-cpp-download-ggml-model base.en", statusCode: 500);
+
+    try
+    {
+        managedWhisperProcess = Process.Start(new ProcessStartInfo
+        {
+            FileName = serverPath,
+            ArgumentList =
+            {
+                "--model", modelPath,
+                "--host", "127.0.0.1",
+                "--port", "8082"
+            },
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+        await Task.Delay(1500, ct);
+        return Results.Ok(new
+        {
+            running = await IsWhisperHealthyAsync(ct),
+            message = managedWhisperProcess is null ? "Could not start Whisper." : "Started local Whisper server."
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Unable to start Whisper: {ex.Message}", statusCode: 500);
+    }
+});
+
+app.MapPost("/api/transcribe", async (HttpRequest request, IHttpClientFactory httpClientFactory) =>
+{
+    var form = await request.ReadFormAsync();
+    var file = form.Files.GetFile("file");
+    if (file is null) return Results.BadRequest(new { error = "file is required" });
+
+    using var client = httpClientFactory.CreateClient();
+    using var content = new MultipartFormDataContent();
+    using var stream = file.OpenReadStream();
+    var streamContent = new StreamContent(stream);
+    streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+    content.Add(streamContent, "file", file.FileName);
+    content.Add(new StringContent("json"), "response_format");
+
+    try
+    {
+        var res = await client.PostAsync("http://127.0.0.1:8082/inference", content);
+        if (!res.IsSuccessStatusCode) return Results.Problem($"Whisper server returned {res.StatusCode}", statusCode: (int)res.StatusCode);
+        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+        return Results.Ok(json);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Could not reach local whisper server: {ex.Message}", statusCode: 502);
+    }
 });
 
 // ---------------------------------------------------------------------------

@@ -111,6 +111,8 @@ interface AppState {
   loadCvFiles: () => Promise<void>;
   uploadCv: (file: File) => Promise<void>;
   deleteCv: (filename: string) => Promise<void>;
+  runIndeedIngestScript: () => Promise<void>;
+  runIndeedPullScript: () => Promise<void>;
 }
 
 const initialAgent: AgentRunState = {
@@ -671,6 +673,8 @@ export const useStore = create<AppState>((set, get) => ({
     minimumContractDayRateGbp: 0,
     minimumContractMonths: 0,
     gmailSearchQuery: 'label:job-alerts is:unread',
+    indeedIngestScript: '/Users/ekanathareddyurivakili/Documents/GitHub/AiJobSearchAgent/ingest_indeed.sh',
+    indeedPullScript: '/Users/ekanathareddyurivakili/Documents/GitHub/AiJobSearchAgent/ingest_jobs.sh',
     configuredSecretKeys: [],
   },
   jobSources: [],
@@ -740,5 +744,25 @@ export const useStore = create<AppState>((set, get) => ({
   deleteCv: async (filename) => {
     await api.deleteCv(filename);
     set((s) => ({ cvFiles: s.cvFiles.filter((f) => f !== filename) }));
+  },
+
+  runIndeedIngestScript: async () => {
+    set({ jobLoading: true });
+    try {
+      await api.runIndeedIngestScript();
+      await get().loadJobSources();
+    } finally {
+      set({ jobLoading: false });
+    }
+  },
+
+  runIndeedPullScript: async () => {
+    set({ jobLoading: true });
+    try {
+      await api.runIndeedPullScript();
+      await get().loadJobSources();
+    } finally {
+      set({ jobLoading: false });
+    }
   },
 }));

@@ -411,6 +411,10 @@ function SettingsTab({
   const [newKeyword, setNewKeyword] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [scriptMessage, setScriptMessage] = useState<string>();
+  const jobLoading = useStore((s) => s.jobLoading);
+  const runIndeedIngestScript = useStore((s) => s.runIndeedIngestScript);
+  const runIndeedPullScript = useStore((s) => s.runIndeedPullScript);
 
   // Sync store settings into local form state when they load from the API.
   // Deferred to avoid the "setState in effect body" lint warning while still
@@ -458,6 +462,26 @@ function SettingsTab({
       await onSave(form);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runIndeedScript = async (kind: 'ingest' | 'pull') => {
+    setScriptMessage(undefined);
+    setSaving(true);
+    try {
+      await onSave(form);
+      setSaving(false);
+      if (kind === 'ingest') {
+        await runIndeedIngestScript();
+        setScriptMessage('Ingest Indeed script finished.');
+      } else {
+        await runIndeedPullScript();
+        setScriptMessage('Indeed Pull Jobs script finished.');
+      }
+    } catch (err) {
+      setScriptMessage((err as Error).message);
     } finally {
       setSaving(false);
     }
@@ -521,6 +545,71 @@ function SettingsTab({
               onChange={(e) => setForm((f) => ({ ...f, runAt: e.target.value }))}
             />
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5 space-y-5">
+        <div>
+          <h2 className="text-lg font-semibold">Indeed Automation Scripts</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Ready to use: these paths are pre-populated. The buttons save the current paths, then execute the selected script on this machine.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-5">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-base font-semibold">Indeed Ingest Script</label>
+              <HelpPopover
+                title="Ingest Indeed"
+                body="Runs the configured ingest script. Use this when your script pushes Indeed jobs into POST /api/jobs/ingest_indeed."
+                copyText={form.indeedIngestScript ?? ''}
+              />
+            </div>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+              placeholder="/path/to/ingest_indeed.sh"
+              value={form.indeedIngestScript ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, indeedIngestScript: e.target.value }))}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-base font-semibold">Indeed Pull Script</label>
+              <HelpPopover
+                title="Indeed Pull Jobs"
+                body="Runs the configured pull script. Use this when your script fetches/scrapes Indeed jobs before ingesting them."
+                copyText={form.indeedPullScript ?? ''}
+              />
+            </div>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+              placeholder="/path/to/ingest_jobs.sh"
+              value={form.indeedPullScript ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, indeedPullScript: e.target.value }))}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => void runIndeedScript('ingest')}
+            disabled={saving || jobLoading || !form.indeedIngestScript?.trim()}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors text-base font-medium"
+          >
+            <Upload size={17} />
+            Ingest Indeed
+          </button>
+          <button
+            onClick={() => void runIndeedScript('pull')}
+            disabled={saving || jobLoading || !form.indeedPullScript?.trim()}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors text-base font-medium"
+          >
+            <RefreshCw size={17} className={cn(jobLoading && 'animate-spin')} />
+            Indeed Pull Jobs
+          </button>
+          {scriptMessage && <span className="text-sm text-muted-foreground font-medium">{scriptMessage}</span>}
         </div>
       </section>
 
@@ -1139,6 +1228,42 @@ function SourcesTab({
             />
           </div>
         </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-2">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-base font-semibold text-blue-500">Indeed Ingest Script</label>
+              <HelpPopover
+                title="Indeed Ingest Script"
+                body="Optional shell script path or command that will be executed when you click 'Ingest Indeed' on the health card. This script is responsible for pushing data to the API."
+                copyText="./scripts/ingest_indeed.sh"
+              />
+            </div>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+              placeholder="./scripts/ingest_indeed.sh"
+              value={form.indeedIngestScript ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, indeedIngestScript: e.target.value }))}
+            />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <label className="block text-base font-semibold text-blue-500">Indeed Pull Script</label>
+              <HelpPopover
+                title="Indeed Pull Script"
+                body="Optional shell script path or command that will be executed when you click 'Indeed Pull Jobs' on the health card. Typically used for automated scraping."
+                copyText="python3 pull_indeed.py"
+              />
+            </div>
+            <input
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40 font-mono"
+              placeholder="python3 pull_indeed.py"
+              value={form.indeedPullScript ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, indeedPullScript: e.target.value }))}
+            />
+          </div>
+        </div>
+
         <button
           onClick={() => void handleSave()}
           disabled={saving}
@@ -1227,6 +1352,9 @@ function SourcesTab({
 
 function SourceCard({ source }: { source: SourceHealthInfo }) {
   const help = isSourceName(source.source) ? sourceHelp[source.source] : undefined;
+  const jobLoading = useStore((s) => s.jobLoading);
+  const runIndeedIngestScript = useStore((s) => s.runIndeedIngestScript);
+  const runIndeedPullScript = useStore((s) => s.runIndeedPullScript);
 
   return (
     <div className={cn(
@@ -1275,6 +1403,27 @@ function SourceCard({ source }: { source: SourceHealthInfo }) {
           </p>
         )}
       </div>
+
+      {source.source === 'Indeed Direct' && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            onClick={() => void runIndeedIngestScript()}
+            disabled={jobLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors text-sm font-medium"
+          >
+            <Upload size={14} />
+            Ingest Indeed
+          </button>
+          <button
+            onClick={() => void runIndeedPullScript()}
+            disabled={jobLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm font-medium"
+          >
+            <RefreshCw size={14} className={cn(jobLoading && 'animate-spin')} />
+            Indeed Pull Jobs
+          </button>
+        </div>
+      )}
     </div>
   );
 }
