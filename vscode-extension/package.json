@@ -1,0 +1,154 @@
+{
+  "name": "eminentai",
+  "displayName": "EminentAI",
+  "description": "Local AI coding assistant powered by Ollama — Agent, Ask, and Plan modes",
+  "version": "0.1.0",
+  "publisher": "eminentai",
+  "icon": "resources/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eminentai/vscode-extension"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["AI", "Chat", "Other"],
+  "keywords": ["ollama", "ai", "llm", "local", "copilot", "agent"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "eminentai-sidebar",
+          "title": "EminentAI",
+          "icon": "resources/icon-mono.svg"
+        }
+      ]
+    },
+    "views": {
+      "eminentai-sidebar": [
+        {
+          "type": "webview",
+          "id": "eminentai.chatView",
+          "name": "EminentAI",
+          "retainContextWhenHidden": true
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "eminentai.newSession",
+        "title": "EminentAI: New Session",
+        "icon": "$(add)"
+      },
+      {
+        "command": "eminentai.openChat",
+        "title": "EminentAI: Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "eminentai.refreshModels",
+        "title": "EminentAI: Refresh Models"
+      },
+      {
+        "command": "eminentai.clearSession",
+        "title": "EminentAI: Clear Current Session"
+      },
+      {
+        "command": "eminentai.insertAtCursor",
+        "title": "EminentAI: Insert Last Response at Cursor"
+      }
+    ],
+    "configuration": {
+      "title": "EminentAI",
+      "properties": {
+        "eminentai.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama server base URL"
+        },
+        "eminentai.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Default model name (leave blank for auto-select)"
+        },
+        "eminentai.pinnedModels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Models to pin at the top of the model picker"
+        },
+        "eminentai.defaultMode": {
+          "type": "string",
+          "enum": ["agent", "ask", "plan"],
+          "default": "agent",
+          "description": "Default interaction mode"
+        },
+        "eminentai.defaultThinkingEffort": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "default": "medium",
+          "description": "Default thinking effort level"
+        },
+        "eminentai.streamResponses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stream model responses token by token"
+        },
+        "eminentai.contextLines": {
+          "type": "number",
+          "default": 50,
+          "minimum": 10,
+          "maximum": 500,
+          "description": "Number of lines of active file context to include automatically"
+        },
+        "eminentai.maxHistoryMessages": {
+          "type": "number",
+          "default": 20,
+          "minimum": 2,
+          "maximum": 100,
+          "description": "Maximum conversation history messages to send per request"
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "eminentai.openChat",
+          "group": "eminentai",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "eminentai.newSession",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i"
+      },
+      {
+        "command": "eminentai.openChat",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vscode/vsce": "^2.29.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.0"
+  }
+}

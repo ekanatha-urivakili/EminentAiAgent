@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EminentAI</title>
+<style nonce="__NONCE__">
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:var(--vscode-sideBar-background,#1e1e1e);
+  --bg2:var(--vscode-editor-background,#252526);
+  --bg3:var(--vscode-input-background,#2d2d2d);
+  --border:var(--vscode-widget-border,#454545);
+  --border2:var(--vscode-panel-border,#3a3a3a);
+  --fg:var(--vscode-foreground,#cccccc);
+  --fg2:var(--vscode-descriptionForeground,#9d9d9d);
+  --fg3:var(--vscode-disabledForeground,#555);
+  --accent:var(--vscode-button-background,#6366f1);
+  --accent-fg:var(--vscode-button-foreground,#fff);
+  --user-bg:var(--vscode-inputOption-activeBackground,#2d3250);
+  --hover:var(--vscode-list-hoverBackground,#2a2d2e);
+  --active-sel:var(--vscode-list-activeSelectionBackground,#094771);
+  --input-border:var(--vscode-input-border,#3c3c3c);
+  --error:var(--vscode-errorForeground,#f48771);
+  --success:#4ec9b0;
+  --font:var(--vscode-font-family,'Segoe UI',sans-serif);
+  --mono:var(--vscode-editor-font-family,'Cascadia Code','Consolas',monospace);
+  --fs:var(--vscode-font-size,13px);
+  --r:4px;
+  --toolbar-h:36px;
+}
+html,body{height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:var(--fs);line-height:1.5}
+#app{display:flex;flex-direction:column;height:100%;overflow:hidden}
+
+/* Toolbar */
+#toolbar{display:flex;align-items:center;justify-content:space-between;padding:0 8px;height:var(--toolbar-h);min-height:var(--toolbar-h);border-bottom:1px solid var(--border2);flex-shrink:0;user-select:none}
+#toolbar-left{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg2)}
+#toolbar-right{display:flex;align-items:center;gap:2px}
+.tb-btn{width:24px;height:24px;border:none;background:transparent;color:var(--fg2);cursor:pointer;border-radius:var(--r);display:flex;align-items:center;justify-content:center;font-size:14px;transition:background .1s,color .1s}
+.tb-btn:hover{background:var(--hover);color:var(--fg)}
+
+/* Split */
+#main{display:flex;flex:1;overflow:hidden}
+
+/* Sessions sidebar */
+#sessions-panel{width:180px;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--border2);overflow:hidden;flex-shrink:0;transition:width .15s ease}
+#sessions-panel.collapsed{width:0;border-right:none}
+#sessions-header{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2);border-bottom:1px solid var(--border2);flex-shrink:0}
+#sessions-list{flex:1;overflow-y:auto;padding:4px 0}
+.session-item{display:flex;align-items:center;gap:5px;padding:5px 8px;cursor:pointer;border-radius:var(--r);margin:1px 4px}
+.session-item:hover{background:var(--hover)}
+.session-item.active{background:var(--active-sel);color:#fff}
+.session-title{flex:1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.session-badge{font-size:9px;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--fg2);flex-shrink:0;text-transform:uppercase}
+.session-del{display:none;width:14px;height:14px;border:none;background:transparent;color:var(--fg3);cursor:pointer;font-size:11px;border-radius:2px;align-items:center;justify-content:center;flex-shrink:0;line-height:1}
+.session-item:hover .session-del{display:flex}
+.session-del:hover{color:var(--error)}
+#no-sessions{padding:16px 8px;font-size:11px;color:var(--fg2);text-align:center}
+
+/* Chat area */
+#chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+
+/* Messages */
+#messages{flex:1;overflow-y:auto;padding:12px 12px 4px;display:flex;flex-direction:column;gap:14px}
+.msg-wrap{display:flex;flex-direction:column;gap:3px;max-width:100%}
+.msg-wrap.user{align-items:flex-end}
+.msg-wrap.assistant{align-items:flex-start}
+.msg-bubble{max-width:90%;padding:8px 11px;border-radius:8px;font-size:12.5px;line-height:1.6;word-break:break-word}
+.msg-wrap.user .msg-bubble{background:var(--user-bg);white-space:pre-wrap}
+.msg-wrap.assistant .msg-bubble{background:var(--bg2);border:1px solid var(--border2)}
+.msg-bubble p{margin:.3em 0}
+.msg-bubble ul,.msg-bubble ol{padding-left:1.4em;margin:.3em 0}
+.msg-bubble strong{font-weight:600}
+.msg-bubble em{font-style:italic}
+.code-block-wrap{position:relative;margin:6px 0}
+.code-block-wrap pre{background:var(--bg);border:1px solid var(--border2);border-radius:var(--r);padding:8px 10px;overflow-x:auto;font-family:var(--mono);font-size:11.5px;line-height:1.5;white-space:pre;margin:0}
+.msg-bubble code{font-family:var(--mono);font-size:11.5px;background:rgba(0,0,0,.25);padding:1px 4px;border-radius:2px}
+.msg-bubble pre code{background:none;padding:0;font-size:inherit}
+.copy-code{position:absolute;top:4px;right:4px;background:var(--bg3);border:1px solid var(--border);color:var(--fg2);font-size:10px;padding:2px 6px;border-radius:3px;cursor:pointer;opacity:0;transition:opacity .12s}
+.code-block-wrap:hover .copy-code{opacity:1}
+.copy-code:hover{background:var(--hover);color:var(--fg)}
+.copy-code.ok{color:var(--success)}
+.msg-meta{font-size:10px;color:var(--fg3);padding:0 4px;display:flex;align-items:center;gap:8px}
+.msg-meta .model-lbl{color:var(--fg2)}
+.cursor::after{content:'\25ae';animation:blink .7s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* Empty state */
+#empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--fg2);padding:24px;text-align:center}
+#empty-state svg{opacity:.25}
+#empty-state h3{font-size:14px;font-weight:600;color:var(--fg)}
+#empty-state p{font-size:12px;line-height:1.6}
+#tip-bar{background:var(--bg2);border-top:1px solid var(--border2);padding:5px 10px;font-size:11px;color:var(--fg2);display:none;align-items:center;gap:6px;flex-shrink:0}
+#tip-bar code{font-family:var(--mono);color:#7dd3fc}
+
+/* Error */
+#error-bar{background:#4a1515;border-top:1px solid #8b2222;color:#f48771;padding:7px 12px;font-size:12px;display:none;align-items:center;gap:8px;flex-shrink:0}
+#error-bar.show{display:flex}
+#error-close{background:none;border:none;color:#f48771;cursor:pointer;font-size:14px;margin-left:auto;line-height:1}
+
+/* Bottom */
+#bottom{flex-shrink:0;border-top:1px solid var(--border2);background:var(--bg);padding:7px 8px 5px;display:flex;flex-direction:column;gap:5px}
+#ctx-bar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-height:0}
+.ctx-tag{display:flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:2px 6px;font-size:11px;color:var(--fg2)}
+.ctx-rm{background:none;border:none;color:var(--fg3);cursor:pointer;font-size:11px;line-height:1}
+.ctx-rm:hover{color:var(--error)}
+#input-row{display:flex;align-items:flex-end;gap:5px}
+#input-wrap{flex:1;background:var(--bg3);border:1px solid var(--input-border);border-radius:var(--r);display:flex;align-items:flex-end;transition:border-color .15s}
+#input-wrap:focus-within{border-color:var(--accent)}
+#chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--fg);font-family:var(--font);font-size:13px;padding:7px 9px;resize:none;min-height:34px;max-height:140px;line-height:1.5}
+#attach-btn{background:transparent;border:none;color:var(--fg2);cursor:pointer;padding:5px 7px;font-size:15px;border-radius:var(--r);transition:color .1s;flex-shrink:0}
+#attach-btn:hover{color:var(--fg)}
+#send-btn{width:30px;height:30px;border:none;background:var(--accent);color:var(--accent-fg);border-radius:var(--r);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:opacity .15s;flex-shrink:0}
+#send-btn:hover:not(:disabled){opacity:.85}
+#send-btn:disabled{opacity:.4;cursor:not-allowed}
+#send-btn.cancel-mode{background:#7a2c2c}
+#mode-bar{display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+.pill{display:flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--border);border-radius:12px;background:var(--bg2);color:var(--fg2);font-size:11px;cursor:pointer;transition:background .1s,color .1s,border-color .1s;white-space:nowrap;user-select:none}
+.pill:hover{background:var(--hover);color:var(--fg)}
+.pill.active{background:var(--active-sel);color:#fff;border-color:var(--accent)}
+
+/* Popup */
+.popup-overlay{position:fixed;inset:0;z-index:100;display:none}
+.popup-overlay.open{display:block}
+.popup{position:absolute;background:var(--bg2);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:220px;max-width:320px;overflow:hidden;z-index:101}
+.p-search{padding:6px 8px;border-bottom:1px solid var(--border2)}
+.p-search input{width:100%;background:var(--bg3);border:1px solid var(--input-border);border-radius:var(--r);color:var(--fg);font-size:12px;padding:4px 8px;outline:none}
+.p-search input:focus{border-color:var(--accent)}
+.p-label{padding:4px 10px 2px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2)}
+.p-sep{height:1px;background:var(--border2);margin:4px 0}
+.p-item{display:flex;align-items:center;gap:7px;padding:6px 10px;cursor:pointer;font-size:12px;color:var(--fg);transition:background .1s}
+.p-item:hover{background:var(--hover)}
+.p-item.sel{color:#fff}
+.p-check{width:12px;text-align:center;flex-shrink:0;font-size:10px;color:var(--accent)}
+.p-item-lbl{flex:1}
+.p-item-sub{font-size:10px;color:var(--fg2)}
+.p-badge{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--bg3);color:var(--fg2);flex-shrink:0}
+.p-pin{background:none;border:none;color:var(--fg3);cursor:pointer;font-size:10px;padding:0;display:none}
+.p-item:hover .p-pin{display:inline}
+.p-pin:hover{color:#facc15}
+.p-note{padding:5px 10px;font-size:10px;color:var(--fg2)}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--fg2)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <div id="toolbar-left">Sessions</div>
+    <div id="toolbar-right">
+      <button class="tb-btn" id="btn-new" title="New session (Ctrl+Shift+I)">＋</button>
+      <button class="tb-btn" id="btn-refresh" title="Refresh models">⟳</button>
+      <button class="tb-btn" id="btn-toggle" title="Toggle sessions">☰</button>
+      <button class="tb-btn" id="btn-settings" title="Settings">⚙</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="sessions-panel">
+      <div id="sessions-header">
+        <span>Sessions</span>
+        <button class="tb-btn" id="btn-new2" title="New session">＋</button>
+      </div>
+      <div id="sessions-list">
+        <div id="no-sessions">No sessions yet</div>
+      </div>
+    </div>
+
+    <div id="chat-area">
+      <div id="error-bar"><span>⚠</span><span id="err-msg"></span><button id="error-close">✕</button></div>
+      <div id="messages"></div>
+      <div id="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.64 5.64l2.12 2.12M16.24 16.24l2.12 2.12M5.64 18.36l2.12-2.12M16.24 7.76l2.12-2.12"/>
+          <circle cx="12" cy="12" r="9" stroke-dasharray="2 3"/>
+        </svg>
+        <h3>EminentAI</h3>
+        <p>Local AI assistant powered by Ollama.<br>Select a model and start a session.</p>
+      </div>
+      <div id="tip-bar">💡 Tip: Press <code>📎</code> to attach the active file, or use <code>/file</code></div>
+    </div>
+  </div>
+
+  <div id="bottom">
+    <div id="ctx-bar"></div>
+    <div id="input-row">
+      <button id="attach-btn" title="Attach active file context">📎</button>
+      <div id="input-wrap">
+        <textarea id="chat-input" rows="1" placeholder="Describe what to build…" maxlength="32000"></textarea>
+      </div>
+      <button id="send-btn" title="Send (Enter)">▶</button>
+    </div>
+    <div id="mode-bar">
+      <button class="pill active" id="btn-mode"><span id="mode-lbl">Agent</span></button>
+      <button class="pill" id="btn-model"><span id="model-lbl">Loading…</span></button>
+      <button class="pill" id="btn-effort"><span id="effort-lbl">Medium</span></button>
+      <button class="pill" id="btn-clear" title="Clear session" style="margin-left:auto">🗑</button>
+      <button class="pill" id="btn-insert" title="Insert last response at cursor">⤵</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mode popup -->
+<div class="popup-overlay" id="ov-mode">
+  <div class="popup" id="pop-mode">
+    <div class="p-item" data-m="agent"><span class="p-check" id="ck-agent">✓</span><span class="p-item-lbl">Agent</span><span class="p-item-sub">⇧⌘I</span></div>
+    <div class="p-item" data-m="ask"><span class="p-check" id="ck-ask"></span><span class="p-item-lbl">Ask</span></div>
+    <div class="p-item" data-m="plan"><span class="p-check" id="ck-plan"></span><span class="p-item-lbl">Plan</span></div>
+    <div class="p-sep"></div>
+    <div class="p-item" id="cfg-agents"><span class="p-check"></span><span class="p-item-lbl" style="color:var(--fg2)">Configure Custom Agents…</span></div>
+  </div>
+</div>
+
+<!-- Model popup -->
+<div class="popup-overlay" id="ov-model">
+  <div class="popup" id="pop-model">
+    <div class="p-search"><input id="model-q" placeholder="Search models" autocomplete="off" spellcheck="false"></div>
+    <div id="model-inner"></div>
+  </div>
+</div>
+
+<!-- Effort popup -->
+<div class="popup-overlay" id="ov-effort">
+  <div class="popup" id="pop-effort">
+    <div class="p-label">Thinking Effort</div>
+    <div class="p-item" data-e="low"><span class="p-check" id="ck-low"></span><span class="p-item-lbl">Low</span><span class="p-item-sub">Faster, less reasoning</span></div>
+    <div class="p-item" data-e="medium"><span class="p-check" id="ck-medium">✓</span><span class="p-item-lbl">Medium (default)</span><span class="p-item-sub">Balanced</span></div>
+    <div class="p-item" data-e="high"><span class="p-check" id="ck-high"></span><span class="p-item-lbl">High</span><span class="p-item-sub">Deeper reasoning</span></div>
+    <div class="p-sep"></div>
+    <div class="p-note">Maps to temperature: low=0.3  medium=0.7  high=1.0</div>
+  </div>
+</div>
+
+<script nonce="__NONCE__">
+(function(){
+'use strict';
+const vscode = acquireVsCodeApi();
+const post = msg => vscode.postMessage(msg);
+
+// ── state ────────────────────────────────────────────────────────────────
+const S = {
+  sessions: [], activeId: null,
+  models: [], pinned: [],
+  model: '', mode: 'agent', effort: 'medium',
+  streaming: false, streamId: null, streamEl: null, streamBuf: '',
+  attached: null,
+};
+
+// ── dom ──────────────────────────────────────────────────────────────────
+const ge = id => document.getElementById(id);
+const msgs      = ge('messages');
+const emptyEl   = ge('empty-state');
+const tipEl     = ge('tip-bar');
+const sessEl    = ge('sessions-list');
+const noSessEl  = ge('no-sessions');
+const chatInput = ge('chat-input');
+const sendBtn   = ge('send-btn');
+const ctxBar    = ge('ctx-bar');
+const errBar    = ge('error-bar');
+const errMsg    = ge('err-msg');
+
+// ── util ─────────────────────────────────────────────────────────────────
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtB(b){ return b>1e9?(b/1e9).toFixed(1)+'B':b>1e6?(b/1e6).toFixed(0)+'M':b+'B'; }
+function fmtMs(ms){ return ms<1000?ms+'ms':(ms/1000).toFixed(1)+'s'; }
+
+// ── markdown renderer ────────────────────────────────────────────────────
+// Split on fenced code blocks using RegExp constructor to avoid backtick issues
+const CODE_BLOCK_RE = new RegExp('(```[\\w]*\\n[\\s\\S]*?```)', 'g');
+const CODE_MATCH_RE = new RegExp('^```([\\w]*)\\n([\\s\\S]*)```$');
+const INLINE_CODE_RE = /`([^`]+)`/g;
+
+function renderMd(raw){
+  const parts = raw.split(CODE_BLOCK_RE);
+  let html = '';
+  for(const p of parts){
+    const cm = CODE_MATCH_RE.exec(p);
+    if(cm){
+      const lang = esc(cm[1]||'text');
+      const code = esc(cm[2]);
+      html += '<div class="code-block-wrap">'
+        +'<button class="copy-code" onclick="doCopy(this)">Copy</button>'
+        +'<pre><code class="lang-'+lang+'">'+code+'</code></pre>'
+        +'</div>';
+    } else {
+      let s = esc(p);
+      s = s.replace(INLINE_CODE_RE, (_, c) => '<code>'+c+'</code>');
+      s = s.replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+      s = s.replace(/\*([^*\n]+)\*/g,'<em>$1</em>');
+      s = s.replace(/\n/g,'<br>');
+      html += s;
+    }
+  }
+  return html;
+}
+
+window.doCopy = function(btn){
+  const code = btn.nextElementSibling.querySelector('code').textContent;
+  navigator.clipboard.writeText(code).then(()=>{
+    btn.textContent='Copied!'; btn.classList.add('ok');
+    setTimeout(()=>{ btn.textContent='Copy'; btn.classList.remove('ok'); },2000);
+  }).catch(()=>{});
+};
+
+// ── error ────────────────────────────────────────────────────────────────
+function showErr(m){ errMsg.textContent=m; errBar.classList.add('show'); }
+function hideErr(){ errBar.classList.remove('show'); }
+ge('error-close').onclick = hideErr;
+
+// ── sessions ─────────────────────────────────────────────────────────────
+function renderSessions(){
+  const { sessions, activeId } = S;
+  noSessEl.style.display = sessions.length ? 'none' : 'block';
+  const existing = {};
+  sessEl.querySelectorAll('.session-item[data-id]').forEach(el=>{ existing[el.dataset.id]=el; });
+  const ids = new Set(sessions.map(s=>s.id));
+  for(const [id,el] of Object.entries(existing)) if(!ids.has(id)) el.remove();
+  for(const s of sessions){
+    let el = existing[s.id];
+    if(!el){
+      el = document.createElement('div');
+      el.className = 'session-item'; el.dataset.id = s.id;
+      el.innerHTML = '<span class="session-title"></span><span class="session-badge"></span><button class="session-del">✕</button>';
+      el.querySelector('.session-del').onclick = e=>{ e.stopPropagation(); post({type:'delete_session',sessionId:s.id}); };
+      el.onclick = ()=> post({type:'switch_session',sessionId:s.id});
+      sessEl.insertBefore(el, noSessEl);
+    }
+    el.querySelector('.session-title').textContent = s.title;
+    el.querySelector('.session-badge').textContent = s.mode;
+    el.classList.toggle('active', s.id===activeId);
+  }
+}
+
+// ── chat rendering ────────────────────────────────────────────────────────
+function renderSession(session){
+  msgs.innerHTML='';
+  if(!session||!session.messages.length){ emptyEl.style.display='flex'; tipEl.style.display='none'; return; }
+  emptyEl.style.display='none'; tipEl.style.display='flex';
+  for(const m of session.messages) addMsg(m.role,m.content,{model:m.model,tokens:m.tokens,dur:m.durationMs});
+  scrollBot();
+}
+
+function addMsg(role,content,meta={}){
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap '+role;
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.innerHTML = role==='user' ? '<span style="white-space:pre-wrap">'+esc(content)+'</span>' : renderMd(content);
+  wrap.appendChild(bubble);
+  if(meta.model||meta.tokens||meta.dur){
+    const m = document.createElement('div'); m.className='msg-meta';
+    if(meta.model) m.innerHTML+='<span class="model-lbl">'+esc(meta.model)+'</span>';
+    if(meta.tokens) m.innerHTML+='<span>'+meta.tokens+' tok</span>';
+    if(meta.dur)   m.innerHTML+='<span>'+fmtMs(meta.dur)+'</span>';
+    wrap.appendChild(m);
+  }
+  msgs.appendChild(wrap);
+  return wrap;
+}
+
+function scrollBot(){ msgs.scrollTop=msgs.scrollHeight; }
+
+// ── streaming ─────────────────────────────────────────────────────────────
+function streamStart(id){
+  S.streaming=true; S.streamId=id; S.streamBuf='';
+  emptyEl.style.display='none'; tipEl.style.display='flex';
+  const wrap=document.createElement('div'); wrap.className='msg-wrap assistant'; wrap.dataset.sid=id;
+  const bub=document.createElement('div'); bub.className='msg-bubble cursor'; bub.innerHTML='';
+  wrap.appendChild(bub); msgs.appendChild(wrap);
+  S.streamEl=bub;
+  sendBtn.textContent='■'; sendBtn.title='Cancel (Esc)'; sendBtn.classList.add('cancel-mode');
+  chatInput.disabled=true;
+  scrollBot();
+}
+function streamDelta(delta){
+  S.streamBuf+=delta;
+  if(S.streamEl){ S.streamEl.innerHTML=renderMd(S.streamBuf); S.streamEl.classList.add('cursor'); scrollBot(); }
+}
+function streamEnd(tokens,dur){
+  S.streaming=false;
+  if(S.streamEl){
+    S.streamEl.classList.remove('cursor');
+    const wrap=S.streamEl.parentElement;
+    if(tokens||dur){
+      const m=document.createElement('div'); m.className='msg-meta';
+      if(tokens) m.innerHTML+='<span>'+tokens+' tok</span>';
+      if(dur)    m.innerHTML+='<span>'+fmtMs(dur)+'</span>';
+      wrap.appendChild(m);
+    }
+    S.streamEl=null;
+  }
+  sendBtn.innerHTML='▶'; sendBtn.title='Send (Enter)'; sendBtn.classList.remove('cancel-mode');
+  chatInput.disabled=false; chatInput.focus();
+  scrollBot();
+}
+
+// ── models ────────────────────────────────────────────────────────────────
+function renderModelPop(){
+  const q=(ge('model-q').value||'').toLowerCase();
+  const inner=ge('model-inner'); inner.innerHTML='';
+  const { models, pinned, model: sel } = S;
+
+  function mkItem(name, sub, isPinned, badge){
+    const el=document.createElement('div');
+    el.className='p-item'+(name===sel?' sel':''); el.dataset.v=name;
+    el.innerHTML='<span class="p-check">'+(name===sel?'✓':'')+'</span>'
+      +'<span class="p-item-lbl">'+esc(name)+'</span>'
+      +(badge?'<span class="p-badge">'+esc(badge)+'</span>':'')
+      +(sub?'<span class="p-item-sub">'+esc(sub)+'</span>':'');
+    if(isPinned!==null){
+      el.innerHTML+='<button class="p-pin" title="'+(isPinned?'Unpin':'Pin')+'">'+(isPinned?'★':'☆')+'</button>';
+      el.querySelector('.p-pin').onclick=e=>{ e.stopPropagation(); post({type:isPinned?'unpin_model':'pin_model',modelName:name}); closeAll(); };
+    }
+    el.onclick=()=>setModel(name);
+    return el;
+  }
+
+  // Auto
+  inner.appendChild(mkItem('auto','',null,''));
+  inner.appendChild(Object.assign(document.createElement('div'),{className:'p-sep'}));
+
+  const pinnedModels=models.filter(m=>pinned.includes(m.name)&&(!q||m.name.toLowerCase().includes(q)));
+  const otherModels =models.filter(m=>!pinned.includes(m.name)&&(!q||m.name.toLowerCase().includes(q)));
+
+  if(pinnedModels.length){
+    const lbl=document.createElement('div'); lbl.className='p-label'; lbl.textContent='Pinned';
+    inner.appendChild(lbl);
+    pinnedModels.forEach(m=>inner.appendChild(mkItem(m.name,m.size?fmtB(m.size):'',true,m.details?.parameter_size||'')));
+    if(otherModels.length) inner.appendChild(Object.assign(document.createElement('div'),{className:'p-sep'}));
+  }
+  if(otherModels.length){
+    if(pinnedModels.length){ const lbl=document.createElement('div'); lbl.className='p-label'; lbl.textContent='All Models'; inner.appendChild(lbl); }
+    otherModels.forEach(m=>inner.appendChild(mkItem(m.name,m.size?fmtB(m.size):'',false,m.details?.parameter_size||'')));
+  }
+  if(!models.length){
+    const el=document.createElement('div'); el.className='p-item'; el.style.color='var(--fg2)';
+    el.innerHTML='<span class="p-item-lbl">No models — is Ollama running?</span>';
+    inner.appendChild(el);
+  }
+}
+
+function setModel(name){ S.model=name; ge('model-lbl').textContent=name==='auto'?'Auto':name; closeAll(); }
+
+// ── mode/effort ───────────────────────────────────────────────────────────
+const modeLabels={agent:'Agent',ask:'Ask',plan:'Plan'};
+function setMode(m){
+  S.mode=m; ge('mode-lbl').textContent=modeLabels[m]||m;
+  ['agent','ask','plan'].forEach(x=>{ const el=ge('ck-'+x); if(el) el.textContent=x===m?'✓':''; });
+  ge('btn-mode').classList.toggle('active',true);
+}
+function setEffort(e){
+  S.effort=e; ge('effort-lbl').textContent={low:'Low',medium:'Medium',high:'High'}[e]||e;
+  ['low','medium','high'].forEach(x=>{ const el=ge('ck-'+x); if(el) el.textContent=x===e?'✓':''; });
+}
+
+// ── popups ────────────────────────────────────────────────────────────────
+function openPop(ovId,anchor){
+  closeAll();
+  const ov=ge(ovId); if(!ov) return;
+  const popup=ov.querySelector('.popup'); if(!popup) return;
+  const r=anchor.getBoundingClientRect();
+  popup.style.bottom=(window.innerHeight-r.top+4)+'px';
+  popup.style.left=Math.max(4,r.left)+'px'; popup.style.right='auto';
+  ov.classList.add('open');
+  const inp=popup.querySelector('input'); if(inp) setTimeout(()=>inp.focus(),40);
+}
+function closeAll(){ document.querySelectorAll('.popup-overlay').forEach(o=>o.classList.remove('open')); }
+document.querySelectorAll('.popup-overlay').forEach(o=>o.addEventListener('click',e=>{ if(e.target===o)closeAll(); }));
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ if(S.streaming)post({type:'cancel_stream'}); else closeAll(); }});
+
+ge('btn-mode').onclick=e=>openPop('ov-mode',e.currentTarget);
+document.querySelectorAll('#pop-mode [data-m]').forEach(el=>el.onclick=()=>{ setMode(el.dataset.m); closeAll(); });
+ge('cfg-agents').onclick=()=>{ closeAll(); post({type:'open_file',path:'settings'}); };
+
+ge('btn-model').onclick=e=>{ openPop('ov-model',e.currentTarget); renderModelPop(); };
+ge('model-q').oninput=renderModelPop;
+
+ge('btn-effort').onclick=e=>openPop('ov-effort',e.currentTarget);
+document.querySelectorAll('#pop-effort [data-e]').forEach(el=>el.onclick=()=>{ setEffort(el.dataset.e); closeAll(); });
+
+// ── context attach ────────────────────────────────────────────────────────
+ge('attach-btn').onclick=()=>post({type:'get_active_file'});
+function setAttached(lbl,content){ S.attached={lbl,content}; renderCtxBar(); }
+function clearAttached(){ S.attached=null; renderCtxBar(); }
+function renderCtxBar(){
+  ctxBar.innerHTML='';
+  if(S.attached){
+    const t=document.createElement('div'); t.className='ctx-tag';
+    t.innerHTML='<span>📄 '+esc(S.attached.lbl.slice(0,28))+'</span><button class="ctx-rm">✕</button>';
+    t.querySelector('.ctx-rm').onclick=clearAttached;
+    ctxBar.appendChild(t);
+  }
+}
+
+// ── send ─────────────────────────────────────────────────────────────────
+function doSend(){
+  if(S.streaming){ post({type:'cancel_stream'}); return; }
+  const content=chatInput.value.trim();
+  if(!content&&!S.attached) return;
+  if(!S.model){
+    showErr('No model selected. Click the model pill below to choose, or verify Ollama is running at localhost:11434.');
+    post({type:'get_models'});
+    return;
+  }
+  if(!S.activeId){
+    post({type:'new_session',model:S.model,mode:S.mode,effort:S.effort});
+    return;
+  }
+  post({type:'send_message',sessionId:S.activeId,content:content||'(see attached file)',model:S.model,mode:S.mode,effort:S.effort,attachedCode:S.attached?.content});
+  addMsg('user',content+(S.attached?'\n\n[📄 '+S.attached.lbl+']':''));
+  scrollBot();
+  chatInput.value=''; resizeInput(); clearAttached(); hideErr();
+}
+
+sendBtn.onclick=doSend;
+chatInput.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); }});
+function resizeInput(){ chatInput.style.height='auto'; chatInput.style.height=Math.min(chatInput.scrollHeight,140)+'px'; }
+chatInput.addEventListener('input',resizeInput);
+
+// Bottom bar buttons
+ge('btn-new').onclick=ge('btn-new2').onclick=()=>{
+  const m=S.model||(S.models[0]?.name||'');
+  post({type:'new_session',model:m,mode:S.mode,effort:S.effort});
+};
+ge('btn-refresh').onclick=()=>post({type:'get_models'});
+ge('btn-toggle').onclick=()=>ge('sessions-panel').classList.toggle('collapsed');
+ge('btn-settings').onclick=()=>post({type:'open_file',path:'settings'});
+ge('btn-clear').onclick=()=>{ if(S.activeId) post({type:'clear_session',sessionId:S.activeId}); };
+// btn-insert: code='' signals extension to extract last assistant response itself
+ge('btn-insert').onclick=()=>post({type:'insert_at_cursor',code:''});
+
+// ── extension messages ────────────────────────────────────────────────────
+window.addEventListener('message',e=>{
+  const msg=e.data;
+  switch(msg.type){
+    case 'models':
+      S.models=msg.models||[]; S.pinned=msg.pinned||[];
+      if(!S.model&&S.models.length){ setModel(S.pinned[0]||S.models[0]?.name||''); }
+      break;
+    case 'sessions':
+      S.sessions=msg.sessions||[]; S.activeId=msg.activeId||null;
+      renderSessions();
+      break;
+    case 'session':
+      S.activeId=msg.session.id;
+      renderSession(msg.session);
+      if(msg.session.model) setModel(msg.session.model);
+      if(msg.session.mode)  setMode(msg.session.mode);
+      if(msg.session.effort) setEffort(msg.session.effort);
+      break;
+    case 'stream_start': streamStart(msg.msgId); break;
+    case 'stream_delta': if(msg.msgId===S.streamId) streamDelta(msg.delta); break;
+    case 'stream_end':   streamEnd(msg.tokens||0,msg.durationMs||0); break;
+    case 'stream_error': streamEnd(0,0); showErr('Error: '+msg.error); break;
+    case 'error':        showErr(msg.message); break;
+    case 'insert_code':  setAttached('Active file',msg.code); break;
+    case 'config':       break;
+  }
+});
+
+// ── init ─────────────────────────────────────────────────────────────────
+setMode('agent'); setEffort('medium');
+post({type:'ready'});
+})();
+</script>
+</body>
+</html>
