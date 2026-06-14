@@ -82,6 +82,27 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         ));
     }
 
+    public async Task<IReadOnlyList<LoadedModelInfo>> GetLoadedModelsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var response = await http.GetFromJsonAsync<OllamaPsResponse>("/api/ps", ct);
+            if (response?.Models is null) return Array.Empty<LoadedModelInfo>();
+
+            return response.Models.ConvertAll(m => new LoadedModelInfo(
+                m.Name,
+                m.Size,
+                m.SizeVram,
+                m.Digest,
+                m.ExpiresAt
+            ));
+        }
+        catch
+        {
+            return Array.Empty<LoadedModelInfo>();
+        }
+    }
+
     public async Task<bool> IsHealthyAsync(CancellationToken ct = default)
     {
         try
@@ -192,6 +213,20 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
     private sealed class OllamaTagsResponse
     {
         [JsonPropertyName("models")] public List<OllamaModel>? Models { get; set; }
+    }
+
+    private sealed class OllamaPsResponse
+    {
+        [JsonPropertyName("models")] public List<OllamaPsModel>? Models { get; set; }
+    }
+
+    private sealed class OllamaPsModel
+    {
+        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
+        [JsonPropertyName("size")] public long Size { get; set; }
+        [JsonPropertyName("size_vram")] public long SizeVram { get; set; }
+        [JsonPropertyName("digest")] public string? Digest { get; set; }
+        [JsonPropertyName("expires_at")] public DateTime? ExpiresAt { get; set; }
     }
 
     private sealed class OllamaModel

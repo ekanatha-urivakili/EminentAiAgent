@@ -33,6 +33,14 @@ public record Usage(int? In, int? Out);
 
 public record ModelInfo(string Name, long SizeBytes, string? Family, string? ParameterSize, string Tier);
 
+public record LoadedModelInfo(
+    string Name,
+    long SizeBytes,
+    long SizeBytesVram,
+    string? Digest,
+    DateTime? ExpiresAt
+);
+
 public record PullDelta(string Status, long? Completed, long? Total);
 
 public interface IOllamaClient
@@ -43,6 +51,8 @@ public interface IOllamaClient
     Task<string> ChatOnceAsync(ChatRequest request, CancellationToken ct = default);
 
     Task<IReadOnlyList<ModelInfo>> ListModelsAsync(CancellationToken ct = default);
+
+    Task<IReadOnlyList<LoadedModelInfo>> GetLoadedModelsAsync(CancellationToken ct = default);
 
     Task<bool> IsHealthyAsync(CancellationToken ct = default);
 

@@ -7,11 +7,13 @@ using System.Net;
 using System.Net.Mail;
 using System.Threading.RateLimiting;
 using System.Text.RegularExpressions;
+using EminentAi.Api;
 using EminentAi.Api.JobSearch;
 using EminentAi.Application.Abstractions;
 using EminentAi.Application.Agent;
 using EminentAi.Application.Chat;
 using EminentAi.Application.Planning;
+using EminentAi.Api.Observability;
 using EminentAi.Domain;
 using EminentAi.Infrastructure.Mcp;
 using EminentAi.Infrastructure.Ollama;
@@ -81,6 +83,7 @@ builder.Services.AddScoped<IAgentRunRepository, AgentRunRepository>();
 builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<PlannerService>();
 builder.Services.AddScoped<AgentOrchestrator>();
+builder.Services.AddScoped<ObservabilityService>();
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -91,23 +94,34 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 // CORS: explicit allowlist for the Vite dev server — never AllowAnyOrigin.
 var allowedOrigins = builder.Configuration.GetSection("EminentAi:AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173" };
+    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173", "https://*.railway.app" };
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     policy.WithOrigins(allowedOrigins)
+          .SetIsOriginAllowedToAllowWildcardSubdomains()
           .AllowAnyHeader()
-          .AllowAnyMethod()));
+          .AllowAnyMethod()
+          .AllowCredentials()));
+
+builder.Services.AddSignalR()
+    .AddMessagePackProtocol();
 
 // Rate limiting: generous for a local tool, but stops runaway clients/scripts.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
-        RateLimitPartition.GetFixedWindowLimiter("global", _ => new FixedWindowRateLimiterOptions
+    {
+        if (ctx.Request.Path.StartsWithSegments("/voice-hub"))
+        {
+            return RateLimitPartition.GetNoLimiter("voice");
+        }
+        return RateLimitPartition.GetFixedWindowLimiter("global", _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 300,
             Window = TimeSpan.FromSeconds(10),
             QueueLimit = 0
-        }));
+        });
+    });
 });
 
 builder.WebHost.ConfigureKestrel(kestrel =>
@@ -121,6 +135,7 @@ Process? managedWhisperProcess = null;
 
 app.UseCors();
 app.UseRateLimiter();
+app.MapHub<VoiceHub>("/voice-hub");
 
 // Security headers + optional bearer-token auth (mandatory off-loopback).
 app.Use(async (context, next) =>
@@ -376,6 +391,9 @@ static string ResolveOllamaBinary()
 // ---------------------------------------------------------------------------
 app.MapGet("/api/health", async (IOllamaClient ollama, CancellationToken ct) =>
     Results.Ok(new { status = "ok", ollama = await ollama.IsHealthyAsync(ct) }));
+
+app.MapGet("/api/observability", async (ObservabilityService service, CancellationToken ct) =>
+    Results.Ok(await service.GetDataAsync(ct)));
 
 app.MapGet("/api/models", async (IOllamaClient ollama, CancellationToken ct) =>
 {
@@ -737,6 +755,28 @@ app.MapPost("/api/auth/login", async ([FromBody] LoginRequest request, IDbContex
     admin.SessionTokenHash = HashToken(token);
     await db.SaveChangesAsync(ct);
     return Results.Ok(new { token, admin = new { admin.Id, admin.FullName, admin.Email } });
+});
+
+app.MapPost("/api/auth/change-password", async ([FromBody] ChangePasswordRequest request, HttpRequest httpRequest, IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.CurrentPassword) || string.IsNullOrWhiteSpace(request.NewPassword))
+        return Results.BadRequest(new { error = "currentPassword and newPassword are required" });
+    if (request.NewPassword.Length < 8)
+        return Results.BadRequest(new { error = "New password must be at least 8 characters." });
+
+    var tokenHash = HashToken(GetBearerToken(httpRequest));
+    if (tokenHash is null) return Results.Unauthorized();
+
+    await using var db = await dbFactory.CreateDbContextAsync(ct);
+    var admin = await db.AdminUsers.FirstOrDefaultAsync(u => u.SessionTokenHash == tokenHash, ct);
+    if (admin is null) return Results.Unauthorized();
+
+    if (!VerifyPassword(request.CurrentPassword, admin.PasswordHash))
+        return Results.BadRequest(new { error = "Current password is incorrect." });
+
+    admin.PasswordHash = HashPassword(request.NewPassword);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { message = "Password changed successfully." });
 });
 
 app.MapPost("/api/auth/forgot-password", async ([FromBody] ForgotPasswordRequest request, IDbContextFactory<EminentAiDbContext> dbFactory, IConfiguration config, CancellationToken ct) =>
@@ -1360,6 +1400,7 @@ public record RegisterRequest(string FullName, string Email, string Password);
 public record LoginRequest(string Email, string Password);
 public record ForgotPasswordRequest(string Email);
 public record ResetPasswordRequest(string Token, string NewPassword);
+public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
 // Caches whether any admin accounts exist so the session-gate middleware avoids a DB hit per request.
 internal sealed class AdminSessionCache

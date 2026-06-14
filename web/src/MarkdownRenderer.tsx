@@ -23,8 +23,8 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
             
             if (!inline && match) {
               return (
-                <div className="markdown-code-block relative group rounded-lg overflow-hidden border border-border my-4 bg-[#f3f4f6] dark:bg-[#07111f]">
-                  <div className="flex items-center justify-between px-4 py-2 bg-[#e5e7eb] dark:bg-[#0b1728] text-muted-foreground text-xs font-sans border-b border-border">
+                <div className="markdown-code-block relative group rounded-lg overflow-hidden border border-border my-4 bg-[#f3f4f6] dark:bg-[#07111f] navy:bg-[#0a1525]">
+                  <div className="flex items-center justify-between px-4 py-2 bg-[#e5e7eb] dark:bg-[#0b1728] navy:bg-[#162236] text-muted-foreground text-xs font-sans border-b border-border">
                     <span>{language}</span>
                     <button className="hover:text-foreground transition-colors" onClick={() => navigator.clipboard.writeText(String(children).replace(/\n$/, ''))}>
                       Copy code

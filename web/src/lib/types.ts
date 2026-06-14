@@ -1,5 +1,5 @@
 export type Mode = 'Chat' | 'Plan' | 'Agent';
-export type AppView = 'chat' | 'ollama' | 'library' | 'mailpit' | 'connectors' | 'jobs';
+export type AppView = 'chat' | 'ollama' | 'library' | 'mailpit' | 'connectors' | 'jobs' | 'observability';
 export type Theme = 'light' | 'dark' | 'navy' | 'system';
 
 export interface ModelInfo {
@@ -8,6 +8,49 @@ export interface ModelInfo {
   family?: string;
   parameterSize?: string;
   tier: 'fast' | 'balanced' | 'reasoning' | 'vision' | 'embedding';
+}
+
+export interface LoadedModelInfo {
+  name: string;
+  sizeBytes: number;
+  sizeBytesVram: number;
+  digest?: string;
+  expiresAt?: string;
+}
+
+export interface SystemMetrics {
+  cpuUsagePercent: number;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  gpu?: GpuMetrics;
+}
+
+export interface GpuMetrics {
+  name: string;
+  usagePercent: number;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+}
+
+export interface SourceIssue {
+  source: string;
+  error: string;
+}
+
+export interface JobSearchHealth {
+  allSourcesHealthy: boolean;
+  issues: SourceIssue[];
+  lastRunAt?: string;
+  lastRunMatches: number;
+}
+
+export interface ObservabilityData {
+  system: SystemMetrics;
+  loadedModels: LoadedModelInfo[];
+  jobSearch: JobSearchHealth;
+  ollamaOk: boolean;
 }
 
 export interface ConversationSummary {

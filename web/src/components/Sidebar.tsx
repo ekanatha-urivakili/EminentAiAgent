@@ -1,4 +1,4 @@
-import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, ArchiveRestore, Mail, Briefcase } from 'lucide-react';
+import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, ArchiveRestore, Mail, Briefcase, Activity } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -98,6 +98,12 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
               >
                 <Briefcase size={18} /> Job Search Agent
               </button>
+              <button
+                onClick={() => navigate('observability')}
+                className={cn('flex items-center gap-3 w-full p-2.5 rounded-xl text-sm hover:bg-muted transition-colors', appView === 'observability' && 'bg-muted')}
+              >
+                <Activity size={18} /> Observability
+              </button>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-5 space-y-1">
@@ -121,13 +127,30 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center gap-6 pt-12">
-            <button onClick={createConversation} title="New chat" className="p-2 hover:bg-muted rounded-lg transition-colors"><Edit3 size={24} /></button>
-            <button onClick={() => navigate('library')} title="Library" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'library' && 'bg-muted')}><Library size={24} /></button>
-            <button onClick={() => navigate('ollama')} title="Ollama" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'ollama' && 'bg-muted')}><Cpu size={24} /></button>
-            <button onClick={() => navigate('mailpit')} title="Mailpit" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'mailpit' && 'bg-muted')}><Mail size={24} /></button>
-            <button onClick={() => navigate('connectors')} title="MCP Connectors" className={cn('p-2 hover:bg-muted rounded-lg transition-colors', appView === 'connectors' && 'bg-muted')}><Plug size={22} /></button>
-            <button onClick={() => navigate('jobs')} title="Job Search Agent" className={cn('p-2 hover:bg-muted rounded-lg transition-colors mt-auto mb-5', appView === 'jobs' && 'bg-muted')}><Briefcase size={22} /></button>
+          <div className="flex-1 flex flex-col items-center py-3 gap-1">
+            {(
+              [
+                { view: null,           icon: Edit3,     title: 'New chat',         action: createConversation },
+                { view: 'library',      icon: Library,   title: 'Library',          action: () => navigate('library') },
+                { view: 'ollama',       icon: Cpu,       title: 'Ollama',           action: () => navigate('ollama') },
+                { view: 'mailpit',      icon: Mail,      title: 'Mailpit',          action: () => navigate('mailpit') },
+                { view: 'connectors',   icon: Plug,      title: 'MCP Connectors',   action: () => navigate('connectors') },
+                { view: 'jobs',         icon: Briefcase, title: 'Job Search Agent', action: () => navigate('jobs') },
+                { view: 'observability',icon: Activity,  title: 'Observability',    action: () => navigate('observability') },
+              ] as const
+            ).map(({ view, icon: Icon, title, action }) => (
+              <button
+                key={title}
+                onClick={action}
+                title={title}
+                className={cn(
+                  'flex items-center justify-center w-10 h-10 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground',
+                  view && appView === view && 'bg-muted text-foreground',
+                )}
+              >
+                <Icon size={18} />
+              </button>
+            ))}
           </div>
         )}
       </div>

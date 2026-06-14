@@ -90,6 +90,7 @@ interface AppState {
   logoutAdmin: () => void;
   forgotPassword: (email: string) => Promise<{ ok: boolean; message?: string; error?: string }>;
   resetPassword: (token: string, newPassword: string) => Promise<{ ok: boolean; message?: string; error?: string }>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
 
   // ── voice mode ───────────────────────────────────────────────────────────
   voiceModeEnabled: boolean;
@@ -642,8 +643,21 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  voiceModeEnabled: false,
-  toggleVoiceMode: () => set((s) => ({ voiceModeEnabled: !s.voiceModeEnabled })),
+  changePassword: async (currentPassword, newPassword) => {
+    try {
+      await api.changePassword(currentPassword, newPassword);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  },
+
+  voiceModeEnabled: localStorage.getItem('eminentai.voiceMode') === 'true',
+  toggleVoiceMode: () => set((s) => {
+    const next = !s.voiceModeEnabled;
+    localStorage.setItem('eminentai.voiceMode', String(next));
+    return { voiceModeEnabled: next };
+  }),
 
   // ── job search agent ───────────────────────────────────────────────────────
   jobResults: undefined,

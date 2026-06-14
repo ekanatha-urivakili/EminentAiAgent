@@ -42,6 +42,52 @@ function fileTypeIcon(type: string) {
 
 type VoiceStatus = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'denied' | 'error' | 'insecure';
 
+// ── WAV conversion for whisper.cpp compatibility ───────────────────────────
+// whisper.cpp natively expects 16kHz mono PCM WAV. Browsers record webm/mp4,
+// so we decode via AudioContext and re-encode to WAV before sending.
+async function blobToWav(blob: Blob): Promise<Blob> {
+  let arrayBuffer: ArrayBuffer;
+  let decoded: AudioBuffer;
+  try {
+    arrayBuffer = await blob.arrayBuffer();
+    const tmpCtx = new AudioContext();
+    decoded = await tmpCtx.decodeAudioData(arrayBuffer);
+    await tmpCtx.close();
+  } catch {
+    return blob; // decoding failed — send original and let the server error surface
+  }
+  const sampleRate = 16000;
+  const numFrames = Math.ceil(decoded.duration * sampleRate);
+  if (numFrames === 0) return blob;
+  const offlineCtx = new OfflineAudioContext(1, numFrames, sampleRate);
+  const src = offlineCtx.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offlineCtx.destination);
+  src.start(0);
+  const resampled = await offlineCtx.startRendering();
+  return encodeWav(resampled.getChannelData(0), sampleRate);
+}
+
+function encodeWav(samples: Float32Array, sampleRate: number): Blob {
+  const n = samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (off: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true);
+  str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  let off = 44;
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
 // ── Whisper install guide ──────────────────────────────────────────────────
 function CopyBtn({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -275,22 +321,23 @@ export function Composer() {
 
   // ── Voice STT via whisper.cpp ──────────────────────────────────────────
   const toggleVoice = async () => {
-    // Stop if already recording
     if (voiceStatus === 'recording') {
       mediaRecorderRef.current?.stop();
       return;
     }
 
-    // Secure context check
     if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       setVoiceStatus('insecure');
       return;
     }
 
-    // Warm up TTS while we wait for mic permission
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setVoiceStatus('insecure');
+      return;
+    }
+
     warmUpVoice();
 
-    // Request mic permission
     setVoiceStatus('requesting');
     let stream: MediaStream;
     try {
@@ -301,15 +348,23 @@ export function Composer() {
     }
 
     audioChunksRef.current = [];
-    
-    // Select supported mime type (prefer webm, fallback to mp4 for iOS)
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : MediaRecorder.isTypeSupported('audio/mp4')
-      ? 'audio/mp4'
-      : undefined;
 
-    const recorder = new MediaRecorder(stream, { mimeType });
+    let recorder: MediaRecorder;
+    try {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : undefined;
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    } catch {
+      stream.getTracks().forEach((t) => t.stop());
+      setVoiceStatus('error');
+      setWhisperStartMessage('Could not initialize audio recorder.');
+      setShowWhisperGuide(true);
+      return;
+    }
+
     mediaRecorderRef.current = recorder;
 
     recorder.ondataavailable = (e) => {
@@ -318,14 +373,21 @@ export function Composer() {
 
     recorder.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
+      if (audioChunksRef.current.length === 0) {
+        setVoiceStatus('error');
+        setWhisperStartMessage('No audio captured. Check microphone input.');
+        setShowWhisperGuide(true);
+        return;
+      }
       setVoiceStatus('transcribing');
       try {
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        const text = await api.transcribeAudio(blob);
+        const raw = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        // Convert to 16kHz mono WAV — the only format whisper.cpp reliably accepts
+        const wav = await blobToWav(raw);
+        const text = await api.transcribeAudio(wav, 'audio.wav');
         setInput((prev) => (prev ? `${prev} ${text}` : text));
         setVoiceStatus('idle');
         setShowWhisperGuide(false);
-        // Auto-focus textarea after transcription
         setTimeout(() => textareaRef.current?.focus(), 50);
       } catch (err) {
         setWhisperStartMessage((err as Error).message);
@@ -334,7 +396,7 @@ export function Composer() {
       }
     };
 
-    recorder.start();
+    recorder.start(250); // 250 ms timeslice so ondataavailable fires progressively
     setVoiceStatus('recording');
   };
 

@@ -97,11 +97,11 @@ export function ChatView() {
     lastSpokenIdRef.current = last.id;
     const text = stripMarkdown(last.content).slice(0, 2500);
     if (!text) return;
-    window.speechSynthesis.cancel();
+    window.speechSynthesis?.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.05;
     utterance.lang = navigator.language || 'en-US';
-    window.speechSynthesis.speak(utterance);
+    window.speechSynthesis?.speak(utterance);
   }, [voiceModeEnabled, isStreaming, messages]);
 
   if (messages.length === 0) {

@@ -74,6 +74,7 @@ export async function* streamSse(
 export const api = {
   // ── Health & models ──────────────────────────────────────────────────────
   health: () => request<{ status: string; ollama: boolean }>('/api/health'),
+  observability: () => request<import('./types').ObservabilityData>('/api/observability'),
   models: () => request<import('./types').ModelInfo[]>('/api/models'),
   startOllama: () =>
     request<{ running: boolean; message: string }>('/api/ollama/start', { method: 'POST' }),
@@ -227,11 +228,17 @@ export const api = {
   deleteCv: (filename: string) =>
     request<void>(`/api/cvs/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
 
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ message: string }>('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+
   startWhisper: () =>
     request<{ running: boolean; message: string }>('/api/whisper/start', { method: 'POST' }),
-  transcribeAudio: async (blob: Blob): Promise<string> => {
+  transcribeAudio: async (blob: Blob, filename = 'audio.webm'): Promise<string> => {
     const form = new FormData();
-    form.append('file', blob, 'audio.webm');
+    form.append('file', blob, filename);
     const token = localStorage.getItem('eminentai.adminToken');
     const res = await fetch(`${BASE}/api/transcribe`, {
       method: 'POST',

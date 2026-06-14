@@ -11,6 +11,7 @@ import { LibraryView } from './components/LibraryView';
 import { MailpitView } from './components/MailpitView';
 import { ConnectorsView } from './components/ConnectorsView';
 import { JobSearchView } from './components/JobSearchView';
+import { ObservabilityView } from './components/ObservabilityView';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AuthGate } from './components/AuthGate';
 import { InstallPrompt } from './components/InstallPrompt';
@@ -37,7 +38,6 @@ function useTheme() {
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const appView = useStore((s) => s.appView);
-  const setAppView = useStore((s) => s.setAppView);
   const mode = useStore((s) => s.mode);
   const refreshHealth = useStore((s) => s.refreshHealth);
   const loadModels = useStore((s) => s.loadModels);
@@ -84,7 +84,7 @@ export default function App() {
         />
 
         <div className="flex-1 flex flex-col h-full relative min-w-0">
-          <Header sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSettings={() => setAppView('connectors')} />
+          <Header sidebarOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen((v) => !v)} />
 
           <div className="flex-1 overflow-y-auto custom-scrollbar relative">
             <AnimatePresence mode="wait">
@@ -101,6 +101,7 @@ export default function App() {
                 {appView === 'mailpit' && <MailpitView />}
                 {appView === 'connectors' && <ConnectorsView />}
                 {appView === 'jobs' && <JobSearchView />}
+                {appView === 'observability' && <ObservabilityView />}
                 {appView === 'chat' && mode === 'Chat' && <ChatView />}
                 {appView === 'chat' && mode === 'Plan' && <PlanView />}
                 {appView === 'chat' && mode === 'Agent' && <AgentView />}
