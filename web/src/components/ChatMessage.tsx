@@ -447,7 +447,7 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
               {message.content && <UserText content={message.content} />}
             </div>
           ) : (
-            <div className="w-full pt-1.5 prose prose-slate dark:prose-invert max-w-none">
+            <div className="w-full pt-1.5 prose prose-slate dark:prose-invert navy:prose-invert max-w-none">
               {hasAssistantContent && <MarkdownRenderer content={message.content} />}
               {message.streaming && <ThinkingIndicator hasContent={hasAssistantContent} />}
             </div>

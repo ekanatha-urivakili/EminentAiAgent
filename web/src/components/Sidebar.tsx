@@ -1,4 +1,4 @@
-import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, Archive, ArchiveRestore, Mail, Briefcase } from 'lucide-react';
+import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, ArchiveRestore, Mail, Briefcase } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -9,9 +9,6 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
   const archivedIds = useStore((s) => s.archivedIds);
   const activeId = useStore((s) => s.activeConversationId);
   const selectConversation = useStore((s) => s.selectConversation);
-  const renameConversation = useStore((s) => s.renameConversation);
-  const removeConversation = useStore((s) => s.removeConversation);
-  const archiveConversation = useStore((s) => s.archiveConversation);
   const newConversation = useStore((s) => s.newConversation);
   const connectors = useStore((s) => s.connectors);
   const appView = useStore((s) => s.appView);
@@ -111,9 +108,6 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
               {recentConversations.map((c) => (
                 <ChatRow key={c.id} id={c.id} title={c.title} active={activeId === c.id}
                   onSelect={() => selectAndNavigate(c.id)}
-                  onRename={(title) => renameConversation(c.id, title)}
-                  onDelete={() => void removeConversation(c.id)}
-                  onArchive={() => archiveConversation(c.id)}
                 />
               ))}
 
@@ -150,104 +144,15 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
   );
 }
 
-function ChatRow({ title, active, onSelect, onRename, onDelete, onArchive }: {
+function ChatRow({ title, active, onSelect }: {
   id: string; title: string; active: boolean;
-  onSelect: () => void; onRename: (title: string) => Promise<void>; onDelete: () => void; onArchive: () => void;
+  onSelect: () => void;
 }) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState(title || 'Untitled');
-  const [saving, setSaving] = useState(false);
-
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirmDelete) { onDelete(); } else { setConfirmDelete(true); setTimeout(() => setConfirmDelete(false), 3000); }
-  };
-
-  const startEditing = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setDraftTitle(title || 'Untitled');
-    setEditing(true);
-  };
-
-  const saveTitle = async () => {
-    const nextTitle = draftTitle.trim();
-    if (!nextTitle || nextTitle === title) {
-      setEditing(false);
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await onRename(nextTitle);
-      setEditing(false);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleEditKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      void saveTitle();
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      setEditing(false);
-      setDraftTitle(title || 'Untitled');
-    }
-  };
-
   return (
-    <div className={cn('group flex items-center gap-1 w-full rounded-xl text-sm transition-colors', active ? 'bg-muted text-foreground' : 'hover:bg-muted/60 text-foreground')}>
-      {editing ? (
-        <div className="flex items-center gap-2 flex-1 min-w-0 px-3 py-2">
-          <MessageCircle size={14} className="flex-shrink-0 text-muted-foreground" />
-          <input
-            autoFocus
-            value={draftTitle}
-            disabled={saving}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setDraftTitle(e.target.value)}
-            onBlur={() => void saveTitle()}
-            onKeyDown={handleEditKeyDown}
-            className="min-w-0 flex-1 bg-background border border-border rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        </div>
-      ) : (
-        <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left px-3 py-2">
-          <MessageCircle size={14} className="flex-shrink-0 mt-0.5 text-muted-foreground" />
-          <span className="truncate">{title || 'Untitled'}</span>
-        </button>
-      )}
-
-      <button
-        onClick={startEditing}
-        className="p-1.5 rounded-md hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
-        title="Rename"
-      >
-        <Edit3 size={14} />
-      </button>
-
-      {/* Archive */}
-      <button
-        onClick={(e) => { e.stopPropagation(); onArchive(); }}
-        className="p-1.5 rounded-md hover:bg-muted hover:text-foreground text-muted-foreground transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
-        title="Archive"
-      >
-        <Archive size={14} />
-      </button>
-
-      {/* Delete — tap once to arm, again to confirm */}
-      <button
-        onClick={handleDelete}
-        className={cn(
-          'p-1.5 mr-1 rounded-md transition-all flex-shrink-0',
-          confirmDelete ? 'opacity-100 bg-destructive/15 text-destructive' : 'opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive text-muted-foreground',
-        )}
-        title={confirmDelete ? 'Tap again to delete' : 'Delete'}
-      >
-        <Trash2 size={14} />
+    <div className={cn('flex items-center w-full rounded-xl text-sm transition-colors', active ? 'bg-muted text-foreground' : 'hover:bg-muted/60 text-foreground')}>
+      <button onClick={onSelect} className="flex items-center gap-2 flex-1 min-w-0 text-left px-3 py-2">
+        <MessageCircle size={14} className="flex-shrink-0 mt-0.5 text-muted-foreground" />
+        <span className="truncate">{title || 'Untitled'}</span>
       </button>
     </div>
   );

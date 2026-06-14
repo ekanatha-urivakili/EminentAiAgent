@@ -67,25 +67,25 @@
 
   .navy {
     --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
+    --foreground: 0 0% 100%;
 
     --card: 222 47% 11%;
-    --card-foreground: 210 40% 98%;
+    --card-foreground: 0 0% 100%;
 
     --popover: 222 47% 11%;
-    --popover-foreground: 210 40% 98%;
+    --popover-foreground: 0 0% 100%;
 
     --primary: 210 40% 98%;
     --primary-foreground: 222 47% 11%;
 
     --secondary: 222 47% 18%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary-foreground: 0 0% 100%;
 
     --muted: 222 47% 18%;
-    --muted-foreground: 217 32% 70%;
+    --muted-foreground: 217 32% 80%;
 
     --accent: 222 47% 18%;
-    --accent-foreground: 210 40% 98%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 20% 98%;
@@ -113,6 +113,24 @@
     line-height: 1.5;
     letter-spacing: 0;
     font-weight: 400;
+  }
+  .navy .prose {
+    --tw-prose-body: hsl(var(--foreground));
+    --tw-prose-headings: hsl(var(--foreground));
+    --tw-prose-lead: hsl(var(--foreground));
+    --tw-prose-links: hsl(var(--foreground));
+    --tw-prose-bold: hsl(var(--foreground));
+    --tw-prose-counters: hsl(var(--muted-foreground));
+    --tw-prose-bullets: hsl(var(--muted-foreground));
+    --tw-prose-hr: hsl(var(--border));
+    --tw-prose-quotes: hsl(var(--foreground));
+    --tw-prose-quote-borders: hsl(var(--border));
+    --tw-prose-captions: hsl(var(--muted-foreground));
+    --tw-prose-code: hsl(var(--foreground));
+    --tw-prose-pre-code: hsl(var(--foreground));
+    --tw-prose-pre-bg: hsl(var(--secondary));
+    --tw-prose-th-borders: hsl(var(--border));
+    --tw-prose-td-borders: hsl(var(--border));
   }
   body, .bg-background, .bg-card, .bg-muted {
     transition: background-color 0.25s ease, border-color 0.25s ease;

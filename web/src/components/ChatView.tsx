@@ -61,9 +61,31 @@ export function ChatView() {
   const voiceModeEnabled = useStore((s) => s.voiceModeEnabled);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastSpokenIdRef = useRef<string | null>(null);
+  const userScrolledUpRef = useRef(false);
+  const scrollContainerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Lazily attach scroll listener once the scroll container is available
+    if (!scrollContainerRef.current && bottomRef.current) {
+      const container = bottomRef.current.closest<HTMLElement>('.custom-scrollbar');
+      if (container) {
+        scrollContainerRef.current = container;
+        const onScroll = () => {
+          const { scrollTop, scrollHeight, clientHeight } = container;
+          userScrolledUpRef.current = scrollHeight - scrollTop - clientHeight > 80;
+        };
+        container.addEventListener('scroll', onScroll, { passive: true });
+      }
+    }
+
+    // Always scroll to bottom when user sends a message; respect position during streaming
+    const lastMessage = messages.at(-1);
+    if (lastMessage?.role === 'user') {
+      userScrolledUpRef.current = false;
+    }
+    if (!userScrolledUpRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   // TTS: speak the last assistant message when streaming finishes

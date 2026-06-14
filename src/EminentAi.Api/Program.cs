@@ -330,6 +330,47 @@ static bool VerifyPassword(string password, string stored)
     return CryptographicOperations.FixedTimeEquals(actual, expected);
 }
 
+static string ResolveOllamaBinary()
+{
+    // 1. Check if 'ollama' is in the PATH (standard way)
+    try
+    {
+        using var check = new Process();
+        check.StartInfo.FileName = "ollama";
+        check.StartInfo.Arguments = "--version";
+        check.StartInfo.UseShellExecute = false;
+        check.StartInfo.CreateNoWindow = true;
+        if (check.Start())
+        {
+            check.WaitForExit();
+            if (check.ExitCode == 0) return "ollama";
+        }
+    }
+    catch { /* not in path */ }
+
+    // 2. Check common macOS paths if we are on Darwin
+    if (OperatingSystem.IsMacOS())
+    {
+        var paths = new[]
+        {
+            "/Applications/Ollama.app/Contents/Resources/ollama",
+            "/usr/local/bin/ollama",
+            "/opt/homebrew/bin/ollama",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "bin/ollama")
+        };
+        foreach (var p in paths) if (File.Exists(p)) return p;
+    }
+
+    // 3. Check common Linux paths
+    if (OperatingSystem.IsLinux())
+    {
+        var paths = new[] { "/usr/local/bin/ollama", "/usr/bin/ollama", "/bin/ollama" };
+        foreach (var p in paths) if (File.Exists(p)) return p;
+    }
+
+    return "ollama"; // Fallback to PATH and hope for the best
+}
+
 // ---------------------------------------------------------------------------
 // Health + models
 // ---------------------------------------------------------------------------
@@ -351,18 +392,32 @@ app.MapPost("/api/ollama/start", async (IOllamaClient ollama, CancellationToken 
 
     try
     {
+        var bin = ResolveOllamaBinary();
         managedOllamaProcess = Process.Start(new ProcessStartInfo
         {
-            FileName = "ollama",
+            FileName = bin,
             Arguments = "serve",
             UseShellExecute = false,
             CreateNoWindow = true
         });
-        await Task.Delay(1200, ct);
+
+        // Wait up to 8 seconds for Ollama to become healthy (it can be slow to initialize)
+        var healthy = false;
+        for (var i = 0; i < 16; i++)
+        {
+            await Task.Delay(500, ct);
+            if (await ollama.IsHealthyAsync(ct))
+            {
+                healthy = true;
+                break;
+            }
+            if (managedOllamaProcess is { HasExited: true }) break;
+        }
+
         return Results.Ok(new
         {
-            running = await ollama.IsHealthyAsync(ct),
-            message = managedOllamaProcess is null ? "Could not start Ollama." : "Started local Ollama."
+            running = healthy,
+            message = healthy ? "Started local Ollama." : (managedOllamaProcess is null ? "Could not start Ollama." : "Ollama started but is not yet healthy.")
         });
     }
     catch (Exception ex)
@@ -420,15 +475,42 @@ app.MapPost("/api/mailpit/start", async (CancellationToken ct) =>
 
 app.MapPost("/api/ollama/stop", () =>
 {
-    if (managedOllamaProcess is null)
-        return Results.Ok(new { stopped = false, message = "No app-managed Ollama process is running." });
-    if (managedOllamaProcess.HasExited)
-        return Results.Ok(new { stopped = true, message = "App-managed Ollama process already stopped." });
+    var stoppedManaged = false;
+    if (managedOllamaProcess is { HasExited: false })
+    {
+        managedOllamaProcess.Kill(entireProcessTree: true);
+        managedOllamaProcess.Dispose();
+        managedOllamaProcess = null;
+        stoppedManaged = true;
+    }
 
-    managedOllamaProcess.Kill(entireProcessTree: true);
-    managedOllamaProcess.Dispose();
-    managedOllamaProcess = null;
-    return Results.Ok(new { stopped = true, message = "Stopped app-managed Ollama." });
+    // Fallback: try to find any process named 'ollama' and kill it.
+    // This handles cases where Ollama was started externally or the API was restarted.
+    var unmanagedKilled = 0;
+    try
+    {
+        foreach (var p in Process.GetProcessesByName("ollama"))
+        {
+            try
+            {
+                p.Kill(entireProcessTree: true);
+                unmanagedKilled++;
+            }
+            catch { /* ignore processes we can't kill */ }
+        }
+    }
+    catch { /* ignore errors during process lookup */ }
+
+    if (stoppedManaged || unmanagedKilled > 0)
+    {
+        return Results.Ok(new
+        {
+            stopped = true,
+            message = stoppedManaged ? "Stopped app-managed Ollama." : $"Stopped {unmanagedKilled} externally-running Ollama process(es)."
+        });
+    }
+
+    return Results.Ok(new { stopped = false, message = "No Ollama process found to stop." });
 });
 
 app.MapGet("/api/ollama/search", async (string? q, IHttpClientFactory factory, CancellationToken ct) =>
