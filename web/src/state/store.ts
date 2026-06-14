@@ -47,6 +47,10 @@ interface AppState {
   unarchiveConversation: (id: string) => void;
   sendMessage: (content: string) => Promise<void>;
   sendMessageWithAttachments: (content: string, attachments: ChatAttachment[]) => Promise<void>;
+  // Smart chat (A2A routing)
+  smartModeEnabled: boolean;
+  toggleSmartMode: () => void;
+  sendSmartMessage: (content: string, attachments: ChatAttachment[]) => Promise<void>;
   regenerate: (messageId: string) => Promise<void>;
   stopStreaming: () => void;
   /** Switch to a different branch within the active conversation. */
@@ -197,6 +201,7 @@ export const useStore = create<AppState>((set, get) => ({
   branches: [],
   messages: [],
   isStreaming: false,
+  smartModeEnabled: true,
 
   loadConversations: async () => {
     try { set({ conversations: await api.listConversations() }); } catch { /* offline */ }
@@ -345,6 +350,122 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  toggleSmartMode: () => set((s) => ({ smartModeEnabled: !s.smartModeEnabled })),
+
+  sendSmartMessage: async (content, attachments) => {
+    let { activeBranchId } = get();
+    const { selectedModel } = get();
+
+    if (!activeBranchId) {
+      const created = await api.createConversation(selectedModel);
+      activeBranchId = created.branchId;
+      set({ activeBranchId, activeConversationId: created.id, branches: [] });
+      void get().loadConversations();
+    }
+
+    const imageAttachments = attachments.filter(a =>
+      a.contentType?.startsWith('image/') ?? false
+    );
+
+    const userMsg: ChatMsg = { id: `u_${Date.now()}`, role: 'user', content, attachments };
+    const assistantMsg: ChatMsg = {
+      id: `a_${Date.now()}`,
+      role: 'assistant',
+      content: '',
+      streaming: true,
+    };
+    set((s) => ({ messages: [...s.messages, userMsg, assistantMsg], isStreaming: true }));
+
+    chatAbort = new AbortController();
+    try {
+      await api.smartChat(
+        activeBranchId,
+        content,
+        attachments,
+        imageAttachments.length > 0 ? 'vision' : undefined,
+        (event, data) => {
+          set((s) => ({
+            messages: s.messages.map((m) => {
+              if (m.id !== assistantMsg.id && m.id !== (data.messageId as string | undefined)) return m;
+
+              if (event === 'routing_decision') {
+                return {
+                  ...m,
+                  routingDecision: {
+                    intent: data.intent as import('../lib/types').AgentKind,
+                    model: data.model as string,
+                    provider: data.provider as string,
+                    reason: data.reason as string,
+                    classificationMs: data.classificationMs as number,
+                    wasFastPath: data.wasFastPath as boolean,
+                    manualOverrideApplied: data.manualOverrideApplied as boolean,
+                  },
+                };
+              }
+
+              if (event === 'token') {
+                return { ...m, content: m.content + ((data.text as string) ?? '') };
+              }
+
+              if (event === 'image_gen_progress') {
+                return { ...m, imageGenStage: data.stage as import('../lib/types').ImageGenStage };
+              }
+
+              if (event === 'image_generated') {
+                return {
+                  ...m,
+                  generatedImageUrl: data.url as string,
+                  generatedFluxPrompt: data.fluxPrompt as string,
+                  imageGenStage: undefined,
+                };
+              }
+
+              if (event === 'done') {
+                return {
+                  ...m,
+                  id: (data.messageId as string) ?? m.id,
+                  streaming: false,
+                  imageGenStage: undefined,
+                };
+              }
+
+              if (event === 'routing_error') {
+                return {
+                  ...m,
+                  content: `⚠️ ${data.message as string}`,
+                  streaming: false,
+                };
+              }
+
+              return m;
+            }),
+          }));
+
+          if (event === 'done' && data.messageId) {
+            assistantMsg.id = data.messageId as string;
+          }
+        },
+        chatAbort.signal,
+      );
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') {
+        set((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === assistantMsg.id
+              ? { ...m, content: m.content || `⚠️ ${(err as Error).message}`, streaming: false }
+              : m,
+          ),
+        }));
+      }
+    } finally {
+      set((s) => ({
+        isStreaming: false,
+        messages: s.messages.map((m) => ({ ...m, streaming: false })),
+      }));
+      void get().loadConversations();
+    }
+  },
+
   regenerate: async (messageId) => {
     const { selectedModel } = get();
     set((s) => ({
@@ -414,7 +535,7 @@ export const useStore = create<AppState>((set, get) => ({
   promotePlanToAgent: () => {
     const { plan } = get();
     if (!plan) return;
-    set({ mode: 'Agent' });
+    set({ mode: 'Agent', appView: 'chat' });
     void get().startAgent(plan.goal, JSON.stringify(plan.steps));
   },
 

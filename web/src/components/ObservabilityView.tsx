@@ -9,12 +9,14 @@ export function ObservabilityView() {
   const [data, setData] = useState<ObservabilityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const fetchData = async () => {
     try {
       const res = await api.observability();
       setData(res);
       setError(null);
+      setNow(Date.now());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -23,9 +25,12 @@ export function ObservabilityView() {
   };
 
   useEffect(() => {
-    void fetchData();
+    const timeout = setTimeout(() => void fetchData(), 0);
     const interval = setInterval(() => void fetchData(), 5000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timeout);
+      clearInterval(interval);
+    };
   }, []);
 
   if (loading && !data) {
@@ -151,7 +156,7 @@ export function ObservabilityView() {
                       <span>Total: {formatBytes(m.sizeBytes)}</span>
                       {m.expiresAt && (
                         <span className="flex items-center gap-1">
-                          <Clock size={10} /> Unloads in {Math.round((new Date(m.expiresAt).getTime() - Date.now()) / 60000)}m
+                          <Clock size={10} /> Unloads in {Math.round((new Date(m.expiresAt).getTime() - now) / 60000)}m
                         </span>
                       )}
                     </div>

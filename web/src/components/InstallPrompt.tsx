@@ -10,9 +10,13 @@ type BeforeInstallPromptEvent = Event & {
 
 const installPromptKey = 'eminentai-install-prompt-dismissed';
 
+type NavigatorWithStandalone = Navigator & {
+  standalone?: boolean;
+};
+
 function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches
-    || (window.navigator as any).standalone === true;
+    || (window.navigator as NavigatorWithStandalone).standalone === true;
 }
 
 function getMobileOS() {

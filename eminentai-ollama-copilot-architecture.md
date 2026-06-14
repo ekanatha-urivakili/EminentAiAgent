@@ -1,7 +1,7 @@
 # EminentAi — Local Ollama Copilot Platform
 ### Architecture & Implementation Plan (HLD / LLD / Sequence Diagrams / VS Code Extension)
 
-**Version:** 1.0 · **Date:** 2026-06-11 · **Status:** Proposed
+**Version:** 1.1 · **Date:** 2026-06-14 · **Status:** Implemented core + planned extensions (v3.1 docs aligned to current code)
 **Target hardware baseline:** Apple M2, 16 GB unified memory (constrains every model decision below)
 
 ---
@@ -12,19 +12,17 @@
 2. **You cannot run a chat model + an embedding model + your IDE comfortably above ~9–10 GB of model weights.** Budget: chat model ≤ 5 GB (e.g., `qwen2.5-coder:7b-q4_K_M`), embedding model ≤ 0.7 GB (`nomic-embed-text`), leave headroom for KV cache and the OS.
 3. **MCP is the right call for connectors** — do not write bespoke Gmail/Jira/Stripe API clients. Official/maintained MCP servers exist for all four requested services; you write one MCP *client*, not N integrations.
 4. **Local model + remote tools = a real data-exfiltration surface.** A prompt-injected Jira ticket can instruct the model to email data via Gmail. Section 7 (Security) makes human-in-the-loop approval for write-actions **non-optional**.
-5. **KV Cache Quantization is mandatory for M2/16GB.** To achieve usable context windows (e.g., 16k tokens) without crashing, the backend must use 4-bit or 8-bit KV cache quantization. Set `num_ctx: 16384` and `f16_kv: false` in the Ollama configuration to effectively double effective context capacity.
+5. **Multi-Agent Orchestration is the core for smart chat.** The system uses an `AgentOrchestratorFacade` to classify intent, resolve a model, and dispatch to specialized agents (Vision, Coding, Architecture, ImageGen, General). Facade-level intent/model resolution is sequential; provider health checks and model listing are parallelized inside `ModelRouterService`.
 
 Recommended model lineup (16 GB M2):
 
 | Role | Model | Size (q4) | Why |
 |---|---|---|---|
-| Chat / general | `llama3.1:8b` or `qwen2.5:7b` | ~4.7 GB | Best instruction-following at this size |
-| Coding / agent | `qwen2.5-coder:7b` | ~4.7 GB | Strongest small coder; decent tool calling |
-| Inline completion (FIM) | `qwen2.5-coder:1.5b-base` | ~1 GB | Fast fill-in-middle for the VS Code extension |
-| Embeddings (RAG) | `nomic-embed-text` | ~0.27 GB | File upload / codebase retrieval |
-| Planning (optional, slow) | `deepseek-r1:8b` | ~5 GB | Reasoning traces for plan mode |
-
-Run **one** chat/coder model at a time; set `OLLAMA_MAX_LOADED_MODELS=2` (1 LLM + 1 embedder), `OLLAMA_KEEP_ALIVE=10m`.
+| Intent classification | `qwen3.5:2b` | ~2.7 GB | Fast, sub-500ms classification |
+| General chat | `qwen2.5:latest` | ~4.7 GB | Best all-rounder at this size |
+| Coding agent | `qwen2.5-coder:1.5b` | ~1 GB | Fast, efficient coding assistance |
+| Vision agent | `qwen2.5vl:latest` | ~6.0 GB | Multimodal support |
+| Image Gen | `x/flux2-klein:4b` | ~5.7 GB | Local diffusion |
 
 ---
 
@@ -35,8 +33,8 @@ Run **one** chat/coder model at a time; set `OLLAMA_MAX_LOADED_MODELS=2` (1 LLM 
 - **F2 — Plan mode:** Multi-step plan generation (read-only; no tool execution) with editable plan steps that can be promoted to Agent mode.
 - **F3 — Agent mode:** Autonomous loop — model proposes tool calls (filesystem, terminal, MCP connectors), executes with policy gating, observes results, iterates until done or budget exhausted.
 - **F4 — MCP connectors:** Gmail, Jira (Atlassian), Stripe, Indeed + extensible registry (Slack, GitHub, Postman, Google Drive, Calendar, Filesystem, Brave Search, Puppeteer/Playwright, SQLite/Postgres, Sentry, Notion, Linear).
-- **F5 — File upload:** Drag-and-drop into chat → parse (pdf/docx/xlsx/csv/code/images) → chunk + embed → inject as context (small files) or RAG-retrieve (large files).
-- **F6 — Response actions:** Copy (markdown / plain / code-block-only), Export (md / pdf / docx / json), Regenerate (same params / different model / different temperature), Edit-and-resubmit, Branch conversation.
+- **F5 — File upload:** Drag-and-drop image attachments are implemented for chat/vision. General document parsing, chunking, embeddings, and RAG retrieval remain planned extensions.
+- **F6 — Response actions:** Regenerate and branch/fork are implemented. Export and edit-and-resubmit remain planned extensions.
 - **F7 — VS Code extension:** Chat sidebar, inline completions (FIM), code actions (explain/fix/refactor/test-gen), agent edits with diff preview, connects to the same local backend.
 
 ### 1.2 Non-Functional
@@ -76,7 +74,7 @@ Run **one** chat/coder model at a time; set `OLLAMA_MAX_LOADED_MODELS=2` (1 LLM 
 flowchart TB
     U[Developer] -->|browser| WEB[Web UI - React + Vite]
     U -->|IDE| VSC[VS Code Extension]
-    WEB -->|REST + SSE/WebSocket| API[EminentAi Backend\nASP.NET Core 8 Minimal API]
+    WEB -->|REST + SSE/WebSocket| API[EminentAi Backend\nASP.NET Core Minimal API]
     VSC -->|REST + SSE| API
     API -->|HTTP :11434| OLL[Ollama Runtime\nlocal models]
     API -->|MCP stdio/SSE| MCPH[MCP Host Layer]
@@ -87,9 +85,9 @@ flowchart TB
     MCPH --> FS[Filesystem MCP]
     MCPH --> GH[GitHub MCP]
     MCPH --> MORE[...registry]
-    API --> DB[(SQLite\nchats, runs, settings)]
-    API --> VEC[(sqlite-vec / Qdrant-lite\nembeddings)]
-    API --> BLOB[(Local file store\nuploads, exports)]
+    API --> DB[(SQLite\nchats, runs, connectors, generated images)]
+    API -.planned.-> VEC[(sqlite-vec / Qdrant-lite\nembeddings)]
+    API --> BLOB[(Local file store\nCVs, generated images)]
 ```
 
 ### 2.2 Container View (C4 Level 2)
@@ -102,18 +100,18 @@ flowchart LR
         AGT[Agent Console]:::c
         SET[Settings / Connector Manager]:::c
     end
-    subgraph Backend [ASP.NET Core 8]
+    subgraph Backend [ASP.NET Core Minimal API]
         GW[API Gateway\nauth, rate-limit, CORS]
         PII[PII Redactor Middleware]
         CHAT[Chat Service]
         ORCH[Agent Orchestrator]
         PLN[Planner Service]
         MCPC[MCP Client Manager]
-        ING[File Ingestion Service]
-        WIDX[Workspace Indexer]
-        RAGS[RAG / Retrieval Service]
+        ING[File Ingestion Service - planned]
+        WIDX[Workspace Indexer - planned]
+        RAGS[RAG / Retrieval Service - planned]
         POL[Policy Engine\napprovals + allow-lists]
-        EXP[Export Service\nmd/pdf/docx/json]
+        EXP[Export Service - planned]
         EVT[Event Bus - in-proc Channels]
     end
     UI --> GW --> PII --> CHAT --> OLLAMA[(Ollama)]
@@ -133,7 +131,7 @@ flowchart LR
 
 | Option | Verdict |
 |---|---|
-| **A. ASP.NET Core 8 + React/Vite + official `ModelContextProtocol` C# SDK** | **Chosen.** Matches your existing Clean Architecture reference project; MS-maintained MCP SDK; one binary deploy. |
+| **A. ASP.NET Core Minimal API (.NET 10 target) + React/Vite + official `ModelContextProtocol` C# SDK** | **Chosen.** Matches your existing Clean Architecture reference project; MS-maintained MCP SDK; one binary deploy. |
 | B. Node/TypeScript end-to-end | Better MCP ecosystem maturity, but duplicates nothing you own; weaker typing discipline for the orchestrator. |
 | C. Python (FastAPI + LangGraph) | Fastest agent prototyping; worst long-term maintainability for you; packaging on macOS is painful. |
 
@@ -198,17 +196,17 @@ eminentai/
 │  ├─ EminentAi.Application/       # use cases, interfaces
 │  │   ├─ Chat/ SendMessage  RegenerateMessage  BranchConversation
 │  │   ├─ Agent/ StartRun  ApproveStep  CancelRun
-│  │   ├─ Ingestion/ UploadFile  ChunkAndEmbed
-│  │   ├─ Abstractions/ IOllamaClient  IMcpHost  IVectorStore  IPolicyEngine
+│  │   ├─ Agents/ specialized smart-chat agents
+│  │   ├─ Routing/ intent and model routing contracts
+│  │   ├─ Providers/ model provider contracts and policies
+│  │   ├─ Abstractions/ IOllamaClient  IMcpHost  IPolicyEngine  repositories
 │  ├─ EminentAi.Infrastructure/
-│  │   ├─ Ollama/OllamaClient.cs            # /api/chat /api/generate /api/embed /api/tags
+│  │   ├─ Ollama/OllamaClient.cs            # /api/chat /api/generate /api/tags /api/pull
 │  │   ├─ Mcp/McpHost.cs                    # ModelContextProtocol SDK, server registry
-│  │   ├─ Persistence/ (EF Core + SQLite)   # + sqlite-vec for vectors
-│  │   ├─ Parsing/ (PdfPig, OpenXml, CsvHelper, Tesseract-optional)
-│  │   ├─ Export/ (Markdig→HTML→pdf via Playwright, OpenXml docx)
+│  │   ├─ Persistence/ (EF Core + SQLite)
+│  │   ├─ Providers/ OllamaModelProvider.cs
+│  │   ├─ Routing/ IntentRouterService.cs  ModelRouterService.cs
 │  │   ├─ Security/ PiiRedactor.cs          # Regex-based masking of secrets
-│  │   ├─ Indexing/ WorkspaceIndexer.cs     # Project Map generator
-│  │   ├─ Routing/ IntentRouter.cs          # Rule-based model selection
 │  └─ EminentAi.Api/               # Minimal API + SSE endpoints
 ├─ web/                             # React 18 + Vite + TS + Tailwind + shadcn
 └─ vscode-ext/                      # TypeScript extension (Section 8)
@@ -221,17 +219,16 @@ conversations(id PK, title, created_at, model_default, system_prompt)
 branches(id PK, conversation_id FK, parent_branch_id NULL, created_at)
 messages(id PK, branch_id FK, role, content, model, tokens_in, tokens_out,
          latency_ms, created_at, parent_message_id NULL)   -- regenerate = sibling
-attachments(id PK, message_id FK, file_id FK)
-files(id PK, name, mime, bytes, sha256, storage_path, parse_status)
-chunks(id PK, file_id FK, ordinal, text, token_count)      -- vectors in sqlite-vec
-agent_runs(id PK, conversation_id FK, goal, mode, status, step_budget,
+message_attachments(id PK, message_id FK, name, content_type, data_base64, created_at)
+admin_users(id PK, full_name, email, password_hash, session_token_hash, created_at)
+agent_runs(id PK, conversation_id FK NULL, goal, plan_json, model, status, step_budget,
            token_budget, started_at, finished_at)
-agent_steps(id PK, run_id FK, ordinal, kind /*think|tool|approval|result*/,
+agent_steps(id PK, run_id FK, ordinal, kind /*think|tool_call|approval|result*/,
             tool_name, tool_args_json, result_json, status)
 connectors(id PK, name, transport /*stdio|sse|http*/, command_or_url,
            env_json_encrypted, enabled, policy_profile /*ro|rw|blocked*/)
 policy_rules(id PK, connector_id FK, tool_pattern, action /*allow|ask|deny*/)
-routing_rules(id PK, trigger_type /*image|code|arch|regex*/, pattern, target_model, is_active)
+generated_images(id PK, branch_id FK, session_token_hash NULL, created_at)
 ```
 
 Key choice: **regenerate never deletes** — a regenerated reply is a sibling `message` sharing `parent_message_id`; the UI shows `◀ 2/3 ▶` pagination, and branching forks `branches`.
@@ -240,19 +237,22 @@ Key choice: **regenerate never deletes** — a regenerated reply is a sibling `m
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET | `/api/models` | Proxy of Ollama `/api/tags` + capability tags (tools? fim? embed?) |
-| POST | `/api/chat` | `{branchId, content, attachments[], model?, options?}` → `runId` |
-| GET | `/api/stream/{runId}` | **SSE**: `token`, `tool_call`, `approval_required`, `tool_result`, `usage`, `done`, `error` |
-| POST | `/api/messages/{id}/regenerate` | `{model?, temperature?}` → new sibling message stream |
-| POST | `/api/messages/{id}/export` | `{format: md\|pdf\|docx\|json}` → file download |
-| POST | `/api/files` | multipart upload → `{fileId, parseStatus}` |
-| GET | `/api/files/{id}/status` | parsing/embedding progress |
-| POST | `/api/plan` | goal → numbered plan JSON |
-| POST | `/api/agent/runs` | `{goal, planId?, connectors[], budgets}` |
-| POST | `/api/agent/runs/{id}/approvals/{stepId}` | `{decision: approve\|reject, remember?: bool}` |
-| GET/POST/DELETE | `/api/connectors` | registry CRUD, test-connection, OAuth kick-off |
-| GET/POST/DELETE | `/api/settings/routing` | dynamic model mapping rules |
-| GET | `/api/usage` | token meter, per-model stats |
+| GET | `/api/health` | API and Ollama reachability |
+| GET | `/api/observability` | System, loaded-model, and job-source health |
+| GET | `/api/models` | Installed Ollama model list |
+| POST | `/api/chat` | Stateless VS Code extension chat stream |
+| POST | `/api/chat/smart` | Smart multi-agent chat stream with routing |
+| POST | `/api/branches/{branchId}/messages` | Persisted conversation chat stream |
+| POST | `/api/messages/{messageId}/regenerate` | New sibling assistant message stream |
+| POST | `/api/branches/{branchId}/fork` | Fork branch from a message |
+| POST | `/api/plan` | Generate numbered plan JSON |
+| POST | `/api/agent/runs` | Autonomous agent run SSE |
+| POST | `/api/agent/runs/{runId}/approvals/{stepId}` | Approve/reject pending tool call |
+| GET | `/api/agent/runs/{runId}` | Load persisted agent transcript |
+| GET/POST/DELETE | `/api/connectors` | Connector registry CRUD |
+| GET/POST/DELETE | `/api/cvs` / `/api/cvs/upload` / `/api/cvs/{filename}` | CV management for job search |
+| GET/POST | `/api/jobs/*` | Job search settings, source health, search, and ingestion |
+| GET | `/api/generated-images/{filename}` | Authenticated generated-image fetch |
 
 SSE event envelope:
 
@@ -399,7 +399,9 @@ Prompt-injection mitigations baked in:
 
 ## 4. Sequence Diagrams (numbered)
 
-### SD-01 — Streaming chat with uploaded file (RAG path)
+### SD-01 — Planned streaming chat with uploaded document (RAG path)
+
+This path is not implemented in the current API. Current chat attachments support image payloads; document parsing, vector indexing, and `/api/files` are planned.
 
 ```mermaid
 sequenceDiagram
@@ -1036,7 +1038,7 @@ code --install-extension eminentai-copilot-0.1.0.vsix
 | 7B tool-calling too unreliable for long agent runs | High | Repair layer + small steps; revisit if >20% repair rate → consider hybrid: local chat + opt-in cloud model for agent turns only |
 | 16 GB memory pressure with IDE + browser + model | Medium | num_ctx 8192 cap, single loaded LLM; upgrade path: 32 GB or a Mac mini as a LAN inference box |
 | MCP server churn (specs/endpoints evolving) | Medium | Pin server versions in connector config; registry abstracts transport |
-| sqlite-vec scale ceiling (>1M chunks) | Low (single user) | Swap to Qdrant via IVectorStore interface — already abstracted |
+| sqlite-vec scale ceiling (>1M chunks) | Low (single user) | Planned RAG work should introduce a vector-store abstraction before sqlite-vec or Qdrant is added |
 | Webview UI drift vs web UI | Medium | Single React codebase, embedded build target |
 
 ---

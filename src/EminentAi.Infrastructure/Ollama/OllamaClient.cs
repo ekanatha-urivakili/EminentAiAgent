@@ -24,7 +24,12 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(ct);
+            // Read only the first 1KB of the error body to avoid hanging on massive output
+            await using var errorStream = await response.Content.ReadAsStreamAsync(ct);
+            using var errorReader = new StreamReader(errorStream);
+            var buffer = new char[1024];
+            var read = await errorReader.ReadBlockAsync(buffer, 0, buffer.Length);
+            var body = new string(buffer, 0, read);
             throw new HttpRequestException($"Ollama returned {(int)response.StatusCode}: {Truncate(body, 500)}");
         }
 
@@ -122,6 +127,7 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         var n = name.ToLowerInvariant();
         if (n.Contains("embed") || n.Contains("nomic") || n.Contains("bge")) return "embedding";
         if (n.Contains("vl") || n.Contains("vision") || n.Contains("llava") || n.Contains("moondream")) return "vision";
+        if (n.Contains("flux") || n.Contains("diffusion") || n.Contains("stable-diff")) return "image_gen";
         if (n.Contains("r1") || n.Contains("reason") || n.Contains("think") || n.Contains("qwq")) return "reasoning";
 
         if (parameterSize is not null &&
@@ -182,7 +188,24 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         }
     }
 
+    public async Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default)
+    {
+        var payload = new { model, prompt, stream = false };
+        using var response = await http.PostAsJsonAsync("/api/generate", payload, JsonOpts, ct);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(cancellationToken: ct);
+        if (body?.Response is null)
+            throw new InvalidOperationException($"Flux2 response body missing 'response' field. Model: {model}");
+        return body.Response;
+    }
+
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
+
+    private sealed class OllamaGenerateResponse
+    {
+        [JsonPropertyName("response")] public string? Response { get; set; }
+        [JsonPropertyName("done")] public bool Done { get; set; }
+    }
 
     private sealed class OllamaChatResponse
     {

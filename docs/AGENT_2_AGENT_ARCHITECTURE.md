@@ -1,65 +1,84 @@
 # Agent-to-Agent Orchestration Architecture
 
 > **EminentAi — Multi-Agent Routing System**
-> Version 2.0 — revised after principal-engineer review.
-> Designed for: automatic intent detection, specialized agent dispatch, image generation, and architecture planning.
+> Version 3.1 — revised after async/security performance review. Current implementation keeps facade-level intent/model routing sequential, while MCP discovery and model-provider checks are parallelized internally.
 > Provider-agnostic: Ollama local models today, Claude / ChatGPT / Copilot extensible by design.
 
 ---
 
-## Revision Notes (v1 → v2)
+## Revision Notes
 
-| Finding | Severity | Resolution in this document |
+### v1 → v2
+
+| Finding | Severity | Resolution |
 |---|---|---|
-| Bypassed `AgentOrchestrator` — not true A2A | High | Added `AgentOrchestratorFacade` owning the full chain: intent → model → provider → persist → SSE |
-| "All local" hard-coded — no provider abstraction | High | Added `IModelProvider`, `ModelCapability`, `ModelRoute`, `ProviderHealth`, `CostPolicy`, `DataResidencyPolicy` |
-| `systemPromptOverride` as raw string | High | Replaced with `AgentProfile` + `PromptProfileKind` enum, server-side only |
-| `done` emitted before DB persistence | Medium | Fixed in all sequence diagrams: persist → emit `persisted` → emit `done` |
-| Classifier confidence / telemetry missing | Medium | Added `ClassificationRecord` with confidence, raw output, and telemetry log |
-| Flux `/api/generate` response shape unverified | Medium | Added spike task to implementation order; two fallback parse paths documented |
-| Generated images served without auth | Medium | Requires same bearer token; ownership verified against `branchId` in DB |
-| `autoRouteHint` semantics undefined | Medium | Treated as advisory `AgentKind?`; validated to enum; actual route always returned |
-| No `AgentProfile` record — "no new class" | Low | All agents now use `AgentProfile` — consistent, extensible, zero duplication |
-| Image gen first in impl order — wrong | Low | Routing + text flows first; image gen after Flux spike confirmation |
-| Defensive label parsing not specified | PE note | Documented: trim, uppercase, strict enum match; unknown → `General` + log warning |
-| VRAM swapping under multiple large models | PE note | `keep_alive` strategy and model-warm-up recommendation documented |
-| `generated-images/` not in `.gitignore` | PE note | Added to file map and `.gitignore` section |
+| Bypassed `AgentOrchestrator` — not true A2A | High | Added `AgentOrchestratorFacade` owning full chain |
+| "All local" hard-coded — no provider abstraction | High | Added `IModelProvider`, `ModelCapability`, `CostPolicy`, `DataResidencyPolicy` |
+| `systemPromptOverride` as raw string | High | Replaced with `AgentProfile` — server-side constants only |
+| `done` emitted before DB persistence | Medium | Fixed in all sequence diagrams |
+| Classifier confidence / telemetry missing | Medium | Added `ClassificationRecord` |
+| Flux API spike unverified | Medium | Spike task added to impl order; response shape documented as unconfirmed |
+| Generated images served without auth | Medium | Bearer token + ownership check added |
+| `autoRouteHint` semantics undefined | Medium | Treated as advisory; validated to enum |
+| No `AgentProfile` record | Low | All agents use `AgentProfile` |
+| Image gen first in impl order | Low | Text flows first; image gen implemented and depends on Flux returning base64 PNG in `response` |
+| VRAM swapping unaddressed | PE note | `keep_alive` strategy documented |
+| `generated-images/` not in `.gitignore` | PE note | Added to file map |
+
+### v2 → v3
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `routing_decision` emitted before model resolved but carries `model`+`provider` | High | AOF now resolves `ModelRoute` before emitting any SSE; ordering fixed in all sequence diagrams |
+| `RoutingDecision` embeds `ModelRoute` — violates `IIntentRouter`'s responsibility | High | Split: `IIntentRouter` returns `IntentDecision` (intent only); AOF combines with `ModelRoute` for SSE payload |
+| Provider DTOs in Infrastructure — Application depends on them | High | All provider interfaces and DTOs moved to `Application/Providers/`; Infrastructure holds implementations only |
+| `AgentProfile.RequiredCapabilities` is `IReadOnlySet<string>` vs `IReadOnlySet<ModelCapability>` | Medium | Unified to `IReadOnlySet<ModelCapability>` everywhere |
+| `DataResidencyPolicy` and `CostPolicy` unenforceable — `ModelDescriptor` lacks fields | Medium | Added `IsLocal`, `Region`, `InputTokenCostUsd`, `OutputTokenCostUsd` to `ModelDescriptor` |
+| `autoRouteHint` is advisory but skips classification — semantics conflict | Medium | Renamed to `manualRouteOverride`; validation added: Vision requires image; missing models are handled by model resolution |
+| `SmartChatContext.AssistantMessageId` preallocated but `ChatService` owns creation | Medium | Removed from context; `ChatService` creates the assistant message and surfaces the ID on deltas before persisting |
+| `persisted` SSE event referenced in diagrams but absent from SSE contract | Low | Removed from sequence diagrams; persistence is an internal step; `done` is the client signal |
+
+### v3 → v3.1 (Performance & Async Update)
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Sequential intent + model resolution | Medium | Still sequential in `AgentOrchestratorFacade`; manual override skips classification, while model/provider health checks run in parallel inside `ModelRouterService` |
+| Blocking security evaluation | High | `IPolicyEngine` refactored to `EvaluateAsync` for non-blocking loop persistence |
+| Regex overhead in security | Medium | Added compiled `RegexCache` to `PolicyEngine` for glob pattern matching |
+| Classifier latency on missing model | Low | Not proactively health-checked in `IntentRouterService`; failed classifier calls are caught and default to `General` |
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [Installed Ollama Models & Their Roles](#2-installed-ollama-models--their-roles)
-3. [Existing Infrastructure (What We Keep)](#3-existing-infrastructure-what-we-keep)
-4. [Core Abstractions (New Contracts)](#4-core-abstractions-new-contracts)
+2. [Installed Ollama Models](#2-installed-ollama-models)
+3. [Existing Infrastructure](#3-existing-infrastructure)
+4. [Core Abstractions](#4-core-abstractions)
    - 4.1 [AgentKind & AgentProfile](#41-agentkind--agentprofile)
-   - 4.2 [IModelProvider & Provider Abstraction](#42-imodelprovider--provider-abstraction)
-   - 4.3 [IIntentRouter & RoutingDecision](#43-iintentrouter--routingdecision)
+   - 4.2 [Provider Contracts — Application Layer](#42-provider-contracts--application-layer)
+   - 4.3 [IIntentRouter & IntentDecision](#43-iintentrouter--intentdecision)
    - 4.4 [IModelRouter & ModelRoute](#44-imodelrouter--modelroute)
-   - 4.5 [ISpecializedAgent](#45-ispecializedagent)
+   - 4.5 [ISpecializedAgent & SmartChatContext](#45-ispecializedagent--smartchatcontext)
 5. [High-Level Architecture (HLD)](#5-high-level-architecture-hld)
 6. [Component Design (LLD)](#6-component-design-lld)
    - 6.1 [AgentOrchestratorFacade](#61-agentorchestratorfacade)
    - 6.2 [IntentRouterService](#62-intentrouterservice)
    - 6.3 [ModelRouterService](#63-modelrouterservice)
    - 6.4 [OllamaModelProvider](#64-ollamamodelprovider)
-   - 6.5 [VisionAgent](#65-visionagent)
-   - 6.6 [CodeAgent](#66-codeagent)
-   - 6.7 [ArchitectureAgent](#67-architectureagent)
-   - 6.8 [ImageGenerationAgent](#68-imagegenerationagent)
-   - 6.9 [GeneralAgent](#69-generalagent)
+   - 6.5 [Specialized Agents](#65-specialized-agents)
+   - 6.6 [ImageGenerationAgent](#66-imagegenerationagent)
 7. [Sequence Diagrams](#7-sequence-diagrams)
-   - 7.1 [Flow 1 — Vision / Image Reading](#71-flow-1--vision--image-reading)
-   - 7.2 [Flow 2 — Code Request](#72-flow-2--code-request)
-   - 7.3 [Flow 3 — Architecture & Design](#73-flow-3--architecture--design)
-   - 7.4 [Flow 4 — Image Generation](#74-flow-4--image-generation)
-   - 7.5 [Flow 5 — General Request](#75-flow-5--general-request)
-   - 7.6 [Flow 6 — Intent Classification (Internal)](#76-flow-6--intent-classification-internal)
-   - 7.7 [Flow 7 — Provider Fallback Chain](#77-flow-7--provider-fallback-chain)
+   - 7.1 [Vision](#71-flow-1--vision)
+   - 7.2 [Code](#72-flow-2--code)
+   - 7.3 [Architecture](#73-flow-3--architecture)
+   - 7.4 [Image Generation](#74-flow-4--image-generation)
+   - 7.5 [General](#75-flow-5--general)
+   - 7.6 [Classification Internal](#76-flow-6--classification-internal)
+   - 7.7 [Provider Fallback](#77-flow-7--provider-fallback)
 8. [Overall Orchestration Flowchart](#8-overall-orchestration-flowchart)
 9. [Smart Endpoint Contract](#9-smart-endpoint-contract)
-10. [New SSE Event Types](#10-new-sse-event-types)
+10. [SSE Event Reference](#10-sse-event-reference)
 11. [Backend File Map](#11-backend-file-map)
 12. [Frontend File Map](#12-frontend-file-map)
 13. [Changes to Existing Files](#13-changes-to-existing-files)
@@ -72,124 +91,100 @@
 
 ## 1. Overview
 
-Today every chat message goes to whatever model the user manually selected. There is no intelligence deciding *which* model is best for a given task, and there is no mechanism to route to a different provider (Claude, ChatGPT, Copilot) without rewriting the infrastructure.
+Every chat message today goes to whatever model the user manually selected. No intelligence routes by task type, and no abstraction allows swapping providers without rewriting infrastructure.
 
-This architecture corrects both problems by inserting a **true orchestration layer** between the user's message and any model call. The key insight from the v1 review: the original design bypassed `AgentOrchestrator` and wired `SmartAPI` directly to `ChatService` and `ImageGenerationAgent`. This document replaces that with a proper chain where **one facade owns routing, execution, persistence, and SSE streaming**.
+This architecture inserts a **true orchestration layer** with a clean separation of concerns:
 
 ```
-SmartChatEndpoint
-  → AgentOrchestratorFacade        (owns the whole turn: intent → model → execute → persist → SSE)
-    → IntentRouter                  (classifies intent via fast-path or qwen3.5:2b)
-    → ModelRouter                   (resolves best model+provider per intent)
-    → ISpecializedAgent             (Vision / Code / Arch / ImageGen / General)
-      → IModelProvider              (Ollama today; Claude / ChatGPT / Copilot tomorrow)
-    → ChatService                   (persistence: messages, attachments)
-    → SSE response stream
+POST /api/chat/smart
+  └─ AgentOrchestratorFacade          owns the entire turn
+       ├─ IIntentRouter                classifies intent → IntentDecision   (no model knowledge)
+       ├─ IModelRouter                 resolves model + provider → ModelRoute
+       ├─ [emit routing_decision SSE]  only after both intent AND model are resolved
+       ├─ ISpecializedAgent            executes, streams, persists
+       │    └─ IModelProvider          Ollama today; Claude / ChatGPT tomorrow
+       └─ ChatService                  persistence layer
 ```
 
-The existing `POST /api/branches/:id/messages` endpoint is **unchanged**. The smart path is a new additive endpoint: `POST /api/chat/smart`.
-
-**Intent kinds:**
-
-| Intent | Trigger condition | Default provider model |
-|---|---|---|
-| `Vision` | Image attached + question about its contents | `qwen2.5vl:latest` (Ollama) |
-| `Coding` | Code, debugging, real-world examples | `qwen2.5-coder:1.5b` (Ollama) |
-| `Architecture` | System design, HLD/LLD, diagrams | `qwen3:latest` (Ollama) |
-| `ImageGeneration` | "Generate / draw / create a logo / image" | `x/flux2-klein:4b` (Ollama) |
-| `General` | Everything else | `qwen2.5:latest` (Ollama) |
+`POST /api/branches/:id/messages` is **unchanged**. The smart path is additive.
 
 ---
 
-## 2. Installed Ollama Models & Their Roles
+## 2. Installed Ollama Models
 
 ```
-NAME                       SIZE     TIER           ROLE IN THIS SYSTEM
-─────────────────────────────────────────────────────────────────────────
-qwen3.5:2b                 2.7 GB   fast           Intent classifier (sub-500ms, low VRAM)
-qwen2.5-coder:1.5b         986 MB   fast           Code Agent — fastest code completions
-qwen2.5:latest             4.7 GB   balanced       General Agent — default fallback
-qwen3:latest               5.2 GB   balanced       Architecture Agent — primary (strong reasoning)
-gemma4:e4b                 9.6 GB   balanced       Architecture Agent — fallback (large, capable)
-qwen2.5vl:latest           6.0 GB   vision         Vision Agent — only multimodal model installed
-x/flux2-klein:4b           5.7 GB   image_gen      Image Generation Agent — Flux2 diffusion
+NAME                       SIZE     TIER           ROLE
+────────────────────────────────────────────────────────────────────────
+qwen3.5:2b                 2.7 GB   fast           Intent classifier — stays warm, sub-500ms
+qwen2.5-coder:1.5b         986 MB   fast           Code Agent
+qwen2.5:latest             4.7 GB   balanced       General Agent / Architecture fallback
+qwen3:latest               5.2 GB   balanced       Architecture Agent — primary
+gemma4:e4b                 9.6 GB   balanced       Architecture Agent — fallback
+qwen2.5vl:latest           6.0 GB   vision         Vision Agent — only multimodal model
+x/flux2-klein:4b           5.7 GB   image_gen      Image Generation — Flux2 diffusion
 nomic-embed-text:latest    274 MB   embedding      Reserved: RAG / semantic search
 ```
 
-**VRAM note:** `x/flux2-klein:4b` + `qwen2.5vl:latest` are both large. Ollama will unload the previous model before loading the next. This causes a "cold start" delay on the first token. Mitigations:
+**VRAM management:** `keep_alive: "10m"` already in `OllamaClient.BuildPayload` keeps the last-used model warm. `qwen3.5:2b` is small enough to coexist with other models on 16 GB. `flux2-klein` triggers a full swap — the `image_gen_progress {stage:"generating"}` SSE event is mandatory UX before that swap begins.
 
-- The `keep_alive: "10m"` already set in `OllamaClient.BuildPayload` keeps models warm between calls.
-- `qwen3.5:2b` (the classifier) is tiny enough to stay loaded alongside any other model on 16 GB machines.
-- Image generation (`flux2-klein`) should warn the user of 30–120 second generation time via `image_gen_progress` SSE events — these are not optional UX polish, they are **required** so the user does not think the system has crashed.
-
-**Flux API spike required:** `x/flux2-klein:4b` is a diffusion model, not a chat model. Before implementing `ImageGenerationAgent`, run this verification:
+**Flux response shape used by `ImageGenerationAgent`:**
 
 ```bash
 curl http://127.0.0.1:11434/api/generate \
   -d '{"model":"x/flux2-klein:4b","prompt":"minimalist logo, AI startup","stream":false}'
 ```
 
-Confirm the response shape is `{ "response": "<base64 PNG string>" }`. If the model returns a file path, a URL, chunked data, or a different JSON key, the `GenerateImageAsync` implementation must be adjusted accordingly. **Do not implement `ImageGenerationAgent` before running this spike.**
+`OllamaClient.GenerateImageAsync` currently expects the response body to be `{ "response": "<base64 PNG string>" }`. If the local Flux model returns a different shape, update `GenerateImageAsync` and `ImageGenerationAgent.SaveImageAsync`.
 
 ---
 
-## 3. Existing Infrastructure (What We Keep)
+## 3. Existing Infrastructure
 
 ```mermaid
 graph LR
-    subgraph "Already Built — Keep As Is"
-        OC["OllamaClient : IOllamaClient\n• ChatStreamAsync\n• ChatOnceAsync\n• ListModelsAsync\n• GetLoadedModelsAsync\n• ClassifyTier()"]
-        CS["ChatService\n• SendMessageAsync\n• RegenerateAsync\n• BranchConversationAsync\n• image attachment support"]
-        AO["AgentOrchestrator\n• Full ReAct loop\n• Tool call gates\n• Policy engine\n• Approval broker"]
-        PS["PlannerService\n• JSON structured output\n• Retry with repair"]
-        DB[(SQLite\nConversations · Messages\nAttachments · AgentRuns)]
+    subgraph "Already Built — Unchanged"
+        OC["OllamaClient : IOllamaClient\nChatStreamAsync · ChatOnceAsync\nListModelsAsync · ClassifyTier()"]
+        CS["ChatService\nSendMessageAsync · RegenerateAsync\nimage attachment support"]
+        AO["AgentOrchestrator\nReAct loop · MCP tools · Policy"]
+        PS["PlannerService\nStructured JSON output"]
+        DB[(SQLite)]
     end
 
-    subgraph "New Orchestration Layer — Added On Top"
+    subgraph "New — Added On Top"
         AOF["AgentOrchestratorFacade"]
-        IR["IntentRouter"]
-        MR["ModelRouter"]
-        IPA["IModelProvider\n(OllamaModelProvider today)"]
+        IR["IIntentRouter"]
+        MR["IModelRouter"]
+        MP["IModelProvider"]
     end
 
-    AOF --> IR --> MR --> IPA
+    AOF --> IR
+    AOF --> MR --> MP --> OC
     AOF --> CS --> OC --> DB
-    IPA --> OC
 ```
 
-`ClassifyTier()` in `OllamaClient` already labels models as `vision`, `fast`, `balanced`, `reasoning`, `embedding`. `ModelRouter` uses these labels for tier-based fallbacks when a preferred model is not installed.
-
-The existing `AgentOrchestrator` (ReAct loop with MCP tool calls) remains for agentic runs. `AgentOrchestratorFacade` is a **separate, lighter orchestrator** for the chat-smart flow — it does not replace the ReAct loop.
+`AgentOrchestrator` (ReAct + tools) remains for agentic runs. `AgentOrchestratorFacade` is a separate, lighter path for chat-smart turns.
 
 ---
 
-## 4. Core Abstractions (New Contracts)
+## 4. Core Abstractions
 
 ### 4.1 AgentKind & AgentProfile
 
-`AgentProfile` replaces the raw `systemPromptOverride` string. `ChatService` will accept an `AgentProfile?` — never a raw string from user input or any external source.
+`AgentProfile` is always a server-side compile-time constant. No code path accepts a raw string as a system prompt.
 
 ```csharp
 // EminentAi.Application/Agents/AgentKind.cs
-public enum AgentKind
-{
-    Vision,
-    Coding,
-    Architecture,
-    ImageGeneration,
-    General
-}
+public enum AgentKind { Vision, Coding, Architecture, ImageGeneration, General }
 
 // EminentAi.Application/Agents/AgentProfile.cs
 public sealed record AgentProfile(
     AgentKind Kind,
     string SystemPrompt,
     float Temperature,
-    IReadOnlySet<string> RequiredCapabilities  // e.g. {"vision"}, {"image_gen"}
+    IReadOnlySet<ModelCapability> RequiredCapabilities  // typed — matches ModelDescriptor.Capabilities
 );
 
 // EminentAi.Application/Agents/AgentProfiles.cs
-// All profiles are constants defined server-side. No user input ever reaches SystemPrompt.
 public static class AgentProfiles
 {
     public static readonly AgentProfile Vision = new(
@@ -197,13 +192,13 @@ public static class AgentProfiles
         SystemPrompt: """
             You are a vision-capable AI assistant. When given an image:
             - Extract ALL visible text accurately, preserving structure (tables, lists, columns).
-            - Describe any diagrams, charts, or visual elements that cannot be expressed as text.
-            - Answer the user's specific question about the image contents.
-            - If the image contains a form, invoice, or structured document, present data
-              in a markdown table. Do not hallucinate content that is not visible.
+            - Describe diagrams, charts, or visuals that cannot be expressed as text.
+            - Answer the user's specific question about the image.
+            - For forms, invoices, or structured documents, present data in a markdown table.
+            - Do not hallucinate content that is not visible.
             """,
         Temperature: 0.1f,
-        RequiredCapabilities: new HashSet<string> { "vision" }
+        RequiredCapabilities: new HashSet<ModelCapability> { ModelCapability.Vision }
     );
 
     public static readonly AgentProfile Coding = new(
@@ -213,12 +208,12 @@ public static class AgentProfiles
             - Show complete, runnable examples — never pseudocode or stubs.
             - Use the language/framework the user specifies, or infer from context.
             - Include only the imports and setup that are actually needed.
-            - If showing a real-world pattern, name the pattern and explain the WHY in one sentence.
-            - Prefer idiomatic, production-quality code over simplified toy examples.
-            - If the user asks to debug, reproduce the error first, then fix it.
+            - If showing a real-world pattern, name it and explain the WHY in one sentence.
+            - Prefer idiomatic, production-quality code.
+            - If asked to debug, reproduce the error first, then fix it.
             """,
         Temperature: 0.1f,
-        RequiredCapabilities: new HashSet<string>()
+        RequiredCapabilities: new HashSet<ModelCapability>()
     );
 
     public static readonly AgentProfile Architecture = new(
@@ -256,43 +251,42 @@ public static class AgentProfiles
             ## Technology Justification
             Bullet list: why each major technology was chosen.
 
-            Always wrap Mermaid in triple-backtick mermaid fences. The frontend renders them natively.
+            Always wrap Mermaid in triple-backtick mermaid fences.
             """,
         Temperature: 0.3f,
-        RequiredCapabilities: new HashSet<string>()
+        RequiredCapabilities: new HashSet<ModelCapability>()
     );
 
     public static readonly AgentProfile ImageGeneration = new(
         AgentKind.ImageGeneration,
         SystemPrompt: "",   // not used — ImageGenerationAgent bypasses ChatService
         Temperature: 0f,
-        RequiredCapabilities: new HashSet<string> { "image_gen" }
+        RequiredCapabilities: new HashSet<ModelCapability> { ModelCapability.ImageGeneration }
     );
 
     public static readonly AgentProfile General = new(
         AgentKind.General,
         SystemPrompt: "You are EminentAi, a helpful AI assistant running fully locally.",
         Temperature: 0.7f,
-        RequiredCapabilities: new HashSet<string>()
+        RequiredCapabilities: new HashSet<ModelCapability>()
     );
 
     public static AgentProfile ForKind(AgentKind kind) => kind switch
     {
-        AgentKind.Vision        => Vision,
-        AgentKind.Coding        => Coding,
-        AgentKind.Architecture  => Architecture,
+        AgentKind.Vision          => Vision,
+        AgentKind.Coding          => Coding,
+        AgentKind.Architecture    => Architecture,
         AgentKind.ImageGeneration => ImageGeneration,
-        AgentKind.General       => General,
-        _                       => General
+        _                         => General
     };
 }
 ```
 
 ---
 
-### 4.2 IModelProvider & Provider Abstraction
+### 4.2 Provider Contracts — Application Layer
 
-This abstraction makes the system provider-agnostic. Today only `OllamaModelProvider` is implemented. Adding Claude, ChatGPT, or GitHub Copilot later means implementing `IModelProvider` — nothing else changes.
+All provider interfaces and DTOs live in `EminentAi.Application/Providers/`. Infrastructure holds only implementations.
 
 ```mermaid
 classDiagram
@@ -314,14 +308,17 @@ classDiagram
         +long SizeBytes
         +string Tier
         +bool IsAvailable
+        +bool IsLocal
+        +string? Region
+        +decimal? InputTokenCostUsd
+        +decimal? OutputTokenCostUsd
     }
 
-    class ModelRoute {
-        +ModelDescriptor Model
-        +string ProviderName
+    class ModelInvocation {
+        +string ModelName
+        +List~ChatMessage~ Messages
         +AgentProfile Profile
-        +string SelectionReason
-        +bool IsExactMatch
+        +List~string~? ImageBase64
     }
 
     class ProviderHealth {
@@ -350,93 +347,65 @@ classDiagram
         +Task~ProviderHealth~ CheckHealthAsync(CancellationToken ct)
     }
 
-    class ModelInvocation {
-        +string ModelName
-        +List~ChatMessage~ Messages
-        +AgentProfile Profile
-        +List~string~? ImageBase64
-    }
-
-    class OllamaModelProvider {
-        -IOllamaClient _client
-        +Name: "ollama"
-        +ListModelsAsync()
-        +StreamAsync()
-        +CheckHealthAsync()
-    }
-
-    IModelProvider <|.. OllamaModelProvider
     ModelInvocation --> AgentProfile
-    ModelRoute --> ModelDescriptor
-    ModelRoute --> AgentProfile
+    ModelDescriptor --> ModelCapability
 ```
 
-**Future providers** implement `IModelProvider` and are registered in DI. `ModelRouter` queries all healthy providers and ranks candidates:
+**`ModelDescriptor` enforcement fields:**
 
-```
-Priority: CostPolicy.PreferLocal → DataResidencyPolicy.LocalOnly → RequiredCapabilities match
-         → ModelDescriptor.Tier match → SizeBytes (larger preferred for architecture/reasoning)
-```
+| Field | Used by | How |
+| --- | --- | --- |
+| `IsLocal` | `DataResidencyPolicy.LocalOnly` | Reject any `IsLocal == false` when `LocalOnly == true` |
+| `Region` | `DataResidencyPolicy.AllowedRegions` | Reject if region not in allowed set |
+| `InputTokenCostUsd` | `CostPolicy.MaxCostPerTokenUsd` | Skip model if cost exceeds cap |
+| `OutputTokenCostUsd` | `CostPolicy.MaxCostPerTokenUsd` | Skip model if cost exceeds cap |
+
+For Ollama-provided models: `IsLocal = true`, `Region = null`, `InputTokenCostUsd = 0`, `OutputTokenCostUsd = 0`. Future cloud providers supply real values.
 
 ---
 
-### 4.3 IIntentRouter & RoutingDecision
+### 4.3 IIntentRouter & IntentDecision
+
+`IIntentRouter` knows nothing about models or providers. It returns only intent classification.
 
 ```csharp
 // EminentAi.Application/Routing/IIntentRouter.cs
 public interface IIntentRouter
 {
-    Task<RoutingDecision> RouteAsync(IntentRequest request, CancellationToken ct = default);
+    Task<IntentDecision> ClassifyAsync(IntentRequest request, CancellationToken ct = default);
 }
+
+// IntentDecision — intent + profile + telemetry. NO model, NO provider.
+public sealed record IntentDecision(
+    AgentKind Intent,
+    AgentProfile Profile,
+    string ClassifierModel,
+    long ClassificationMs,
+    ClassificationRecord Telemetry
+);
 
 public sealed record IntentRequest(
     string UserText,
     bool HasImageAttachment,
-    IReadOnlyList<string> AttachmentContentTypes,
-    AgentKind? HintOverride   // advisory only — user opt-in; validated to enum before use
-);
-
-public sealed record RoutingDecision(
-    AgentKind Intent,
-    AgentProfile Profile,
-    ModelRoute ModelRoute,
-    string ClassifierModel,
-    long ClassificationMs,
-    ClassificationRecord? Telemetry
+    IReadOnlyList<string> AttachmentContentTypes
+    // manualRouteOverride is handled in AOF before reaching IIntentRouter
 );
 
 public sealed record ClassificationRecord(
-    string RawLabel,           // exact string the LLM emitted — logged for debugging
-    bool WasFastPath,          // true if regex short-circuit fired
-    float? ConfidenceHint,     // reserved: if classifier emits logprobs in future
-    bool HintOverrideApplied,  // true if user's autoRouteHint changed the result
-    string? OverrideOriginalLabel
+    string RawLabel,
+    bool WasFastPath,
+    bool ManualOverrideApplied,
+    AgentKind? OverrideRequestedKind,   // what the caller asked for
+    AgentKind? OverrideRejectedReason   // null if override was accepted
 );
 ```
 
-**Defensive label parsing rule** — applied before any label reaches business logic:
+**`RoutingDecision` is an AOF-internal record, not a contract.** It combines `IntentDecision` and `ModelRoute` for the SSE payload only:
 
 ```csharp
-private static AgentKind ParseIntentLabel(string raw)
-{
-    // Trim whitespace, remove punctuation, uppercase — handles "Here is: CODING\n" etc.
-    var clean = Regex.Replace(raw.Trim().ToUpperInvariant(), @"[^A-Z_]", "");
-    return clean switch
-    {
-        "VISION"        => AgentKind.Vision,
-        "CODING"        => AgentKind.Coding,
-        "ARCHITECTURE"  => AgentKind.Architecture,
-        "IMAGE_GEN"
-        or "IMAGE"
-        or "IMAGEGEN"   => AgentKind.ImageGeneration,
-        "GENERAL"       => AgentKind.General,
-        // Unknown label: log warning + default to General — never throw
-        _ => AgentKind.General
-    };
-}
+// EminentAi.Application/Orchestration/AgentOrchestratorFacade.cs (private)
+private sealed record RoutingDecision(IntentDecision Intent, ModelRoute Route);
 ```
-
-The raw label is always stored in `ClassificationRecord.RawLabel` regardless of parse outcome, so misrouting can be diagnosed from logs.
 
 ---
 
@@ -446,21 +415,26 @@ The raw label is always stored in `ClassificationRecord.RawLabel` regardless of 
 // EminentAi.Application/Routing/IModelRouter.cs
 public interface IModelRouter
 {
-    Task<ModelRoute> ResolveAsync(
+    Task<ModelRoute?> ResolveAsync(
         AgentProfile profile,
         CostPolicy costPolicy,
         DataResidencyPolicy residencyPolicy,
         CancellationToken ct = default);
+    // Returns null when no eligible model found across all providers.
 }
-```
 
-`ModelRouterService` queries all registered `IModelProvider` instances, filters by health, filters by `DataResidencyPolicy`, filters by `RequiredCapabilities`, then ranks by `CostPolicy` and model tier.
+// EminentAi.Application/Routing/ModelRoute.cs
+public sealed record ModelRoute(
+    ModelDescriptor Model,
+    string ProviderName,
+    string SelectionReason,
+    bool IsExactMatch
+);
+```
 
 ---
 
-### 4.5 ISpecializedAgent
-
-Every agent implements this contract. `AgentOrchestratorFacade` dispatches through it.
+### 4.5 ISpecializedAgent & SmartChatContext
 
 ```csharp
 // EminentAi.Application/Agents/ISpecializedAgent.cs
@@ -469,8 +443,8 @@ public interface ISpecializedAgent
     AgentKind Kind { get; }
 
     /// <summary>
-    /// Execute the agent turn. Yields SmartChatEvents.
-    /// Must persist the assistant message BEFORE yielding done.
+    /// Executes the agent turn. Must persist the message before yielding done.
+    /// The done event is yielded only after ChatService has persisted the assistant message.
     /// </summary>
     IAsyncEnumerable<SmartChatEvent> ExecuteAsync(
         SmartChatContext context,
@@ -478,13 +452,15 @@ public interface ISpecializedAgent
         CancellationToken ct);
 }
 
+// AssistantMessageId was removed from SmartChatContext. ChatService creates the assistant Message entity and surfaces its ID on streamed deltas before persisting it at the end of the stream.
 public sealed record SmartChatContext(
     Guid BranchId,
     string UserText,
     IReadOnlyList<ChatAttachment> Attachments,
-    RoutingDecision Routing,
-    Guid AssistantMessageId   // pre-allocated so done carries the id
+    IntentDecision Intent
 );
+
+public sealed record SmartChatEvent(string Type, object Data);
 ```
 
 ---
@@ -496,56 +472,58 @@ graph TB
     User(["User — Web UI"])
     Composer["Composer\n+ image attachment\n+ Auto-route toggle\n+ Manual model picker"]
 
-    subgraph "API Layer — EminentAi.Api"
-        SmartAPI["POST /api/chat/smart\nnew"]
+    subgraph "API Layer"
+        SmartAPI["POST /api/chat/smart"]
         LegacyAPI["POST /api/branches/:id/messages\nunchanged"]
-        ImageServe["GET /api/generated-images/:file\nnew — auth required"]
+        ImageServe["GET /api/generated-images/:file\nauth + ownership required"]
     end
 
-    subgraph "Orchestration — EminentAi.Application"
-        AOF["AgentOrchestratorFacade\nowns: intent → model → execute → persist → SSE"]
-        IR["IntentRouter\nfast-path regex OR qwen3.5:2b\nDefensive label parse + telemetry"]
-        MR["ModelRouter\nqueries all providers\nCostPolicy + DataResidencyPolicy"]
+    subgraph "Application — Orchestration"
+        AOF["AgentOrchestratorFacade\n1 classify intent\n2 resolve model\n3 emit routing_decision\n4 dispatch agent\n5 stream + persist + done"]
+        IR["IIntentRouter\nIntentDecision only\nno model knowledge"]
+        MR["IModelRouter\nall providers · policy filter · rank"]
     end
 
-    subgraph "Specialized Agents — ISpecializedAgent"
-        VA["VisionAgent\nAgentProfile.Vision\nCapability: vision"]
-        CA["CodeAgent\nAgentProfile.Coding\nCapability: code"]
-        AA["ArchitectureAgent\nAgentProfile.Architecture\nMermaid sections enforced"]
-        IGA["ImageGenerationAgent\nFlux pipeline\nCapability: image_gen"]
-        GA["GeneralAgent\nAgentProfile.General\nfallback"]
+    subgraph "Application — Agents"
+        VA["VisionAgent"]
+        CA["CodeAgent"]
+        AA["ArchitectureAgent"]
+        IGA["ImageGenerationAgent"]
+        GA["GeneralAgent"]
     end
 
-    subgraph "Provider Layer — IModelProvider"
-        OProv["OllamaModelProvider\n(implemented)"]
-        CProv["ClaudeModelProvider\n(future)"]
-        GPTProv["ChatGPTModelProvider\n(future)"]
+    subgraph "Application — Providers (interfaces + DTOs)"
+        MP["IModelProvider\nModelDescriptor\nModelCapability\nCostPolicy\nDataResidencyPolicy"]
     end
 
-    subgraph "Infrastructure — EminentAi.Infrastructure"
+    subgraph "Infrastructure — Provider Implementations"
+        OProv["OllamaModelProvider\nimplements IModelProvider"]
+        CProv["ClaudeModelProvider\nfuture"]
+    end
+
+    subgraph "Infrastructure — Core"
         OC["OllamaClient : IOllamaClient"]
-        CS["ChatService\naccepts AgentProfile — not string"]
+        CS["ChatService"]
         DB[(SQLite)]
-        FS[("Local FS\n/generated-images/\n.gitignored")]
+        FS[("generated-images/\n.gitignored")]
     end
 
     User --> Composer
-    Composer -->|"Smart mode"| SmartAPI
-    Composer -->|"Manual mode"| LegacyAPI
+    Composer -->|"Smart"| SmartAPI
+    Composer -->|"Manual"| LegacyAPI
 
     SmartAPI --> AOF
-    AOF --> IR --> MR
-    MR --> OProv & CProv & GPTProv
-    AOF -->|"dispatch by AgentKind"| VA & CA & AA & IGA & GA
+    AOF --> IR
+    AOF --> MR
+    MR --> OProv & CProv
+    AOF --> VA & CA & AA & IGA & GA
     VA & CA & AA & GA --> CS --> OC --> DB
     IGA --> OC
     IGA --> FS
+    IGA --> DB
     OProv --> OC
-
     LegacyAPI --> CS
-    ImageServe -->|"auth + ownership check"| FS
-    SmartAPI -->|"SSE stream"| User
-    ImageServe -->|"PNG bytes"| User
+    ImageServe -->|"auth + ownership"| FS
 ```
 
 ---
@@ -557,46 +535,64 @@ graph TB
 ```mermaid
 classDiagram
     class AgentOrchestratorFacade {
-        -IIntentRouter _router
+        -IIntentRouter _intentRouter
         -IModelRouter _modelRouter
         -IEnumerable~ISpecializedAgent~ _agents
         -CostPolicy _costPolicy
         -DataResidencyPolicy _residencyPolicy
         +ExecuteSmartTurnAsync(SmartTurnRequest, CancellationToken) IAsyncEnumerable~SmartChatEvent~
-        -ResolveAgent(AgentKind kind) ISpecializedAgent
-        -EmitError(string message) SmartChatEvent
+        -ValidateManualOverride(AgentKind?, IntentRequest) AgentKind?
+        -ResolveAgent(AgentKind) ISpecializedAgent
     }
 
     class SmartTurnRequest {
         +Guid BranchId
         +string UserText
         +List~ChatAttachment~ Attachments
-        +AgentKind? HintOverride
-    }
-
-    class SmartChatEvent {
-        +string Type
-        +object Data
+        +AgentKind? ManualRouteOverride
     }
 
     AgentOrchestratorFacade --> IIntentRouter
     AgentOrchestratorFacade --> IModelRouter
     AgentOrchestratorFacade --> ISpecializedAgent
     AgentOrchestratorFacade ..> SmartTurnRequest
-    AgentOrchestratorFacade ..> SmartChatEvent
 ```
 
-`AgentOrchestratorFacade.ExecuteSmartTurnAsync` is the single entry point. It:
+**Execution order inside `ExecuteSmartTurnAsync`:**
 
-1. Calls `IntentRouter.RouteAsync` → `RoutingDecision`
-2. Emits `routing_decision` SSE event immediately (user sees it before model warms up)
-3. Calls `ModelRouter.ResolveAsync` with the profile, cost policy, and residency policy
-4. If no model found → emits `routing_error` → returns
-5. Resolves the correct `ISpecializedAgent` for the intent
-6. Calls `agent.ExecuteAsync` — the agent streams tokens AND persists before yielding `done`
-7. Propagates all yielded events to the SSE response
+```text
+1. ValidateManualOverride(request.ManualRouteOverride, intentRequest)
+     → Vision override rejected if no image attached
+     → ImageGeneration override is accepted here; missing image_gen model is handled by model resolution
+     → Invalid enum value rejected by the API before facade execution
 
-**Orchestration is owned here, not scattered across the endpoint.**
+2. IIntentRouter.ClassifyAsync(intentRequest)
+     → Returns IntentDecision (no model info)
+     → Skipped when manualRouteOverride is valid
+
+3. IModelRouter.ResolveAsync(profile, costPolicy, residencyPolicy)
+     → Returns ModelRoute? — null triggers routing_error SSE + return
+     → Internally runs provider health checks and model listing with Task.WhenAll
+
+4. Emit routing_decision SSE
+     ← Only now, with both intent AND model known
+
+5. ISpecializedAgent.ExecuteAsync(context, route, ct)
+     → Agent streams tokens → persists message → yields done
+     → done carries the assistant message ID surfaced by ChatService after persistence completes
+
+6. Propagate all SmartChatEvents to SSE response
+```
+
+**`manualRouteOverride` validation rules:**
+
+| Requested | Condition for rejection | What happens on rejection |
+| --- | --- | --- |
+| `Vision` | `HasImageAttachment == false` | Log warning; ignore override; classify normally |
+| `ImageGeneration` | None at override-validation time | Override is accepted; missing model produces `routing_error` during model resolution |
+| Any invalid enum string | Can't parse to `AgentKind` | Return `routing_error` SSE immediately |
+
+The applied `AgentKind` is always returned in `routing_decision.intent` so the UI shows what actually ran, not what was requested.
 
 ---
 
@@ -607,42 +603,62 @@ classDiagram
     class IntentRouterService {
         -IOllamaClient _ollama
         -ILogger _log
-        +RouteAsync(IntentRequest, CancellationToken) Task~RoutingDecision~
+        +ClassifyAsync(IntentRequest, CancellationToken) Task~IntentDecision~
         -TryFastPath(IntentRequest) AgentKind?
         -ClassifyViaLlmAsync(string text, bool hasImage, CancellationToken) Task~string~
         -ParseIntentLabel(string raw) AgentKind
-        -BuildClassifyPrompt(string text, bool hasImage) string
     }
 
     IntentRouterService ..|> IIntentRouter
 ```
 
-**Fast-path rules** (no LLM call, zero latency):
+`IntentRouterService` has no knowledge of models, providers, or routes. It returns `IntentDecision` only. It does not proactively health-check the classifier model; failed classifier calls are caught and default to `General`.
 
-| Condition | Result |
-|---|---|
-| `HasImageAttachment && text matches \b(read\|extract\|what\|describe\|tell me about\|text in)\b` | `Vision` |
-| `text matches ^(generate\|draw\|create a (logo\|image\|picture\|banner)\|design an? (image\|logo\|graphic)\|make an? (image\|logo))` (case-insensitive) | `ImageGeneration` |
+**Fast-path rules (no LLM call):**
 
-Fast-path matches are recorded in `ClassificationRecord.WasFastPath = true`.
-
-**`autoRouteHint` handling:** the `HintOverride` field in `IntentRequest` is parsed to `AgentKind?` by the endpoint before the call reaches `IntentRouterService`. If it is a valid `AgentKind`, the LLM call is skipped entirely and `ClassificationRecord.HintOverrideApplied = true` is set. The actual applied kind is always returned in `RoutingDecision.Intent` — the UI shows what was truly used, not the hint.
+| Condition | Result | Logged as |
+| --- | --- | --- |
+| `HasImageAttachment && text matches \b(read\|extract\|what\|describe\|tell me about\|text in)\b` | `Vision` | `fastPath:vision` |
+| `text matches ^(generate\|draw\|create a (logo\|image\|picture\|banner)\|design an? image\|make an? logo)` | `ImageGeneration` | `fastPath:imageGen` |
 
 **Classification prompt** (sent to `qwen3.5:2b`, temperature 0.0, max 10 tokens):
 
 ```
-You are a one-word classifier. Read the user message below and reply with
-EXACTLY ONE of these labels, nothing else — no punctuation, no explanation.
+You are a one-word classifier. Reply with EXACTLY ONE label — no punctuation, no explanation.
 
 VISION         — user attached an image and wants to read, extract, or analyse it
 CODING         — user wants working code, a coding example, debugging, or code review
-ARCHITECTURE   — user wants system design, tech stack, HLD, LLD, or diagrams
+ARCHITECTURE   — user wants system design, tech stack plan, HLD, LLD, or diagrams
 IMAGE_GEN      — user wants to generate, draw, or create an image, logo, or graphic
 GENERAL        — anything else
 
 HasImageAttachment: {true|false}
 UserMessage: {userText}
 ```
+
+**Defensive label parsing:**
+
+```csharp
+private static AgentKind ParseIntentLabel(string raw)
+{
+    // Strip everything except A-Z and underscore after uppercasing.
+    // Handles "  CODING\n", "Here is: IMAGE_GEN.", "coding" etc.
+    var clean = Regex.Replace(raw.Trim().ToUpperInvariant(), @"[^A-Z_]", "");
+    return clean switch
+    {
+        "VISION"                     => AgentKind.Vision,
+        "CODING"                     => AgentKind.Coding,
+        "ARCHITECTURE"               => AgentKind.Architecture,
+        "IMAGE_GEN" or "IMAGEGEN"
+                    or "IMAGE"       => AgentKind.ImageGeneration,
+        "GENERAL"                    => AgentKind.General,
+        // Unknown label — log, default to General, never throw
+        _ => AgentKind.General
+    };
+}
+```
+
+The raw string from the model is always stored in `ClassificationRecord.RawLabel` before parsing, regardless of parse outcome.
 
 ---
 
@@ -653,29 +669,65 @@ classDiagram
     class ModelRouterService {
         -IEnumerable~IModelProvider~ _providers
         -ILogger _log
-        +ResolveAsync(AgentProfile, CostPolicy, DataResidencyPolicy, CancellationToken) Task~ModelRoute~
-        -FilterByPolicy(IReadOnlyList~ModelDescriptor~, CostPolicy, DataResidencyPolicy) IReadOnlyList~ModelDescriptor~
-        -FilterByCapabilities(IReadOnlyList~ModelDescriptor~, IReadOnlySet~string~) IReadOnlyList~ModelDescriptor~
-        -RankCandidates(IReadOnlyList~ModelDescriptor~, AgentProfile) IReadOnlyList~ModelDescriptor~
-        -FindByNamePriority(string[] patterns, IReadOnlyList~ModelDescriptor~) ModelDescriptor?
-        -FindByTierFallback(string tier, IReadOnlyList~ModelDescriptor~) ModelDescriptor?
+        +ResolveAsync(AgentProfile, CostPolicy, DataResidencyPolicy, CancellationToken) Task~ModelRoute?~
+        -FilterByHealth(providers) Task~IReadOnlyList~IModelProvider~~
+        -FilterByPolicy(descriptors, CostPolicy, DataResidencyPolicy) IReadOnlyList~ModelDescriptor~
+        -FilterByCapabilities(descriptors, IReadOnlySet~ModelCapability~) IReadOnlyList~ModelDescriptor~
+        -RankByIntent(descriptors, AgentKind) IReadOnlyList~ModelDescriptor~
+        -FindByNamePriority(patterns, descriptors) ModelDescriptor?
+        -FindByTierFallback(tier, descriptors) ModelDescriptor?
     }
 
     ModelRouterService ..|> IModelRouter
     ModelRouterService --> IModelProvider
 ```
 
+**Policy filtering using `ModelDescriptor` fields:**
+
+```csharp
+private IReadOnlyList<ModelDescriptor> FilterByPolicy(
+    IReadOnlyList<ModelDescriptor> candidates,
+    CostPolicy cost,
+    DataResidencyPolicy residency)
+{
+    return candidates.Where(m =>
+        // Residency: reject non-local when LocalOnly required
+        (!residency.LocalOnly || m.IsLocal) &&
+        // Residency: reject wrong region when regions are specified
+        (residency.AllowedRegions.Count == 0 || m.Region is null || residency.AllowedRegions.Contains(m.Region)) &&
+        // Cost: reject models exceeding per-token cap (use the higher of input/output)
+        (cost.MaxCostPerTokenUsd is null ||
+            Math.Max(m.InputTokenCostUsd ?? 0m, m.OutputTokenCostUsd ?? 0m) <= cost.MaxCostPerTokenUsd) &&
+        // Cost: reject explicitly blocked providers
+        !cost.BlockedProviders.Contains(m.ProviderName)
+    ).ToList();
+}
+```
+
+**Capability filtering** uses `IReadOnlySet<ModelCapability>` — same type as `AgentProfile.RequiredCapabilities`:
+
+```csharp
+private IReadOnlyList<ModelDescriptor> FilterByCapabilities(
+    IReadOnlyList<ModelDescriptor> candidates,
+    IReadOnlySet<ModelCapability> required)
+{
+    if (required.Count == 0) return candidates;
+    return candidates.Where(m => required.IsSubsetOf(m.Capabilities)).ToList();
+}
+```
+
 **Name-priority lists per `AgentKind`:**
 
 ```csharp
-private static readonly IReadOnlyDictionary<AgentKind, string[]> NamePriorities = new Dictionary<AgentKind, string[]>
-{
-    [AgentKind.Vision]          = ["qwen2.5vl", "vl", "vision", "llava", "moondream"],
-    [AgentKind.Coding]          = ["qwen2.5-coder:1.5b", "qwen2.5-coder", "coder", "deepseek-coder"],
-    [AgentKind.Architecture]    = ["qwen3:latest", "qwen3", "gemma4", "qwen2.5:latest", "qwen2.5"],
-    [AgentKind.ImageGeneration] = ["flux2-klein", "flux", "diffusion"],
-    [AgentKind.General]         = ["qwen2.5:latest", "qwen2.5", "qwen3.5", "llama3"],
-};
+private static readonly IReadOnlyDictionary<AgentKind, string[]> NamePriorities =
+    new Dictionary<AgentKind, string[]>
+    {
+        [AgentKind.Vision]          = ["qwen2.5vl", "vl", "vision", "llava", "moondream"],
+        [AgentKind.Coding]          = ["qwen2.5-coder:1.5b", "qwen2.5-coder", "coder", "deepseek-coder"],
+        [AgentKind.Architecture]    = ["qwen3:latest", "qwen3", "gemma4", "qwen2.5:latest", "qwen2.5"],
+        [AgentKind.ImageGeneration] = ["flux2-klein", "flux", "diffusion"],
+        [AgentKind.General]         = ["qwen2.5:latest", "qwen2.5", "qwen3.5", "llama3"],
+    };
 ```
 
 ---
@@ -687,22 +739,35 @@ classDiagram
     class OllamaModelProvider {
         -IOllamaClient _client
         -TimeSpan _cacheExpiry
-        -IReadOnlyList~ModelDescriptor~? _cache
-        -DateTime _cacheAt
         +Name: string = "ollama"
-        +ListModelsAsync(CancellationToken) Task~IReadOnlyList~ModelDescriptor~~
-        +StreamAsync(ModelInvocation, CancellationToken) IAsyncEnumerable~ChatDelta~
+        +ListModelsAsync(CancellationToken) Task~IReadOnlyList~ModelDescriptor~~\s*\+StreamAsync(ModelInvocation, CancellationToken) IAsyncEnumerable~ChatDelta~
         +CheckHealthAsync(CancellationToken) Task~ProviderHealth~
         -MapCapabilities(ModelInfo) IReadOnlySet~ModelCapability~
+        -MapDescriptor(ModelInfo) ModelDescriptor
     }
 
     OllamaModelProvider ..|> IModelProvider
     OllamaModelProvider --> IOllamaClient
 ```
 
-`ListModelsAsync` caches results for 60 seconds — model installs do not change mid-conversation.
+`MapDescriptor` sets the policy-enforcement fields for Ollama models:
 
-`MapCapabilities` maps existing `ClassifyTier()` output to `ModelCapability` flags:
+```csharp
+private static ModelDescriptor MapDescriptor(ModelInfo m) => new(
+    Name:               m.Name,
+    ProviderName:       "ollama",
+    Capabilities:       MapCapabilities(m),
+    SizeBytes:          m.SizeBytes,
+    Tier:               m.Tier,
+    IsAvailable:        true,
+    IsLocal:            true,       // all Ollama models are local
+    Region:             null,       // local — no region
+    InputTokenCostUsd:  0m,         // local — no cost
+    OutputTokenCostUsd: 0m
+);
+```
+
+`MapCapabilities` extends `ClassifyTier()` output into typed `ModelCapability` flags:
 
 ```
 "vision"    → { Vision, TextGeneration }
@@ -715,129 +780,129 @@ classDiagram
 
 ---
 
-### 6.5 VisionAgent
+### 6.5 Specialized Agents
+
+**VisionAgent, CodeAgent, ArchitectureAgent, GeneralAgent** share the same structure:
 
 ```mermaid
 classDiagram
-    class VisionAgent {
+    class TextAgent {
         -ChatService _chat
-        -IConversationRepository _repo
-        +Kind: AgentKind = Vision
+        +Kind: AgentKind
         +ExecuteAsync(SmartChatContext, ModelRoute, CancellationToken) IAsyncEnumerable~SmartChatEvent~
     }
 
-    VisionAgent ..|> ISpecializedAgent
-    VisionAgent --> ChatService
+    TextAgent ..|> ISpecializedAgent
+    TextAgent --> ChatService
 ```
 
-`ExecuteAsync`:
+`ExecuteAsync` for all text agents:
 
-1. Streams `ChatService.SendMessageAsync` with `AgentProfile.Vision` injected as system prompt and model override.
-2. Yields `token` events.
-3. Awaits full stream completion.
-4. Awaits `ChatService` to persist the assistant message to SQLite.
-5. **Only then** yields `done` with `messageId`.
+```
+1. Call ChatService.SendMessageAsync(context.BranchId, context.UserText,
+       context.Attachments, modelOverride: route.Model.Name,
+       profile: context.Intent.Profile)
+       ↑ profile replaces systemPromptOverride — server-side constant, never user input
 
-This fixes the v1 ordering bug where `done` was emitted before the DB write.
+2. Yield SmartChatEvent{token} for each ChatDelta.Token
+
+3. Await ChatDelta.Done (stream complete)
+
+4. Await ChatService persistence (INSERT Message) — internal, invisible to client
+
+5. Yield SmartChatEvent{done, messageId}
+   ↑ ChatService creates the assistant Message entity before streaming, surfaces its ID on deltas, then persists it before the agent emits done
+```
+
+`ChatService.SendMessageAsync` gains one parameter:
+
+```csharp
+// Before:
+public async IAsyncEnumerable<ChatDelta> SendMessageAsync(
+    Guid branchId, string content, string? modelOverride, List<ChatAttachment>? attachments, ...)
+
+// After (v3):
+public async IAsyncEnumerable<ChatDelta> SendMessageAsync(
+    Guid branchId, string content, string? modelOverride, List<ChatAttachment>? attachments,
+    AgentProfile? profile = null, ...)
+// BuildContext uses profile.SystemPrompt when profile != null, else conversation.SystemPrompt
+```
 
 ---
 
-### 6.6 CodeAgent
-
-Identical structure to `VisionAgent`, uses `AgentProfile.Coding`. Temperature 0.1 (deterministic code).
-
----
-
-### 6.7 ArchitectureAgent
-
-Identical structure, uses `AgentProfile.Architecture`. Temperature 0.3 (allows creative design variation). The system prompt enforces the Summary → HLD → LLD → Sequence → Flowchart → Justification structure with Mermaid fences. The existing `MarkdownRenderer.tsx` already renders Mermaid blocks — no frontend change needed for diagram rendering.
-
----
-
-### 6.8 ImageGenerationAgent
+### 6.6 ImageGenerationAgent
 
 ```mermaid
 classDiagram
     class ImageGenerationAgent {
         -IOllamaClient _ollama
-        -IConversationRepository _repo
+        -ChatService _chat
         -string _outputDirectory
         +Kind: AgentKind = ImageGeneration
         +ExecuteAsync(SmartChatContext, ModelRoute, CancellationToken) IAsyncEnumerable~SmartChatEvent~
         -TranslateToFluxPromptAsync(string userPrompt, CancellationToken) Task~string~
-        -GenerateAndSaveAsync(string fluxModel, string fluxPrompt, CancellationToken) Task~string~
-        -PersistImageMessageAsync(SmartChatContext, string imageUrl, string fluxPrompt, CancellationToken) Task~Guid~
-    }
-
-    class ImageGenerationResult {
-        +string Filename
-        +string ServedUrl
-        +string FluxPrompt
-        +string GeneratorModel
-        +long GenerationMs
+        -GenerateAndSaveAsync(string model, string fluxPrompt, CancellationToken) Task~(string path, string filename)~
+        -PersistImageMessageAsync(SmartChatContext, string imageUrl, string fluxPrompt) Task~Guid~
     }
 
     ImageGenerationAgent ..|> ISpecializedAgent
     ImageGenerationAgent --> IOllamaClient
-    ImageGenerationAgent --> IConversationRepository
-    ImageGenerationAgent ..> ImageGenerationResult
+    ImageGenerationAgent --> ChatService
 ```
 
 **Internal pipeline:**
 
 ```mermaid
 flowchart LR
-    A["User prompt\n'Create a minimalist logo\nfor my AI startup Eminent'"]
-    B["Flux prompt translator\nqwen3.5:2b · temp 0.3"]
-    C["Flux prompt string\n'minimalist logo, AI startup,\nbold sans-serif, dark bg,\nneon blue accent, vector art'"]
-    D["POST /api/generate\nx/flux2-klein:4b · stream false\n⚠ spike required to verify response shape"]
-    E["Base64 PNG string\n~3–6 MB"]
-    F["Save to disk\n/generated-images/uuid.png"]
-    G["Persist Message row\nwith image URL in content"]
-    H["Yield image_generated\n+ done SSE events"]
-
-    A --> B --> C --> D --> E --> F --> G --> H
+    A["User prompt"] --> B["Translate\nqwen3.5:2b · temp 0.3"]
+    B --> C["Flux prompt string"]
+    C --> D["POST /api/generate\nflux2-klein · stream false\n⚠ spike first"]
+    D --> E["base64 PNG\n(shape unconfirmed)"]
+    E --> F["Save PNG\n/generated-images/uuid.png"]
+    F --> G["Persist:\nGeneratedImages row\n+ Message row\nvia ChatService"]
+    G --> H["Yield image_generated\nthen done"]
 ```
 
-**Flux prompt translation system prompt** (sent to `qwen3.5:2b`):
+**Flux translation prompt** (sent to `qwen3.5:2b`):
 
 ```
-You are a Flux2 image prompt engineer. Convert the user description into a
-comma-separated keyword list of 10–20 terms describing the image visually.
+You are a Flux2 image prompt engineer. Convert the user's description into
+a comma-separated keyword list of 10–20 terms describing the image visually.
 
 Rules:
 - Visual attributes only: style, colours, mood, composition, medium.
-- Include art style keywords: vector, digital art, photorealistic, minimalist.
-- Include quality boosters when relevant: high detail, sharp, professional.
-- Do NOT include negatives — Flux uses a separate negative prompt field.
+- Art style keywords: vector, digital art, photorealistic, minimalist.
+- Quality boosters when relevant: high detail, sharp, professional.
+- No negatives — Flux uses a separate negative_prompt field.
 - Output ONLY the prompt string. No quotes, no explanation, no prefix.
 
 User request: {userPrompt}
 ```
 
-**Ownership tracking for image auth:** when `PersistImageMessageAsync` saves the assistant message, it also writes a row to a new `GeneratedImages` table:
+**`IOllamaClient` image-generation method:**
+
+```csharp
+Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default);
+```
+
+**Ownership persistence** — before `done` is emitted:
 
 ```sql
+-- New table (bootstrapped in Program.cs)
 CREATE TABLE IF NOT EXISTS "GeneratedImages" (
-    "Id"       TEXT NOT NULL PRIMARY KEY,      -- uuid = filename
-    "BranchId" TEXT NOT NULL,                  -- owning branch
+    "Id"        TEXT NOT NULL PRIMARY KEY,   -- UUID = filename without .png
+    "BranchId"  TEXT NOT NULL,
     "CreatedAt" TEXT NOT NULL
 );
 ```
 
-`GET /api/generated-images/{filename}` verifies the caller's bearer token resolves to an admin session, then checks `GeneratedImages.BranchId` belongs to a conversation accessible by that session.
-
----
-
-### 6.9 GeneralAgent
-
-Identical structure to `VisionAgent`, uses `AgentProfile.General`. Temperature 0.7. No capability requirements.
+Both `GeneratedImages` row and `Message` row are written before `done` is yielded.
 
 ---
 
 ## 7. Sequence Diagrams
 
-### 7.1 Flow 1 — Vision / Image Reading
+### 7.1 Flow 1 — Vision
 
 ```mermaid
 sequenceDiagram
@@ -845,8 +910,8 @@ sequenceDiagram
     participant Web as React UI
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
-    participant IR as IntentRouter
-    participant MR as ModelRouter
+    participant IR as IntentRouterService
+    participant MR as ModelRouterService
     participant OProv as OllamaModelProvider
     participant VA as VisionAgent
     participant CS as ChatService
@@ -854,47 +919,51 @@ sequenceDiagram
     participant DB as SQLite
 
     User->>Web: Attach invoice.png + "What does this invoice say?"
-    Web->>API: {branchId, content, attachments:[{base64,"image/png"}]}
+    Web->>API: {branchId, content, attachments, manualRouteOverride:null}
 
     API->>AOF: ExecuteSmartTurnAsync(request)
-    AOF->>IR: RouteAsync({text, hasImage:true, hint:null})
-    IR->>IR: Fast-path: hasImage + "what" → Vision (no LLM call)
-    IR-->>AOF: RoutingDecision{Vision, profile, classificationMs:1, wasFastPath:true}
+    AOF->>AOF: ValidateManualOverride(null, ...) → no override
 
-    AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"vision", model:"qwen2.5vl:latest"}
+    AOF->>IR: ClassifyAsync({text, hasImage:true})
+    IR->>IR: Fast-path: hasImage + "what" → Vision
+    IR-->>AOF: IntentDecision{Vision, AgentProfile.Vision, wasFastPath:true, ms:1}
 
     AOF->>MR: ResolveAsync(AgentProfile.Vision, costPolicy, residencyPolicy)
+    MR->>OProv: CheckHealthAsync()
+    OProv-->>MR: {healthy:true}
     MR->>OProv: ListModelsAsync() [cached]
     OProv-->>MR: [ModelDescriptor list]
-    MR-->>AOF: ModelRoute{qwen2.5vl:latest, provider:ollama, exactMatch:true}
+    MR->>MR: FilterByPolicy → all pass (IsLocal, cost=0)
+    MR->>MR: FilterByCapabilities({Vision}) → qwen2.5vl passes
+    MR->>MR: FindByNamePriority("qwen2.5vl") → qwen2.5vl:latest
+    MR-->>AOF: ModelRoute{qwen2.5vl:latest, "ollama", exactMatch:true}
+
+    AOF-->>API: SmartChatEvent{routing_decision}
+    API-->>Web: SSE: routing_decision {intent:"vision", model:"qwen2.5vl:latest", provider:"ollama", wasFastPath:true}
 
     AOF->>VA: ExecuteAsync(context, route, ct)
-
-    VA->>CS: SendMessageAsync(branchId, text, attachments, model, AgentProfile.Vision)
+    VA->>CS: SendMessageAsync(branchId, text, "qwen2.5vl:latest", attachments, AgentProfile.Vision)
     CS->>OC: ChatStreamAsync(qwen2.5vl, [system:vision, history, user+images])
     loop streaming tokens
         OC-->>CS: ChatDelta{token}
         CS-->>VA: ChatDelta{token}
         VA-->>AOF: SmartChatEvent{token}
-        AOF-->>API: SmartChatEvent{token}
         API-->>Web: SSE: token {text}
     end
     OC-->>CS: ChatDelta{done, usage}
 
-    CS->>DB: INSERT Message (assistantMessage, fullContent)
-    DB-->>CS: saved
-    Note over CS,DB: Persist FIRST — then signal done
+    Note over CS,DB: Stream complete — persist before signalling done
+    CS->>DB: INSERT Message → returns messageId
+    DB-->>CS: ok
 
-    CS-->>VA: MessageId
-    VA-->>AOF: SmartChatEvent{persisted, messageId}
-    AOF-->>API: SmartChatEvent{done, messageId}
+    CS-->>VA: messageId
+    VA-->>AOF: SmartChatEvent{done, messageId}
     API-->>Web: SSE: done {messageId, tokensUsed}
 ```
 
 ---
 
-### 7.2 Flow 2 — Code Request
+### 7.2 Flow 2 — Code
 
 ```mermaid
 sequenceDiagram
@@ -902,50 +971,50 @@ sequenceDiagram
     participant Web as React UI
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
-    participant IR as IntentRouter
-    participant OC_C as OllamaClient (qwen3.5:2b — classifier)
-    participant MR as ModelRouter
+    participant IR as IntentRouterService
+    participant OC_C as OllamaClient (qwen3.5:2b)
+    participant MR as ModelRouterService
     participant CA as CodeAgent
     participant CS as ChatService
     participant OC_M as OllamaClient (qwen2.5-coder:1.5b)
     participant DB as SQLite
 
     User->>Web: "Show me a real-world Saga pattern in C# with compensating transactions"
-    Web->>API: {branchId, content}
+    Web->>API: {branchId, content, manualRouteOverride:null}
 
     API->>AOF: ExecuteSmartTurnAsync(request)
-    AOF->>IR: RouteAsync({text, hasImage:false, hint:null})
+    AOF->>IR: ClassifyAsync({text, hasImage:false})
     IR->>IR: No fast-path match
     IR->>OC_C: ChatOnceAsync(qwen3.5:2b, classifyPrompt, temp:0.0)
     OC_C-->>IR: "CODING"
-    IR->>IR: ParseIntentLabel("CODING") → AgentKind.Coding
-    IR-->>AOF: RoutingDecision{Coding, profile, rawLabel:"CODING", classificationMs:420}
+    IR->>IR: ParseIntentLabel("CODING") → Coding
+    IR-->>AOF: IntentDecision{Coding, AgentProfile.Coding, rawLabel:"CODING", ms:430}
+
+    AOF->>MR: ResolveAsync(AgentProfile.Coding, costPolicy, residencyPolicy)
+    MR-->>AOF: ModelRoute{qwen2.5-coder:1.5b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"coding", model:"qwen2.5-coder:1.5b"}
-
-    AOF->>MR: ResolveAsync(AgentProfile.Coding, ...)
-    MR-->>AOF: ModelRoute{qwen2.5-coder:1.5b, provider:ollama}
+    API-->>Web: SSE: routing_decision {intent:"coding", model:"qwen2.5-coder:1.5b", provider:"ollama"}
 
     AOF->>CA: ExecuteAsync(context, route, ct)
-    CA->>CS: SendMessageAsync(branchId, text, model, AgentProfile.Coding)
-    CS->>OC_M: ChatStreamAsync(qwen2.5-coder:1.5b, [system:coding, history, user])
-    loop streaming code
+    CA->>CS: SendMessageAsync(branchId, text, "qwen2.5-coder:1.5b", [], AgentProfile.Coding)
+    CS->>OC_M: ChatStreamAsync(qwen2.5-coder, [system:coding, history, user])
+    loop streaming
         OC_M-->>CA: ChatDelta{token}
         CA-->>AOF: SmartChatEvent{token}
         API-->>Web: SSE: token {text}
     end
     OC_M-->>CS: ChatDelta{done}
-    CS->>DB: INSERT Message
-    DB-->>CS: saved
-    CS-->>CA: MessageId
+    CS->>DB: INSERT Message → returns messageId
+    DB-->>CS: ok
+    CS-->>CA: messageId
     CA-->>AOF: SmartChatEvent{done, messageId}
     API-->>Web: SSE: done {messageId}
 ```
 
 ---
 
-### 7.3 Flow 3 — Architecture & Design
+### 7.3 Flow 3 — Architecture
 
 ```mermaid
 sequenceDiagram
@@ -953,43 +1022,42 @@ sequenceDiagram
     participant Web as React UI
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
-    participant IR as IntentRouter
-    participant MR as ModelRouter
+    participant IR as IntentRouterService
+    participant OC_C as OllamaClient (qwen3.5:2b)
+    participant MR as ModelRouterService
     participant AA as ArchitectureAgent
     participant CS as ChatService
-    participant OC as OllamaClient (qwen3:latest)
+    participant OC_M as OllamaClient (qwen3:latest)
     participant DB as SQLite
 
     User->>Web: "Design a microservices e-commerce platform with React, .NET 10, Redis, PostgreSQL"
-    Web->>API: {branchId, content}
+    Web->>API: {branchId, content, manualRouteOverride:null}
 
     API->>AOF: ExecuteSmartTurnAsync(request)
-    AOF->>IR: RouteAsync({text, hasImage:false, hint:null})
-    IR->>IR: No fast-path match
-    IR->>OC: ChatOnceAsync(qwen3.5:2b, classifyPrompt)
-    OC-->>IR: "ARCHITECTURE"
-    IR-->>AOF: RoutingDecision{Architecture, AgentProfile.Architecture}
-
-    AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"architecture", model:"qwen3:latest"}
+    AOF->>IR: ClassifyAsync({text, hasImage:false})
+    IR->>OC_C: ChatOnceAsync(qwen3.5:2b, classifyPrompt)
+    OC_C-->>IR: "ARCHITECTURE"
+    IR-->>AOF: IntentDecision{Architecture, AgentProfile.Architecture, ms:450}
 
     AOF->>MR: ResolveAsync(AgentProfile.Architecture, ...)
-    MR-->>AOF: ModelRoute{qwen3:latest, provider:ollama, isExactMatch:true}
+    MR-->>AOF: ModelRoute{qwen3:latest, "ollama", exactMatch:true}
+
+    AOF-->>API: SmartChatEvent{routing_decision}
+    API-->>Web: SSE: routing_decision {intent:"architecture", model:"qwen3:latest", provider:"ollama"}
 
     AOF->>AA: ExecuteAsync(context, route, ct)
-    AA->>CS: SendMessageAsync(branchId, text, model, AgentProfile.Architecture)
-    CS->>OC: ChatStreamAsync(qwen3:latest, [system:arch-prompt, history, user])
-    loop streaming — HLD + LLD + sequence + flowchart sections
-        OC-->>AA: ChatDelta{token}
+    AA->>CS: SendMessageAsync(branchId, text, "qwen3:latest", [], AgentProfile.Architecture)
+    CS->>OC_M: ChatStreamAsync(qwen3:latest, [system:arch, history, user])
+    loop streaming HLD + LLD + sequence + flowchart
+        OC_M-->>AA: ChatDelta{token}
         AA-->>AOF: SmartChatEvent{token}
         API-->>Web: SSE: token {text}
-        Note over Web: MarkdownRenderer renders\nMermaid fences as live diagrams
+        Note over Web: MarkdownRenderer renders Mermaid blocks live
     end
-    OC-->>CS: ChatDelta{done}
-
-    CS->>DB: INSERT Message
-    DB-->>CS: saved
-    CS-->>AA: MessageId
+    OC_M-->>CS: ChatDelta{done}
+    CS->>DB: INSERT Message → returns messageId
+    DB-->>CS: ok
+    CS-->>AA: messageId
     AA-->>AOF: SmartChatEvent{done, messageId}
     API-->>Web: SSE: done {messageId}
     Web-->>User: Rendered HLD + LLD + sequence + flowchart + justification
@@ -1005,8 +1073,8 @@ sequenceDiagram
     participant Web as React UI
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
-    participant IR as IntentRouter
-    participant MR as ModelRouter
+    participant IR as IntentRouterService
+    participant MR as ModelRouterService
     participant IGA as ImageGenerationAgent
     participant OC_T as OllamaClient (qwen3.5:2b — translator)
     participant OC_F as OllamaClient (flux2-klein — generator)
@@ -1014,45 +1082,46 @@ sequenceDiagram
     participant DB as SQLite
 
     User->>Web: "Generate a minimalist logo for my AI startup called Eminent"
-    Web->>API: {branchId, content}
+    Web->>API: {branchId, content, manualRouteOverride:null}
 
     API->>AOF: ExecuteSmartTurnAsync(request)
-    AOF->>IR: RouteAsync({text, hasImage:false, hint:null})
-    IR->>IR: Fast-path: "Generate a ... logo" → IMAGE_GEN
-    IR-->>AOF: RoutingDecision{ImageGeneration, AgentProfile.ImageGeneration, wasFastPath:true}
+    AOF->>IR: ClassifyAsync({text, hasImage:false})
+    IR->>IR: Fast-path: "Generate a ... logo" → ImageGeneration
+    IR-->>AOF: IntentDecision{ImageGeneration, AgentProfile.ImageGeneration, wasFastPath:true}
+
+    AOF->>MR: ResolveAsync(AgentProfile.ImageGeneration, costPolicy, residencyPolicy)
+    MR->>MR: FilterByCapabilities({ImageGeneration}) → flux2-klein passes
+    MR-->>AOF: ModelRoute{x/flux2-klein:4b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"imageGeneration", model:"x/flux2-klein:4b"}
-
-    AOF->>MR: ResolveAsync(AgentProfile.ImageGeneration, ...)
-    MR-->>AOF: ModelRoute{x/flux2-klein:4b, provider:ollama}
+    API-->>Web: SSE: routing_decision {intent:"imageGeneration", model:"x/flux2-klein:4b", provider:"ollama"}
 
     AOF->>IGA: ExecuteAsync(context, route, ct)
 
     IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"translating"}
     API-->>Web: SSE: image_gen_progress {stage:"translating"}
 
-    IGA->>OC_T: ChatOnceAsync(qwen3.5:2b, flux-prompt-engineer, userPrompt, temp:0.3)
-    OC_T-->>IGA: "minimalist logo, AI startup, bold sans-serif, dark bg, neon blue accent, vector"
+    IGA->>OC_T: ChatOnceAsync(qwen3.5:2b, fluxPromptEngineer, userPrompt, temp:0.3)
+    OC_T-->>IGA: "minimalist logo, AI startup, bold sans-serif, dark bg, neon blue, vector art"
 
     IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"generating", fluxPrompt}
     API-->>Web: SSE: image_gen_progress {stage:"generating", fluxPrompt}
 
     IGA->>OC_F: GenerateImageAsync(flux2-klein, fluxPrompt)
-    Note over IGA,OC_F: POST /api/generate · stream:false · 30–120s
-    OC_F-->>IGA: base64 PNG string (⚠ shape unverified — spike required)
+    Note over IGA,OC_F: POST /api/generate · stream:false · 30–120s\n⚠ response shape must be confirmed by spike
+
+    OC_F-->>IGA: base64 PNG string
 
     IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"saving"}
     API-->>Web: SSE: image_gen_progress {stage:"saving"}
 
     IGA->>FS: write /generated-images/uuid.png
-    FS-->>IGA: saved
+    FS-->>IGA: ok
 
-    IGA->>DB: INSERT GeneratedImages(id:uuid, branchId, createdAt)
-    IGA->>DB: INSERT Message(content:"[generated image](url)", model:flux2-klein)
-    DB-->>IGA: saved
-
-    Note over IGA,DB: Persist BOTH records before done
+    Note over IGA,DB: Persist both rows before any done signal
+    IGA->>DB: INSERT GeneratedImages(id:uuid, branchId)
+    IGA->>DB: INSERT Message(content:"[image](/api/generated-images/uuid.png)")
+    DB-->>IGA: ok · returns messageId
 
     IGA-->>AOF: SmartChatEvent{image_generated, url, fluxPrompt, filename}
     API-->>Web: SSE: image_generated {url, fluxPrompt, filename, generationMs}
@@ -1065,7 +1134,7 @@ sequenceDiagram
 
 ---
 
-### 7.5 Flow 5 — General Request
+### 7.5 Flow 5 — General
 
 ```mermaid
 sequenceDiagram
@@ -1073,94 +1142,96 @@ sequenceDiagram
     participant Web as React UI
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
-    participant IR as IntentRouter
-    participant MR as ModelRouter
+    participant IR as IntentRouterService
+    participant OC_C as OllamaClient (qwen3.5:2b)
+    participant MR as ModelRouterService
     participant GA as GeneralAgent
     participant CS as ChatService
-    participant OC as OllamaClient (qwen2.5:latest)
+    participant OC_M as OllamaClient (qwen2.5:latest)
     participant DB as SQLite
 
     User->>Web: "What is the difference between REST and GraphQL?"
-    Web->>API: {branchId, content}
+    Web->>API: {branchId, content, manualRouteOverride:null}
 
     API->>AOF: ExecuteSmartTurnAsync(request)
-    AOF->>IR: RouteAsync({text, hasImage:false, hint:null})
-    IR->>OC: ChatOnceAsync(qwen3.5:2b, classifyPrompt)
-    OC-->>IR: "GENERAL"
-    IR-->>AOF: RoutingDecision{General, AgentProfile.General}
-
-    AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"general", model:"qwen2.5:latest"}
+    AOF->>IR: ClassifyAsync({text, hasImage:false})
+    IR->>OC_C: ChatOnceAsync(qwen3.5:2b, classifyPrompt)
+    OC_C-->>IR: "GENERAL"
+    IR-->>AOF: IntentDecision{General, AgentProfile.General, ms:390}
 
     AOF->>MR: ResolveAsync(AgentProfile.General, ...)
-    MR-->>AOF: ModelRoute{qwen2.5:latest, provider:ollama}
+    MR-->>AOF: ModelRoute{qwen2.5:latest, "ollama", exactMatch:true}
+
+    AOF-->>API: SmartChatEvent{routing_decision}
+    API-->>Web: SSE: routing_decision {intent:"general", model:"qwen2.5:latest", provider:"ollama"}
 
     AOF->>GA: ExecuteAsync(context, route, ct)
-    GA->>CS: SendMessageAsync(branchId, text, model, AgentProfile.General)
-    CS->>OC: ChatStreamAsync(qwen2.5:latest, [system, history, user])
+    GA->>CS: SendMessageAsync(branchId, text, "qwen2.5:latest", [], AgentProfile.General)
+    CS->>OC_M: ChatStreamAsync(qwen2.5:latest, [system, history, user])
     loop tokens
-        OC-->>GA: ChatDelta{token}
+        OC_M-->>GA: ChatDelta{token}
         GA-->>AOF: SmartChatEvent{token}
         API-->>Web: SSE: token {text}
     end
-    OC-->>CS: ChatDelta{done}
-    CS->>DB: INSERT Message
-    DB-->>CS: saved
-    CS-->>GA: MessageId
+    OC_M-->>CS: ChatDelta{done}
+    CS->>DB: INSERT Message → returns messageId
+    DB-->>CS: ok
+    CS-->>GA: messageId
     GA-->>AOF: SmartChatEvent{done, messageId}
     API-->>Web: SSE: done {messageId}
 ```
 
 ---
 
-### 7.6 Flow 6 — Intent Classification (Internal)
-
-Shows the full internal logic of `IntentRouterService.RouteAsync` including telemetry and defensive parsing.
+### 7.6 Flow 6 — Classification Internal
 
 ```mermaid
 sequenceDiagram
-    participant Caller as AgentOrchestratorFacade
+    participant AOF as AgentOrchestratorFacade
+    participant AOF_V as AOF.ValidateManualOverride
     participant IR as IntentRouterService
     participant FP as FastPathCheck (regex)
     participant OC as OllamaClient (qwen3.5:2b)
     participant Log as ILogger
 
-    Caller->>IR: RouteAsync(IntentRequest)
+    AOF->>AOF_V: ValidateManualOverride(manualRouteOverride, intentRequest)
 
-    alt HintOverride is valid AgentKind
-        IR->>IR: Apply hint, skip LLM call
-        IR->>Log: Log{hintApplied:true, kind:X}
-    else No hint
-        IR->>FP: hasImage && text matches vision keywords?
-        alt Fast-path vision match
-            FP-->>IR: AgentKind.Vision
-            IR->>Log: Log{fastPath:"vision"}
+    alt manualRouteOverride is Vision bit HasImageAttachment == false
+        AOF_V->>Log: Warn{overrideRejected:"Vision requires image"}
+        AOF_V-->>AOF: null (ignore override)
+    else manualRouteOverride is valid AgentKind
+        AOF_V-->>AOF: AgentKind (skip ClassifyAsync)
+    else manualRouteOverride is null
+        AOF_V-->>AOF: null (proceed to ClassifyAsync)
+    end
+
+    AOF->>IR: ClassifyAsync(intentRequest)
+    IR->>FP: hasImage && text matches vision keywords?
+    alt fast-path matches
+        FP-->>IR: AgentKind.Vision
+        IR->>Log: Log{fastPath:"vision", ms:0}
+    else
+        IR->>FP: text matches image gen keywords?
+        alt fast-path matches
+            FP-->>IR: AgentKind.ImageGeneration
+            IR->>Log: Log{fastPath:"imageGen", ms:0}
         else
-            IR->>FP: text matches image gen keywords?
-            alt Fast-path image gen match
-                FP-->>IR: AgentKind.ImageGeneration
-                IR->>Log: Log{fastPath:"imageGen"}
-            else
-                IR->>OC: ChatOnceAsync(qwen3.5:2b, classifyPrompt, temp:0.0, maxTokens:10)
-                OC-->>IR: raw string e.g. "  CODING\n"
-                IR->>IR: ParseIntentLabel → trim → uppercase → enum match
-                IR->>Log: Log{rawLabel:"  CODING\n", parsed:Coding, wasFastPath:false}
-                alt Unknown label
-                    IR->>IR: Default to General
-                    IR->>Log: Warn{unknownLabel:"XYZ", defaultedTo:General}
-                end
+            IR->>OC: ChatOnceAsync(qwen3.5:2b, classifyPrompt, temp:0.0, maxTokens:10)
+            OC-->>IR: raw string e.g. "  CODING\n"
+            IR->>IR: ParseIntentLabel → trim/strip → "CODING" → Coding
+            IR->>Log: Log{rawLabel:"  CODING\n", parsed:Coding, ms:430}
+            alt ParseIntentLabel returns unknown
+                IR->>Log: Warn{unknownLabel:"XYZ", defaultedTo:General}
             end
         end
     end
 
-    IR-->>Caller: RoutingDecision{intent, profile, telemetry:ClassificationRecord}
+    IR-->>AOF: IntentDecision{intent, profile, telemetry:ClassificationRecord}
 ```
 
 ---
 
-### 7.7 Flow 7 — Provider Fallback Chain
-
-Shows how `ModelRouter` behaves when the preferred local model is unavailable.
+### 7.7 Flow 7 — Provider Fallback
 
 ```mermaid
 sequenceDiagram
@@ -1170,21 +1241,24 @@ sequenceDiagram
     participant CProv as ClaudeModelProvider (future)
     participant Log as ILogger
 
-    AOF->>MR: ResolveAsync(AgentProfile.Architecture, costPolicy{preferLocal:true}, residency{localOnly:false})
+    AOF->>MR: ResolveAsync(AgentProfile.Architecture, CostPolicy{preferLocal:true}, DataResidency{localOnly:true})
 
     MR->>OProv: CheckHealthAsync()
-    OProv-->>MR: ProviderHealth{healthy:true}
+    OProv-->>MR: {healthy:true}
 
     MR->>OProv: ListModelsAsync()
-    OProv-->>MR: [ModelDescriptor list — no qwen3 installed in this example]
+    OProv-->>MR: [ModelDescriptor list — qwen3 not installed in this example]
 
-    MR->>MR: FilterByCapability(TextGeneration) → all pass
-    MR->>MR: FindByNamePriority([qwen3, gemma4, qwen2.5]) → no qwen3, no gemma4
-    MR->>MR: FindByNamePriority → qwen2.5:latest found
-    MR->>Log: Log{intent:Architecture, preferred:"qwen3:latest", actualSelected:"qwen2.5:latest", reason:"name fallback 3"}
-    MR-->>AOF: ModelRoute{qwen2.5:latest, provider:ollama, isExactMatch:false, reason:"qwen3 not installed — fell back to qwen2.5:latest"}
+    MR->>MR: FilterByPolicy — all local models pass LocalOnly check
+    MR->>MR: FilterByCapabilities({}) — no required caps, all pass
+    MR->>MR: FindByNamePriority(["qwen3:latest","qwen3","gemma4","qwen2.5:latest","qwen2.5"])
+    MR->>MR: "qwen3:latest" not found → "qwen3" not found → "gemma4" not found
+    MR->>MR: "qwen2.5:latest" found
+    MR->>Log: Log{intent:Architecture, preferred:"qwen3:latest", selected:"qwen2.5:latest", reason:"name fallback 4"}
 
-    Note over MR,CProv: If CostPolicy.PreferLocal is false AND ClaudeModelProvider is registered,\nClaude Sonnet would be evaluated here before the fallback completes.
+    MR-->>AOF: ModelRoute{qwen2.5:latest, "ollama", isExactMatch:false, reason:"qwen3 not installed — fallback to qwen2.5:latest"}
+
+    Note over MR,CProv: ClaudeModelProvider is NOT queried because\nDataResidencyPolicy.LocalOnly = true.\nIf LocalOnly were false, Claude would be evaluated\nbefore the Ollama name-priority fallback completes.
 ```
 
 ---
@@ -1193,50 +1267,50 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Start(["User message\nPOST /api/chat/smart"])
+    Start(["POST /api/chat/smart"])
 
-    Start --> HintCheck{autoRouteHint\nprovided?}
-    HintCheck -->|"Valid AgentKind"| HintApply["Use hint directly\nskip LLM classify\nhintOverrideApplied = true"]
-    HintCheck -->|"null / invalid"| HasImg{Has image\nattachment?}
+    Start --> ParseOverride{"manualRouteOverride\nprovided?"}
 
-    HasImg -->|"Yes"| FastV{"Text matches\nvision keywords?"}
-    HasImg -->|"No"| FastIG{"Text matches\nimage gen keywords?"}
+    ParseOverride -->|"invalid enum"| ErrOverride["SSE: routing_error\n'unknown override value'"]
+    ParseOverride -->|"Vision but no image"| WarnOverride["Log warn: override rejected\nfall through to classify"]
+    ParseOverride -->|"valid + allowed"| SkipClassify["Use override\nskip ClassifyAsync"]
+    ParseOverride -->|"null"| HasImg
 
-    FastV -->|"Yes"| KVision["AgentKind = Vision\nwasFastPath = true"]
-    FastV -->|"No"| LlmClassify["ChatOnceAsync\nqwen3.5:2b · max 10 tokens"]
+    WarnOverride --> HasImg{Has image\nattachment?}
+    SkipClassify --> ResolveModel
 
-    FastIG -->|"Yes"| KImgGen["AgentKind = ImageGeneration\nwasFastPath = true"]
+    HasImg -->|"Yes"| FastV{"text matches\nvision keywords?"}
+    HasImg -->|"No"| FastIG{"text matches\nimage gen keywords?"}
+
+    FastV -->|"Yes"| KVision["Intent = Vision\nwasFastPath"]
+    FastV -->|"No"| LlmClassify["qwen3.5:2b classify\n~400ms"]
+
+    FastIG -->|"Yes"| KImgGen["Intent = ImageGeneration\nwasFastPath"]
     FastIG -->|"No"| LlmClassify
 
-    HintApply --> KVision & KCoding["AgentKind = Coding"] & KArch["AgentKind = Architecture"] & KImgGen & KGeneral["AgentKind = General"]
+    LlmClassify --> DefParse["ParseIntentLabel\nstrip · uppercase · enum match\nunknown → General + warn log"]
+    DefParse --> KVision & KCoding["Intent = Coding"] & KArch["Intent = Architecture"] & KImgGen & KGeneral["Intent = General"]
 
-    LlmClassify --> DefensiveParse["ParseIntentLabel\ntrim → uppercase → enum match\nunknown → General + log warn"]
-    DefensiveParse --> KVision & KCoding & KArch & KImgGen & KGeneral
+    KVision & KCoding & KArch & KImgGen & KGeneral --> AgentProfile["AgentProfiles.ForKind(intent)\nserver-side constant"]
+    
+    AgentProfile --> ResolveModel["ModelRouter.ResolveAsync\nparallel provider health checks · parallel model listing\npolicy · caps · rank"]
 
-    KVision & KCoding & KArch & KImgGen & KGeneral --> AgentProfile["Lookup AgentProfile.ForKind()\nserver-side constant only"]
-    AgentProfile --> EmitRouting["SSE: routing_decision\n{intent, model, reason, wasFastPath}"]
-
-    EmitRouting --> ModelRouter["ModelRouter.ResolveAsync\nquery providers → filter cap → rank"]
-    ModelRouter --> NoModel{Model\nfound?}
+    ResolveModel --> NoModel{"ModelRoute\nresolved?"}
     NoModel -->|"No"| ErrModel["SSE: routing_error\n{intent, ollamaPullCommand}"]
 
-    NoModel -->|"Yes"| DispatchAgent{Dispatch by\nAgentKind}
+    NoModel -->|"Yes"| EmitRouting["SSE: routing_decision\n{intent, model, provider, reason}\n← only now, both intent AND model known"]
 
-    DispatchAgent -->|"Vision"| AgentVision["VisionAgent\nstream → WAIT persist → done"]
-    DispatchAgent -->|"Coding"| AgentCode["CodeAgent\nstream → WAIT persist → done"]
-    DispatchAgent -->|"Architecture"| AgentArch["ArchitectureAgent\nstream → WAIT persist → done"]
-    DispatchAgent -->|"General"| AgentGeneral["GeneralAgent\nstream → WAIT persist → done"]
-    DispatchAgent -->|"ImageGeneration"| FluxCheck{flux model\navailable?}
+    EmitRouting --> DispatchAgent{AgentKind?}
 
-    FluxCheck -->|"No"| ErrFlux["SSE: routing_error\nInstall: ollama pull x/flux2-klein:4b"]
-    FluxCheck -->|"Yes"| SpikeOK{Flux API\nspike verified?}
-    SpikeOK -->|"No"| ErrSpike["Block: run spike first\ncurl /api/generate test"]
-    SpikeOK -->|"Yes"| AgentImgGen["ImageGenerationAgent\ntranslate → generate → save\n→ persist GeneratedImages + Message\n→ done"]
+    DispatchAgent -->|"Vision"| AgentV["VisionAgent\nstream → DB persist → done"]
+    DispatchAgent -->|"Coding"| AgentC["CodeAgent\nstream → DB persist → done"]
+    DispatchAgent -->|"Architecture"| AgentA["ArchitectureAgent\nstream → DB persist → done"]
+    DispatchAgent -->|"General"| AgentG["GeneralAgent\nstream → DB persist → done"]
+    DispatchAgent -->|"ImageGeneration"| AgentI["ImageGenerationAgent\ntranslate → generate → save FS\n→ INSERT GeneratedImages + Message\n→ image_generated → done"]
 
-    AgentVision & AgentCode & AgentArch & AgentGeneral --> PersistDone["ChatService persists\nMessage to SQLite\nTHEN emits done"]
-    AgentImgGen --> PersistDoneImg["Persist Message + GeneratedImages\nTHEN emits image_generated + done"]
+    AgentV & AgentC & AgentA & AgentG --> PersistRule["ChatService persists\nMessage to SQLite\nTHEN done SSE emitted with messageId"]
 
-    PersistDone & PersistDoneImg --> SSEDone["SSE: done {messageId}\nclient can now safely reload"]
+    AgentI --> PersistImg["INSERT GeneratedImages + Message\nTHEN image_generated SSE\nTHEN done SSE"]
 ```
 
 ---
@@ -1252,67 +1326,65 @@ Content-Type: application/json
 
 {
   "branchId": "guid",
-  "content": "string — user's message text",
-  "attachments": [                              // optional
+  "content": "string",
+  "attachments": [
     {
       "name": "invoice.png",
       "contentType": "image/png",
-      "dataBase64": "iVBORw0KGgo..."            // base64, no data-URL prefix
+      "dataBase64": "iVBORw0KGgo..."
     }
   ],
-  "autoRouteHint": "vision|coding|architecture|imageGeneration|general"
-                                                // optional; validated to AgentKind enum
-                                                // advisory — actual route returned in routing_decision
+  "manualRouteOverride": "vision|coding|architecture|imageGeneration|general"
+                          // optional · validated to AgentKind enum · advisory
+                          // Vision without image → rejected (ignored, classify normally)
+                          // actual applied kind always in routing_decision.intent
 }
 ```
 
-### SSE Event Stream
+### SSE Stream
 
 ```
-── always first: ─────────────────────────────────────────────
+── always first (after both intent and model resolved): ──────
 
 event: routing_decision
 data: {
   "intent": "vision",
   "model": "qwen2.5vl:latest",
   "provider": "ollama",
-  "reason": "fast-path: image attached and text contains 'what'",
+  "reason": "fast-path: image attached + text contains 'what'",
   "classificationMs": 1,
   "wasFastPath": true,
-  "hintOverrideApplied": false
+  "manualOverrideApplied": false
 }
 
-── for text responses (Vision / Code / Architecture / General): ─
+── text responses (Vision / Code / Architecture / General): ──
 
 event: token
-data: { "text": "The invoice shows a total of £1,234.56..." }
+data: { "text": "The invoice shows..." }
 
-── persist happens here (invisible to client) ────────────────
+  [ChatService persists Message — internal, invisible to client]
 
 event: done
 data: { "messageId": "guid", "tokensIn": 312, "tokensOut": 89 }
 
-── for image generation: ─────────────────────────────────────
+── image generation: ─────────────────────────────────────────
 
 event: image_gen_progress
 data: { "stage": "translating" }
 
 event: image_gen_progress
-data: {
-  "stage": "generating",
-  "fluxPrompt": "minimalist logo, AI startup, bold sans-serif, neon blue accent..."
-}
+data: { "stage": "generating", "fluxPrompt": "minimalist logo, AI startup..." }
 
 event: image_gen_progress
 data: { "stage": "saving" }
 
-── persist happens here (invisible to client) ────────────────
+  [INSERT GeneratedImages + INSERT Message — internal, invisible to client]
 
 event: image_generated
 data: {
-  "url": "/api/generated-images/3f7a9b2e-1234-5678-abcd-ef1234567890.png",
-  "filename": "3f7a9b2e-1234-5678-abcd-ef1234567890.png",
-  "fluxPrompt": "minimalist logo, AI startup, bold sans-serif...",
+  "url": "/api/generated-images/3f7a9b2e-...png",
+  "filename": "3f7a9b2e-...png",
+  "fluxPrompt": "minimalist logo, AI startup...",
   "generationMs": 47320
 }
 
@@ -1329,254 +1401,261 @@ data: {
 }
 ```
 
-### Generated Image Serve Endpoint
+### Generated Image Serve
 
 ```
 GET /api/generated-images/{filename}
-Authorization: Bearer <session-token>     ← required; same auth as all other endpoints
+Authorization: Bearer <session-token>
 ```
 
-- `filename` validated against `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$`.
-- `Path.GetFullPath` check confirms resolved path is within `generated-images/` directory.
-- Ownership verified: `GeneratedImages.BranchId` must belong to a conversation accessible to the session.
-- `Content-Type: image/png` always set explicitly; never inferred from extension.
-- Returns 400 for invalid filename, 401 for no/invalid session, 403 for ownership mismatch, 404 if file not found.
+Returns 400 for invalid filename, 401 for bad/missing token, 403 for ownership mismatch, 404 if not found.
 
 ---
 
-## 10. New SSE Event Types
+## 10. SSE Event Reference
 
-| Event | Emitted by | When | Required fields |
+| Event | Emitter | Timing guarantee | Fields |
 |---|---|---|---|
-| `routing_decision` | `AgentOrchestratorFacade` | Always, before first token | `intent`, `model`, `provider`, `reason`, `classificationMs`, `wasFastPath`, `hintOverrideApplied` |
-| `image_gen_progress` | `ImageGenerationAgent` | 3× during generation | `stage` ("translating" / "generating" / "saving"); `fluxPrompt` on "generating" |
-| `image_generated` | `ImageGenerationAgent` | After PNG saved AND persisted | `url`, `filename`, `fluxPrompt`, `generationMs` |
-| `routing_error` | `AgentOrchestratorFacade` | When no model resolved | `intent`, `message`, `ollamaPullCommand`? |
+| `routing_decision` | `AgentOrchestratorFacade` | After both intent AND model resolved; before first token | `intent`, `model`, `provider`, `reason`, `classificationMs`, `wasFastPath`, `manualOverrideApplied` |
+| `token` | Specialized agent | Per token during generation | `text` |
+| `image_gen_progress` | `ImageGenerationAgent` | 3× during pipeline stages | `stage` ("translating"/"generating"/"saving"); `fluxPrompt` on "generating" |
+| `image_generated` | `ImageGenerationAgent` | After FS write AND DB persist | `url`, `filename`, `fluxPrompt`, `generationMs` |
+| `done` | Specialized agent | After DB persist; carries ID from ChatService | `messageId`, `tokensUsed`? |
+| `routing_error` | `AgentOrchestratorFacade` | When no model resolved or override invalid | `intent`, `message`, `ollamaPullCommand`? |
 
-Existing events (`token`, `done`, `error`) are unchanged. Ordering guarantee: `done` is **always** emitted after both stream completion and durable DB persistence.
+Persistence is an internal step. It is never visible to the client as an SSE event. `done` is the sole signal that the turn is complete and the message is durable.
 
 ---
 
 ## 11. Backend File Map
 
-### New files
+### Backend layer rule
+
+```
+EminentAi.Application/    ← interfaces, DTOs, profiles, orchestration logic
+EminentAi.Infrastructure/ ← implementations only (OllamaModelProvider, IntentRouterService, etc.)
+EminentAi.Domain/         ← entity models
+EminentAi.Api/            ← endpoints, DI wiring, bootstrap
+```
+
+### Backend new files
 
 ```
 src/EminentAi.Application/
 ├── Agents/
-│   ├── AgentKind.cs                       ← enum: Vision Coding Architecture ImageGeneration General
-│   ├── AgentProfile.cs                    ← sealed record: Kind, SystemPrompt, Temperature, RequiredCapabilities
-│   ├── AgentProfiles.cs                   ← static class: server-side constants, ForKind(AgentKind)
-│   ├── ISpecializedAgent.cs               ← interface: Kind, ExecuteAsync(context, route, ct)
-│   ├── SmartChatContext.cs                ← record: BranchId, UserText, Attachments, Routing, AssistantMessageId
-│   ├── SmartChatEvent.cs                  ← record: Type, Data
+│   ├── AgentKind.cs
+│   ├── AgentProfile.cs
+│   ├── AgentProfiles.cs              ← server-side constants; ForKind(AgentKind)
+│   ├── ISpecializedAgent.cs
+│   ├── SmartChatContext.cs           ← BranchId, UserText, Attachments, IntentDecision
+│   │                                    (no AssistantMessageId — ChatService owns creation)
+│   ├── SmartChatEvent.cs
 │   ├── VisionAgent.cs
 │   ├── CodeAgent.cs
 │   ├── ArchitectureAgent.cs
 │   ├── GeneralAgent.cs
 │   └── ImageGeneration/
 │       ├── ImageGenerationAgent.cs
-│       └── ImageGenerationResult.cs       ← record: Filename, ServedUrl, FluxPrompt, GeneratorModel, GenerationMs
+│       └── ImageGenerationResult.cs
 │
-├── Routing/
-│   ├── IIntentRouter.cs                   ← interface: RouteAsync
-│   ├── IntentRequest.cs                   ← record: UserText, HasImageAttachment, ContentTypes, HintOverride
-│   ├── RoutingDecision.cs                 ← record: Intent, Profile, ModelRoute, ClassifierModel, Ms, Telemetry
-│   ├── ClassificationRecord.cs            ← record: RawLabel, WasFastPath, ConfidenceHint, HintOverrideApplied
-│   ├── IModelRouter.cs                    ← interface: ResolveAsync
-│   └── ModelRoute.cs                      ← record: Model, ProviderName, Profile, SelectionReason, IsExactMatch
+├── Providers/                         ← interfaces + DTOs live here, NOT in Infrastructure
+│   ├── IModelProvider.cs
+│   ├── ModelDescriptor.cs             ← IsLocal, Region, InputTokenCostUsd, OutputTokenCostUsd
+│   ├── ModelCapability.cs             ← enum; used in AgentProfile + ModelDescriptor
+│   ├── ModelInvocation.cs
+│   ├── ProviderHealth.cs
+│   ├── CostPolicy.cs
+│   └── DataResidencyPolicy.cs
 │
-└── Orchestration/
-    └── AgentOrchestratorFacade.cs         ← owns full turn: intent → model → agent → persist → SSE
+└── Routing/
+    ├── IIntentRouter.cs               ← ClassifyAsync → IntentDecision (no ModelRoute)
+    ├── IntentRequest.cs               ← no manualRouteOverride (AOF handles that)
+    ├── IntentDecision.cs              ← Intent, Profile, ClassifierModel, Ms, Telemetry
+    ├── ClassificationRecord.cs
+    ├── IModelRouter.cs                ← ResolveAsync → ModelRoute?
+    └── ModelRoute.cs
+
+src/EminentAi.Application/Orchestration/
+└── AgentOrchestratorFacade.cs        ← calls IR → MR → [emit routing_decision] → agent
 
 src/EminentAi.Infrastructure/
 ├── Providers/
-│   ├── IModelProvider.cs                  ← interface: Name, ListModelsAsync, StreamAsync, CheckHealthAsync
-│   ├── ModelDescriptor.cs                 ← record: Name, ProviderName, Capabilities, SizeBytes, Tier, IsAvailable
-│   ├── ModelCapability.cs                 ← enum: TextGeneration Vision ImageGeneration Embedding Reasoning ...
-│   ├── ModelInvocation.cs                 ← record: ModelName, Messages, Profile, ImageBase64
-│   ├── ProviderHealth.cs                  ← record: ProviderName, IsHealthy, ErrorMessage, CheckedAt
-│   ├── CostPolicy.cs                      ← record: PreferLocal, MaxCostPerTokenUsd, BlockedProviders
-│   ├── DataResidencyPolicy.cs             ← record: LocalOnly, AllowedRegions
-│   └── OllamaModelProvider.cs             ← implements IModelProvider via IOllamaClient
+│   └── OllamaModelProvider.cs         ← implements IModelProvider; IsLocal=true; cost=0
 │
 └── Routing/
-    ├── IntentRouterService.cs             ← fast-path + qwen3.5:2b + defensive parse + telemetry
-    └── ModelRouterService.cs              ← multi-provider ranking, capability filter, name priority
+    ├── IntentRouterService.cs          ← fast-path, qwen3.5:2b, defensive parse, telemetry
+    └── ModelRouterService.cs           ← multi-provider, FilterByPolicy (uses ModelDescriptor fields)
 ```
 
-### Modified files
+### Backend modified files
 
 ```
 src/EminentAi.Application/Abstractions/IOllamaClient.cs
   + Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct)
-  // ⚠ implement only AFTER running the Flux API spike to confirm response shape
+  // Expects Ollama /api/generate response.response to contain base64 PNG bytes.
 
 src/EminentAi.Infrastructure/Ollama/OllamaClient.cs
-  + GenerateImageAsync → POST /api/generate {model, prompt, stream:false}
-  + ClassifyTier() updated: add "image_gen" tier for models matching *flux* or *diffusion*
+  + Implement GenerateImageAsync
+  + ClassifyTier(): add "image_gen" for *flux* / *diffusion* → new tier
 
 src/EminentAi.Application/Chat/ChatService.cs
-  + SendMessageAsync accepts AgentProfile? profile (not string)
-  + BuildContext uses profile.SystemPrompt when profile is not null, otherwise conversation.SystemPrompt
+  + SendMessageAsync(... AgentProfile? profile = null ...)
+  + BuildContext: use profile.SystemPrompt when profile != null
+
+src/EminentAi.Domain/Models.cs
+  + class GeneratedImage { Guid Id; Guid BranchId; DateTime CreatedAt }
+
+src/EminentAi.Infrastructure/Persistence/EminentAiDbContext.cs
+  + DbSet<GeneratedImage> GeneratedImages
 
 src/EminentAi.Api/Program.cs
   + Register IIntentRouter, IModelRouter, IModelProvider (OllamaModelProvider)
   + Register all ISpecializedAgent implementations
   + Register AgentOrchestratorFacade
-  + Register CostPolicy and DataResidencyPolicy (from config)
+  + Register CostPolicy{preferLocal:true} and DataResidencyPolicy{localOnly:true} as singletons
   + POST /api/chat/smart → AOF.ExecuteSmartTurnAsync → SSE
   + GET  /api/generated-images/{filename} → auth + ownership + file serve
-  + Bootstrap: CREATE TABLE IF NOT EXISTS "GeneratedImages" ...
-
-src/EminentAi.Infrastructure/Persistence/EminentAiDbContext.cs
-  + DbSet<GeneratedImage> GeneratedImages
-
-src/EminentAi.Domain/Models.cs
-  + class GeneratedImage { Id, BranchId, CreatedAt }
+  + Bootstrap SQL: CREATE TABLE IF NOT EXISTS "GeneratedImages" ...
 ```
 
 ---
 
 ## 12. Frontend File Map
 
-### New files
+### Frontend new files
 
 ```
 web/src/
 ├── components/
-│   ├── RoutingBadge.tsx          ← pill: "Vision • qwen2.5vl:latest" with intent icon + fade-in
-│   └── GeneratedImage.tsx        ← inline image + Download + Copy URL + expandable Flux prompt
+│   ├── RoutingBadge.tsx       ← intent icon + model name pill, 200ms fade-in
+│   └── GeneratedImage.tsx     ← inline PNG + Download + Copy URL + expandable Flux prompt
 └── lib/
-    └── intentMeta.ts             ← intent → { label, icon, badgeColor } mapping
+    └── intentMeta.ts          ← AgentKind → { label, icon, badgeColor }
 ```
 
-### Modified files
+### Frontend modified files
 
 ```
 web/src/lib/api.ts
-  + smartChat(branchId, content, attachments?, hint?, onEvent): Promise<void>
+  + smartChat(branchId, content, attachments?, manualRouteOverride?, onEvent): Promise<void>
 
 web/src/lib/types.ts
-  + RoutingDecision, ImageGenerationResult, SmartChatEvent union type
+  + RoutingDecision, ImageGenerationResult, SmartChatEvent union
 
 web/src/state/store.ts
-  + routingDecision?: RoutingDecision   on Message
-  + generatedImageUrl?: string           on Message
-  + generatedFluxPrompt?: string         on Message
+  + routingDecision?: RoutingDecision  on Message
+  + generatedImageUrl?: string          on Message
+  + generatedFluxPrompt?: string        on Message
 
 web/src/components/ChatMessage.tsx
-  + Render <RoutingBadge> when message.routingDecision exists
-  + Render <GeneratedImage> when message.generatedImageUrl exists
+  + Render <RoutingBadge routing={msg.routingDecision} />
+  + Render <GeneratedImage url={msg.generatedImageUrl} fluxPrompt={msg.generatedFluxPrompt} />
 
 web/src/components/ChatView.tsx
-  + Handle: routing_decision, token, image_gen_progress, image_generated, done, routing_error
-  + Show progress indicator during image generation stages
+  + Handle: routing_decision, image_gen_progress, image_generated, routing_error
 
 web/src/components/Composer.tsx
-  + Auto-route toggle (default: ON)
-  + When ON: call smartChat(); when OFF: call existing sendMessage()
-  + Image attached → set hint to "vision" automatically
+  + Auto-route toggle (default ON)
+  + Image attached → manualRouteOverride pre-filled to "vision"
 ```
 
 ### RoutingBadge design
 
 ```
-┌─────────────────────────────────┐
-│  👁 Vision  •  qwen2.5vl:latest │   purple background
-│  </> Code   •  qwen2.5-coder    │   blue background
-│  🗺 Arch    •  qwen3:latest     │   green background
-│  🎨 Image   •  flux2-klein:4b   │   orange background
-│  💬 General •  qwen2.5:latest   │   grey background
-└─────────────────────────────────┘
-Appears below the user message, above the assistant reply.
-Fades in with 200ms opacity transition.
-Shows provider name when non-Ollama: "Vision • claude-3-5-sonnet (Claude)"
+┌──────────────────────────────────────┐
+│  👁 Vision  •  qwen2.5vl  • ollama  │  purple
+│  </> Code   •  qwen2.5-coder        │  blue
+│  🗺 Arch    •  qwen3:latest         │  green
+│  🎨 Image   •  flux2-klein:4b       │  orange
+│  💬 General •  qwen2.5:latest       │  grey
+└──────────────────────────────────────┘
+Provider shown only when non-ollama.
+Appears below user message, above assistant reply. 200ms fade-in.
 ```
 
 ### GeneratedImage component
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│          [Generated PNG — rendered inline]           │
-│          max-width: 512px, border-radius: 8px        │
-│          Loading spinner during image_gen_progress   │
-│                                                      │
-├──────────────────────────────────────────────────────┤
-│  [↓ Download]   [⧉ Copy URL]   [▾ Flux prompt]     │
-├──────────────────────────────────────────────────────┤
-│  minimalist logo, AI startup, bold sans-serif,       │  ← expandable, collapsed by default
-│  neon blue accent, vector art, professional...       │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  [Spinner during image_gen_progress stages]  │
+│                                              │
+│     [Inline PNG — max-width 512px]           │
+│                                              │
+├──────────────────────────────────────────────┤
+│  [↓ Download]  [⧉ Copy URL]  [▾ Flux prompt]│
+├──────────────────────────────────────────────┤
+│  minimalist logo, AI startup, bold...        │  ← collapsed by default
+└──────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 13. Changes to Existing Files
 
-| File | What Changes | Why |
+| File | Change | Why |
 |---|---|---|
-| [IOllamaClient.cs](../src/EminentAi.Application/Abstractions/IOllamaClient.cs) | Add `GenerateImageAsync` | Flux2 uses `/api/generate`, not `/api/chat` — after Flux spike |
-| [OllamaClient.cs](../src/EminentAi.Infrastructure/Ollama/OllamaClient.cs) | Implement `GenerateImageAsync`; update `ClassifyTier` for `image_gen` | After spike to confirm response shape |
-| [ChatService.cs](../src/EminentAi.Application/Chat/ChatService.cs) | Accept `AgentProfile?` not `string?` | Prevents raw string injection; server-side constants only |
-| [EminentAiDbContext.cs](../src/EminentAi.Infrastructure/Persistence/EminentAiDbContext.cs) | Add `GeneratedImages` DbSet | Image ownership verification for auth |
-| [Models.cs](../src/EminentAi.Domain/Models.cs) | Add `GeneratedImage` entity | DB-backed image ownership |
+| [IOllamaClient.cs](../src/EminentAi.Application/Abstractions/IOllamaClient.cs) | Add `GenerateImageAsync` | Flux2 uses `/api/generate` not `/api/chat` — add after spike |
+| [OllamaClient.cs](../src/EminentAi.Infrastructure/Ollama/OllamaClient.cs) | Implement `GenerateImageAsync`; update `ClassifyTier` for `image_gen` | After spike confirms shape |
+| [ChatService.cs](../src/EminentAi.Application/Chat/ChatService.cs) | Add `AgentProfile? profile` param; `BuildContext` uses `profile.SystemPrompt` | Replaces raw string override; server-side constants only |
+| [Models.cs](../src/EminentAi.Domain/Models.cs) | Add `GeneratedImage` entity | Image ownership for auth |
+| [EminentAiDbContext.cs](../src/EminentAi.Infrastructure/Persistence/EminentAiDbContext.cs) | Add `DbSet<GeneratedImage>` | ORM access to `GeneratedImages` table |
 | [Program.cs](../src/EminentAi.Api/Program.cs) | New DI registrations, 2 new endpoints, bootstrap SQL | Wire entire new layer |
 | [store.ts](../web/src/state/store.ts) | Add routing fields to Message | Badge survives re-renders |
 | [ChatView.tsx](../web/src/components/ChatView.tsx) | Handle 4 new SSE event types | Routing badge, image display, progress, errors |
 | [ChatMessage.tsx](../web/src/components/ChatMessage.tsx) | Render `RoutingBadge` + `GeneratedImage` | Message-level routing metadata |
-| [Composer.tsx](../web/src/components/Composer.tsx) | Auto-route toggle | Smart vs manual mode switch |
+| [Composer.tsx](../web/src/components/Composer.tsx) | Auto-route toggle; image pre-fills vision hint | Smart vs manual mode |
 
 ---
 
 ## 14. Implementation Order
 
-**Principle:** build the routing + text path first, validate it end-to-end, then add image generation after running the Flux spike. Never block text routing on the image pipeline.
+**Rule:** text routing validates first; `ImageGenerationAgent` depends on the configured Flux model returning a base64 PNG in `response`.
 
 ```mermaid
 gantt
-    title Implementation Sequence (v2)
+    title Implementation Sequence (v3.1)
     dateFormat  X
     axisFormat  Step %s
 
-    section Spike First
-    Flux /api/generate spike: verify response shape          :crit, s1, 1, 2
+    section Image Response Assumption
+    Flux /api/generate response.response is base64 PNG         :crit, s1, 1, 2
 
-    section Core Contracts
-    AgentKind · AgentProfile · AgentProfiles (constants)    :b1, 2, 3
-    ISpecializedAgent · SmartChatContext · SmartChatEvent    :b2, 3, 4
-    IModelProvider · ModelDescriptor · ModelCapability       :b3, 4, 5
-    IIntentRouter · IntentRequest · RoutingDecision          :b4, 5, 6
-    IModelRouter · ModelRoute · CostPolicy · DataResidency   :b5, 6, 7
+    section Application Contracts
+    ModelCapability enum                                      :b1, 2, 3
+    ModelDescriptor (IsLocal Region Cost fields)              :b2, 3, 4
+    CostPolicy · DataResidencyPolicy · IModelProvider         :b3, 4, 5
+    AgentKind · AgentProfile · AgentProfiles                  :b4, 5, 6
+    IIntentRouter · IntentDecision · ClassificationRecord     :b5, 6, 7
+    IModelRouter · ModelRoute                                 :b6, 7, 8
+    ISpecializedAgent · SmartChatContext (no prealloc ID)     :b7, 8, 9
 
-    section Routing Layer
-    IntentRouterService (fast-path + qwen3.5:2b + parse + log)  :b6, 7, 8
-    OllamaModelProvider (wraps IOllamaClient)                    :b7, 8, 9
-    ModelRouterService (multi-provider rank + fallback)          :b8, 9, 10
+    section Infrastructure — Routing
+    IntentRouterService (fast-path + llm + defensive parse)   :b8, 9, 10
+    OllamaModelProvider (IsLocal=true cost=0)                 :b9, 10, 11
+    ModelRouterService (policy + cap filter + name priority)  :b10, 11, 12
 
-    section Text Agents
-    ChatService: AgentProfile param (not string)             :b9, 10, 11
-    VisionAgent · CodeAgent · ArchitectureAgent · General    :b10, 11, 12
-    AgentOrchestratorFacade                                  :b11, 12, 13
+    section Text Agents + Orchestration
+    ChatService: AgentProfile param (not string)              :b11, 12, 13
+    VisionAgent · CodeAgent · ArchitectureAgent · General     :b12, 13, 14
+    AgentOrchestratorFacade (IR then MR then emit then agent) :b13, 14, 15
 
     section API — Text Path
-    POST /api/chat/smart (text intents only)                 :b12, 13, 14
-    DI registration in Program.cs                            :b13, 14, 15
+    POST /api/chat/smart (text intents only)                  :b14, 15, 16
+    DI wiring in Program.cs                                   :b15, 16, 17
 
     section Frontend — Text Path
-    types.ts · api.ts smartChat()                            :f1, 15, 16
-    store.ts routing fields on Message                       :f2, 16, 17
-    RoutingBadge.tsx · ChatMessage.tsx · ChatView.tsx        :f3, 17, 18
-    Composer.tsx auto-route toggle                           :f4, 18, 19
+    types.ts · api.ts smartChat()                             :f1, 17, 18
+    store.ts routing fields                                   :f2, 18, 19
+    RoutingBadge.tsx · ChatMessage.tsx · ChatView.tsx          :f3, 19, 20
+    Composer.tsx toggle                                       :f4, 20, 21
 
-    section Image Generation (after spike)
-    IOllamaClient + GenerateImageAsync (spike result)        :b14, 19, 20
-    OllamaClient implements GenerateImageAsync               :b15, 20, 21
-    GeneratedImage entity + DB table + ownership check       :b16, 21, 22
-    ImageGenerationAgent (translate + generate + save)       :b17, 22, 23
-    GET /api/generated-images/:file (auth + ownership)       :b18, 23, 24
-    GeneratedImage.tsx frontend component                    :f5, 24, 25
+    section Image Generation
+    IOllamaClient + GenerateImageAsync                        :b16, 21, 22
+    OllamaClient implements GenerateImageAsync                :b17, 22, 23
+    GeneratedImage entity + DB table                          :b18, 23, 24
+    ImageGenerationAgent (translate → generate → save)        :b19, 24, 25
+    GET /api/generated-images/:file (auth + ownership)        :b20, 25, 26
+    GeneratedImage.tsx frontend component                     :f5, 26, 27
 ```
 
 ---
@@ -1585,53 +1664,57 @@ gantt
 
 | Intent | Preferred | Fallback 1 | Fallback 2 | No model found |
 |---|---|---|---|---|
-| Vision | `qwen2.5vl:latest` | Any `*vl*` name | Any `vision` capability model | `routing_error` — include `ollama pull qwen2.5vl` |
-| Coding | `qwen2.5-coder:1.5b` | Any `*coder*` name | Any `fast` tier model | Any `balanced` tier model |
-| Architecture | `qwen3:latest` | `gemma4:e4b` | `qwen2.5:latest` | Largest `balanced` tier model |
-| ImageGeneration | `x/flux2-klein:4b` | Any `*flux*` name | Any `image_gen` tier | `routing_error` — include `ollama pull x/flux2-klein:4b` |
+| Vision | `qwen2.5vl:latest` | Any `*vl*` name match | Any `ModelCapability.Vision` model | `routing_error` + `ollama pull qwen2.5vl` |
+| Coding | `qwen2.5-coder:1.5b` | Any `*coder*` name | Any `fast` tier | Any `balanced` tier |
+| Architecture | `qwen3:latest` | `gemma4:e4b` | `qwen2.5:latest` | Largest `balanced` tier |
+| ImageGeneration | `x/flux2-klein:4b` | Any `*flux*` name | Any `ModelCapability.ImageGeneration` | `routing_error` + `ollama pull x/flux2-klein:4b` |
 | General | `qwen2.5:latest` | Any `balanced` tier | Any `fast` tier | Any installed model |
 
-When a future `ClaudeModelProvider` is registered and `CostPolicy.PreferLocal = false`, the router will evaluate Claude's `ModelDescriptor` candidates before the local tier-fallback path. The fallback matrix above applies only to the Ollama provider.
+When `DataResidencyPolicy.LocalOnly = true`, only `IsLocal = true` models reach the priority list. Cloud providers are filtered out before any name match runs.
 
 ---
 
 ## 16. Security Considerations
 
-### System prompt — no raw string override
+### `AgentProfile` — no raw string override
 
-`ChatService.SendMessageAsync` accepts `AgentProfile? profile`. The profile's `SystemPrompt` is a compile-time constant defined in `AgentProfiles.cs`. No path from user input, HTTP body, query string, or tool result ever reaches `SystemPrompt`. The old `string? systemPromptOverride` approach was removed in this revision because it could not be enforced at the call site.
+`ChatService.SendMessageAsync` accepts `AgentProfile? profile`. The profile's `SystemPrompt` is a compile-time constant from `AgentProfiles.cs`. No HTTP field, no user message, and no tool result ever reaches the system prompt string. The v2 `systemPromptOverride string?` parameter is removed.
 
-### Generated image auth and ownership
+### `manualRouteOverride` validation
 
-`GET /api/generated-images/{filename}` is **not** open. It requires the same bearer token as all other authenticated endpoints. After token validation, the endpoint checks `GeneratedImages` table: `BranchId` must belong to a conversation accessible to that session. A valid session holder cannot access images generated in another session's branch.
+Parsed in `AgentOrchestratorFacade` before reaching any agent:
+
+- String → `AgentKind` via `Enum.TryParse` (case-insensitive). Invalid strings → `routing_error`.
+- `Vision` without `HasImageAttachment == true` → override silently ignored, classify normally.
+- `ImageGeneration` override is accepted; if no `image_gen` model is available, model resolution emits `routing_error`.
+
+The applied kind is always echoed in `routing_decision.intent`. The user sees what actually ran.
+
+### Generated image auth
+
+`GET /api/generated-images/{filename}` requires a valid bearer token (same session auth as all other endpoints). The `GeneratedImages` table is queried to verify the filename's `BranchId` belongs to a conversation accessible to that session.
 
 ### Filename validation — two independent layers
 
 ```csharp
-// Layer 1: regex — rejects anything that is not a UUID .png
+// Layer 1: regex (UUID .png only)
 if (!Regex.IsMatch(filename, @"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$"))
     return Results.BadRequest();
 
-// Layer 2: path containment — defence in depth against regex edge cases
+// Layer 2: path containment (defence in depth)
 var resolved = Path.GetFullPath(Path.Combine(outputDir, filename));
 if (!resolved.StartsWith(outputDir, StringComparison.OrdinalIgnoreCase))
     return Results.BadRequest();
 ```
 
-### Classifier output is never trusted as instructions
+### Classifier output isolation
 
-`ParseIntentLabel` strips everything except `[A-Z_]` after uppercasing. It matches against a closed enum. Unknown labels default to `General`. The raw label is logged but never passed into a system prompt, SQL query, file path, or tool argument.
+`ParseIntentLabel` strips everything outside `[A-Z_]` after uppercasing. Result is matched to a closed `AgentKind` enum. Unknown labels default to `General`. The raw label is logged for diagnostics but never used in system prompts, SQL, file paths, or tool arguments.
 
-### Flux prompt subject to PII redaction
-
-The translated Flux prompt is user-visible and stored in SQLite. It passes through `IPiiRedactor` before persistence, same as all other message content.
-
-### `generated-images/` excluded from version control
-
-Add to `.gitignore`:
+### `.gitignore`
 
 ```gitignore
-# AI-generated images — local only, not committed
+# AI-generated images — local only
 src/EminentAi.Api/generated-images/
 web/public/generated-images/
 **/generated-images/*.png
@@ -1641,16 +1724,9 @@ web/public/generated-images/
 
 ## 17. Operational Notes
 
-### VRAM management and model warm-up
-
-Ollama swaps models to fit VRAM. With `keep_alive: "10m"` already in `OllamaClient.BuildPayload`, the classifier (`qwen3.5:2b`) and the last-used chat model stay warm between turns. However:
-
-- `flux2-klein:4b` requires a full model swap — the first image generation after any text exchange will have a 5–15 second cold-start before diffusion begins. The `image_gen_progress {stage:"generating"}` SSE event arrives before this delay, which is why it is mandatory UX.
-- On 16 GB machines, `gemma4:e4b` (9.6 GB) may force unloading everything else. Monitor `/api/ollama` loaded models and add a warning badge in the UI if a large model will require a swap.
-
 ### Classifier telemetry corpus
 
-To detect silent misrouting (unknown label defaulting to `General`), maintain a test corpus:
+Maintain a test corpus to catch silent misrouting:
 
 ```json
 // /tests/IntentRouterTests/routing-corpus.json
@@ -1663,16 +1739,22 @@ To detect silent misrouting (unknown label defaulting to `General`), maintain a 
 ]
 ```
 
-Run this corpus in a unit test against `IntentRouterService` to catch regressions when the classifier model changes.
+Run against `IntentRouterService` in unit tests. `ClassificationRecord.RawLabel` is logged on every turn — grep it in development to spot misroutes before they reach the user.
 
-### Adding a new provider (e.g. Claude)
+### Adding a new provider
 
 1. Create `ClaudeModelProvider : IModelProvider` in `EminentAi.Infrastructure/Providers/`.
-2. Register it in DI.
-3. Add `"claude"` to `CostPolicy.BlockedProviders` if local-only is preferred.
-4. No other code changes — `ModelRouterService` queries all registered providers automatically.
+2. Populate `ModelDescriptor.IsLocal = false`, `Region = "us-east-1"`, `InputTokenCostUsd`, `OutputTokenCostUsd`.
+3. Register in DI.
+4. Set `CostPolicy.BlockedProviders` or `DataResidencyPolicy.LocalOnly = true` in configuration to prevent cloud calls in local-only deployments.
+5. No other code changes — `ModelRouterService` queries all registered providers.
+
+### VRAM keep-alive strategy
+
+`keep_alive: "10m"` in `OllamaClient.BuildPayload` keeps the last chat model warm. `qwen3.5:2b` (classifier) coexists with other models on 16 GB. `flux2-klein` triggers a full model swap — the `image_gen_progress {stage:"generating"}` SSE event fires before the swap begins, so the UI shows a spinner. This is not optional UX; without it, the user has no feedback for 30–120 seconds.
 
 ---
 
-*Document version: 2.0 — 2026-06-14*
-*Supersedes version 1.0 — all v1 findings addressed.*
+*Document version: 3.1 — 2026-06-14*
+*Supersedes v3.0. Async policy evaluation, MCP discovery parallelization, model-provider health checks, and security hardening added. Facade-level intent/model resolution remains sequential by design.*
+ 

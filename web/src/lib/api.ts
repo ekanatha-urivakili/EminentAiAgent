@@ -260,4 +260,29 @@ export const api = {
 
   runIndeedIngestScript: () => request<unknown>('/api/jobs/indeed/ingest-script', { method: 'POST' }),
   runIndeedPullScript: () => request<unknown>('/api/jobs/indeed/pull-script', { method: 'POST' }),
+  // ── Smart chat ─────────────────────────────────────────────────────────
+  smartChat: async (
+    branchId: string,
+    content: string,
+    attachments: import('./types').ChatAttachment[] | undefined,
+    manualRouteOverride: import('./types').AgentKind | null | undefined,
+    onEvent: (event: string, data: Record<string, unknown>) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const body = {
+      branchId,
+      content,
+      attachments: attachments?.map(a => ({
+        name: a.name,
+        contentType: a.contentType,
+        dataBase64: a.dataBase64 ?? a.dataUrl,  // dataUrl is the base64 data URI; dataBase64 is raw
+      })),
+      manualRouteOverride: manualRouteOverride ?? undefined,
+    };
+
+    for await (const evt of streamSse('/api/chat/smart', body, signal)) {
+      onEvent(evt.event, evt.data);
+    }
+  },
+
 };

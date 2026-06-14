@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Bot, LayoutList, MessageCircle, ArrowUp, Square, X, Mic, MicOff, Plus, ImageIcon, FileText, Clock, Volume2, VolumeX, Loader2, ExternalLink, Check, Copy, ChevronDown as ChevronDownIcon } from 'lucide-react';
+import { ChevronDown, Bot, LayoutList, MessageCircle, ArrowUp, Square, X, Mic, MicOff, Plus, ImageIcon, FileText, Clock, Volume2, VolumeX, Loader2, ExternalLink, Check, Copy, ChevronDown as ChevronDownIcon, Zap } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -213,6 +213,9 @@ export function Composer() {
   const mode = useStore((s) => s.mode);
   const setMode = useStore((s) => s.setMode);
   const sendMessageWithAttachments = useStore((s) => s.sendMessageWithAttachments);
+  const sendSmartMessage = useStore((s) => s.sendSmartMessage);
+  const smartModeEnabled = useStore((s) => s.smartModeEnabled);
+  const toggleSmartMode = useStore((s) => s.toggleSmartMode);
   const createPlan = useStore((s) => s.createPlan);
   const startAgent = useStore((s) => s.startAgent);
   const isStreaming = useStore((s) => s.isStreaming);
@@ -413,7 +416,7 @@ export function Composer() {
     // Stop TTS on new user message
     window.speechSynthesis?.cancel();
     setInput(''); setAttachments([]); setTextAttachments([]);
-    if (mode === 'Chat') void sendMessageWithAttachments(text, attachments);
+    if (mode === 'Chat') void (smartModeEnabled ? sendSmartMessage(text, attachments) : sendMessageWithAttachments(text, attachments));
     else if (mode === 'Plan') void createPlan(text);
     else void startAgent(text);
   };
@@ -517,6 +520,21 @@ export function Composer() {
             <input type="file" multiple className="hidden" ref={fileInputRef} onChange={handleFileChange} />
 
             <ModelSelector compact />
+
+            {/* Smart-mode toggle — routes to specialist agent automatically */}
+            <button
+              onClick={toggleSmartMode}
+              title={smartModeEnabled ? 'Smart routing ON — click to disable' : 'Smart routing OFF — click to enable'}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium transition-colors border',
+                smartModeEnabled
+                  ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30 hover:bg-orange-500/20'
+                  : 'bg-background/60 text-muted-foreground border-border hover:bg-muted',
+              )}
+            >
+              <Zap size={14} className={smartModeEnabled ? 'text-orange-500' : ''} />
+              <span className="hidden sm:inline">Auto</span>
+            </button>
 
             {/* Mode selector */}
             <div ref={modeMenuRef} className="relative">

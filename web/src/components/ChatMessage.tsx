@@ -20,6 +20,8 @@ import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import type { ChatMsg, ChatSource } from '../lib/types';
+import { RoutingBadge } from './RoutingBadge';
+import { GeneratedImage } from './GeneratedImage';
 
 type Feedback = 'liked' | 'disliked' | undefined;
 type ExportFormat = 'pdf' | 'markdown' | 'docx' | 'txt';
@@ -447,10 +449,29 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
               {message.content && <UserText content={message.content} />}
             </div>
           ) : (
-            <div className="w-full pt-1.5 prose prose-slate dark:prose-invert navy:prose-invert max-w-none">
-              {hasAssistantContent && <MarkdownRenderer content={message.content} />}
-              {message.streaming && <ThinkingIndicator hasContent={hasAssistantContent} />}
-            </div>
+            <>
+              {/* Routing badge — shown when smart chat was used */}
+              {message.routingDecision && (
+                <div className="mb-1.5">
+                  <RoutingBadge routing={message.routingDecision} />
+                </div>
+              )}
+
+              {/* Generated image (image gen agent) */}
+              {(message.generatedImageUrl || message.imageGenStage) && (
+                <GeneratedImage
+                  url={message.generatedImageUrl}
+                  fluxPrompt={message.generatedFluxPrompt}
+                  stage={message.imageGenStage}
+                  className="mb-2"
+                />
+              )}
+
+              <div className="w-full pt-1.5 prose prose-slate dark:prose-invert navy:prose-invert max-w-none">
+                {hasAssistantContent && <MarkdownRenderer content={message.content} />}
+                {message.streaming && <ThinkingIndicator hasContent={hasAssistantContent} />}
+              </div>
+            </>
           )}
 
           {!message.streaming && message.content && (

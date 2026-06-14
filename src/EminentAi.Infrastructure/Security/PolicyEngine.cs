@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using EminentAi.Application.Abstractions;
@@ -19,16 +20,18 @@ namespace EminentAi.Infrastructure.Security;
 /// </summary>
 public class PolicyEngine(IDbContextFactory<EminentAiDbContext> dbFactory) : IPolicyEngine
 {
-    public PolicyVerdict Evaluate(string connectorName, string toolName, JsonNode? args)
+    private static readonly ConcurrentDictionary<string, Regex> RegexCache = new();
+
+    public async Task<PolicyVerdict> EvaluateAsync(string connectorName, string toolName, JsonNode? args, CancellationToken ct = default)
     {
         if (MutationHeuristics.IsHardDenied(connectorName, toolName))
             return PolicyVerdict.Deny;
 
-        using var db = dbFactory.CreateDbContext();
-        var connector = db.Connectors
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var connector = await db.Connectors
             .Include(c => c.Rules)
             .AsNoTracking()
-            .FirstOrDefault(c => c.Name == connectorName);
+            .FirstOrDefaultAsync(c => c.Name == connectorName, ct);
 
         // Unknown connector: never auto-allow.
         if (connector is null) return PolicyVerdict.Ask;
@@ -103,7 +106,13 @@ public class PolicyEngine(IDbContextFactory<EminentAiDbContext> dbFactory) : IPo
     internal static bool GlobMatch(string pattern, string value)
     {
         if (pattern == "*") return true;
-        var regex = "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
-        return Regex.IsMatch(value, regex, RegexOptions.IgnoreCase);
+
+        var regex = RegexCache.GetOrAdd(pattern, p =>
+        {
+            var r = "^" + Regex.Escape(p).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+            return new Regex(r, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        });
+
+        return regex.IsMatch(value);
     }
 }

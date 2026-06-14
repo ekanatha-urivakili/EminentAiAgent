@@ -11,13 +11,20 @@ using EminentAi.Api;
 using EminentAi.Api.JobSearch;
 using EminentAi.Application.Abstractions;
 using EminentAi.Application.Agent;
+using EminentAi.Application.Agents;
+using EminentAi.Application.Agents.ImageGeneration;
+using EminentAi.Application.Orchestration;
+using EminentAi.Application.Providers;
+using EminentAi.Application.Routing;
+using EminentAi.Infrastructure.Providers;
+using EminentAi.Infrastructure.Routing;
+using EminentAi.Infrastructure.Persistence;
 using EminentAi.Application.Chat;
 using EminentAi.Application.Planning;
 using EminentAi.Api.Observability;
 using EminentAi.Domain;
 using EminentAi.Infrastructure.Mcp;
 using EminentAi.Infrastructure.Ollama;
-using EminentAi.Infrastructure.Persistence;
 using EminentAi.Infrastructure.Security;
 using EminentAi.Infrastructure.Tools;
 using Microsoft.AspNetCore.Mvc;
@@ -83,6 +90,30 @@ builder.Services.AddScoped<IAgentRunRepository, AgentRunRepository>();
 builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<PlannerService>();
 builder.Services.AddScoped<AgentOrchestrator>();
+
+// ── Smart chat: A2A orchestration layer ──────────────────────────────────
+builder.Services.AddSingleton<IIntentRouter, IntentRouterService>();
+builder.Services.AddSingleton<IModelRouter, ModelRouterService>();
+builder.Services.AddSingleton<IModelProvider, OllamaModelProvider>();
+builder.Services.AddSingleton(CostPolicy.DefaultLocal);
+builder.Services.AddSingleton(DataResidencyPolicy.DefaultLocal);
+builder.Services.AddScoped<IGeneratedImageRepository, GeneratedImageRepository>();
+
+// Register all ISpecializedAgent implementations
+var generatedImagesDir = Path.GetFullPath(
+    builder.Configuration["EminentAi:GeneratedImagesDir"]
+    ?? Path.Combine(Directory.GetCurrentDirectory(), "generated-images"));
+builder.Services.AddScoped<ISpecializedAgent, VisionAgent>();
+builder.Services.AddScoped<ISpecializedAgent, CodeAgent>();
+builder.Services.AddScoped<ISpecializedAgent, ArchitectureAgent>();
+builder.Services.AddScoped<ISpecializedAgent, GeneralAgent>();
+builder.Services.AddScoped<ISpecializedAgent>(sp => new ImageGenerationAgent(
+    sp.GetRequiredService<IOllamaClient>(),
+    sp.GetRequiredService<IGeneratedImageRepository>(),
+    sp.GetRequiredService<IConversationRepository>(),
+    sp.GetRequiredService<IPiiRedactor>(),
+    generatedImagesDir));
+builder.Services.AddScoped<AgentOrchestratorFacade>();
 builder.Services.AddScoped<ObservabilityService>();
 
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -275,6 +306,20 @@ static string? HashToken(string? token) =>
     string.IsNullOrWhiteSpace(token) ? null : Convert.ToBase64String(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)));
 
 static string EscapeHtml(string value) => WebUtility.HtmlEncode(value);
+
+static string? ResolveCvPath(string cvFolder, string filename)
+{
+    if (string.IsNullOrWhiteSpace(filename)) return null;
+
+    var root = Path.GetFullPath(cvFolder)
+        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+        + Path.DirectorySeparatorChar;
+    var resolved = Path.GetFullPath(Path.Combine(root, filename));
+    return resolved.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+        && Path.GetFileName(resolved).Equals(filename, StringComparison.Ordinal)
+        ? resolved
+        : null;
+}
 
 static async Task SendPasswordResetEmailAsync(IConfiguration config, string toEmail, string resetToken)
 {
@@ -667,7 +712,7 @@ app.MapPost("/api/branches/{branchId:guid}/messages",
             a.Name,
             a.ContentType,
             StripDataUrlPrefix(a.DataBase64))).ToList();
-        await foreach (var delta in chat.SendMessageAsync(branchId, request.Content, request.ModelOverride, attachments, ct))
+        await foreach (var delta in chat.SendMessageAsync(branchId, request.Content, request.ModelOverride, attachments, ct: ct))
             await WriteSseAsync(context.Response, delta.Done ? "done" : "token", delta, ct);
     }
     catch (OperationCanceledException) { /* client disconnected */ }
@@ -717,7 +762,7 @@ app.MapGet("/api/auth/me", async (HttpRequest request, IDbContextFactory<Eminent
         : Results.Ok(new { admin.Id, admin.FullName, admin.Email });
 });
 
-app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, IDbContextFactory<EminentAiDbContext> dbFactory, AdminSessionCache adminCache, CancellationToken ct) =>
+app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, HttpRequest httpRequest, IDbContextFactory<EminentAiDbContext> dbFactory, AdminSessionCache adminCache, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.FullName) || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
         return Results.BadRequest(new { error = "fullName, email and password are required" });
@@ -726,6 +771,14 @@ app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, IDb
 
     await using var db = await dbFactory.CreateDbContextAsync(ct);
     var email = request.Email.Trim().ToLowerInvariant();
+    if (await db.AdminUsers.AnyAsync(ct))
+    {
+        var requesterTokenHash = HashToken(GetBearerToken(httpRequest));
+        if (requesterTokenHash is null ||
+            !await db.AdminUsers.AnyAsync(u => u.SessionTokenHash == requesterTokenHash, ct))
+            return Results.Unauthorized();
+    }
+
     if (await db.AdminUsers.AnyAsync(u => u.Email == email, ct))
         return Results.Conflict(new { error = "admin already exists" });
 
@@ -927,6 +980,10 @@ app.MapPost("/api/agent/runs",
             await WriteSseAsync(context.Response, agentEvent.Type, agentEvent.Data ?? new { }, ct);
     }
     catch (OperationCanceledException) { /* client disconnected */ }
+    catch (Exception ex)
+    {
+        await WriteSseAsync(context.Response, "error", new { message = $"Agent run failed: {ex.Message}" }, CancellationToken.None);
+    }
 });
 
 app.MapPost("/api/agent/runs/{runId:guid}/approvals/{stepId:guid}",
@@ -1080,11 +1137,10 @@ app.MapPost("/api/cvs/upload", async (HttpRequest request, JobSearchOrchestrator
 
 app.MapDelete("/api/cvs/{filename}", (string filename, JobSearchOrchestrator orchestrator) =>
 {
-    // Prevent path traversal
-    if (filename.Contains('/') || filename.Contains('\\') || filename.Contains(".."))
+    var path = ResolveCvPath(orchestrator.CvFolder, filename);
+    if (path is null)
         return Results.BadRequest(new { error = "Invalid filename" });
 
-    var path = Path.Combine(orchestrator.CvFolder, filename);
     if (!File.Exists(path)) return Results.NotFound();
     File.Delete(path);
     return Results.NoContent();
@@ -1111,6 +1167,9 @@ app.MapPost("/api/connectors", async ([FromBody] ConnectorRequest request, IDbCo
         return Results.BadRequest(new { error = "name and commandOrUrl are required" });
     if (System.Text.RegularExpressions.Regex.IsMatch(request.CommandOrUrl, @"[;&|`$(){}<>\n]"))
         return Results.BadRequest(new { error = "commandOrUrl must not contain shell metacharacters" });
+    if ((request.Transport ?? ConnectorTransport.Stdio) == ConnectorTransport.Stdio &&
+        !McpCommandLine.TryParse(request.CommandOrUrl, out _, out _))
+        return Results.BadRequest(new { error = "commandOrUrl is not a valid stdio command" });
 
     await using var db = await dbFactory.CreateDbContextAsync(ct);
     if (await db.Connectors.AnyAsync(c => c.Name == request.Name, ct))
@@ -1369,6 +1428,197 @@ using (var scope = app.Services.CreateScope())
             CONSTRAINT "FK_PolicyRules_Connectors_ConnectorId" FOREIGN KEY ("ConnectorId") REFERENCES "Connectors" ("Id") ON DELETE CASCADE
         );
         """);
+
+    // Agent run tables (may be missing in DBs created before these models were added)
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "AgentRuns" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_AgentRuns" PRIMARY KEY,
+            "ConversationId" TEXT NULL,
+            "Goal" TEXT NOT NULL,
+            "PlanJson" TEXT NULL,
+            "Model" TEXT NOT NULL,
+            "Status" INTEGER NOT NULL DEFAULT 0,
+            "StepBudget" INTEGER NOT NULL DEFAULT 15,
+            "TokenBudget" INTEGER NOT NULL DEFAULT 60000,
+            "StartedAt" TEXT NOT NULL,
+            "FinishedAt" TEXT NULL,
+            "FinalAnswer" TEXT NULL,
+            CONSTRAINT "FK_AgentRuns_Conversations_ConversationId" FOREIGN KEY ("ConversationId") REFERENCES "Conversations" ("Id") ON DELETE SET NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AgentRuns_StartedAt" ON "AgentRuns" ("StartedAt");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "AgentSteps" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_AgentSteps" PRIMARY KEY,
+            "RunId" TEXT NOT NULL,
+            "Ordinal" INTEGER NOT NULL,
+            "Kind" INTEGER NOT NULL DEFAULT 0,
+            "Status" INTEGER NOT NULL DEFAULT 4,
+            "ToolName" TEXT NULL,
+            "ToolArgsJson" TEXT NULL,
+            "ResultJson" TEXT NULL,
+            "Thought" TEXT NULL,
+            "CreatedAt" TEXT NOT NULL,
+            CONSTRAINT "FK_AgentSteps_AgentRuns_RunId" FOREIGN KEY ("RunId") REFERENCES "AgentRuns" ("Id") ON DELETE CASCADE
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AgentSteps_RunId_Ordinal" ON "AgentSteps" ("RunId", "Ordinal");""");
+}
+
+// ── Smart chat endpoint ──────────────────────────────────────────────────
+app.MapPost("/api/chat/smart", async (
+    [FromBody] SmartChatRequest req,
+    AgentOrchestratorFacade facade,
+    HttpContext http,
+    CancellationToken ct) =>
+{
+    if (req.BranchId == Guid.Empty)
+        return Results.BadRequest(new { error = "branchId is required" });
+    if (string.IsNullOrWhiteSpace(req.Content))
+        return Results.BadRequest(new { error = "content is required" });
+    // Guard against oversized payloads (DoS / OOM)
+    if (req.Content.Length > 32_000)
+        return Results.BadRequest(new { error = "content exceeds 32,000 character limit" });
+    if ((req.Attachments?.Count ?? 0) > 10)
+        return Results.BadRequest(new { error = "too many attachments (max 10)" });
+    if (req.Attachments?.Any(a => (a.DataBase64?.Length ?? 0) > 10_000_000) == true)
+        return Results.BadRequest(new { error = "attachment exceeds 10 MB limit" });
+
+    // Validate manualRouteOverride — invalid enum string → routing_error immediately
+    AgentKind? overrideKind = null;
+    if (!string.IsNullOrWhiteSpace(req.ManualRouteOverride))
+    {
+        if (!Enum.TryParse<AgentKind>(req.ManualRouteOverride, ignoreCase: true, out var parsed))
+        {
+            PrepareSse(http.Response);
+            await WriteSseAsync(http.Response, "routing_error", new { message = "Unknown manual route override." }, ct);
+            return Results.Empty;
+        }
+        overrideKind = parsed;
+    }
+
+    var attachments = req.Attachments?
+        .Select(a => new ChatAttachment(a.Name, a.ContentType, StripDataUrlPrefix(a.DataBase64)))
+        .ToList() ?? new List<ChatAttachment>();
+
+    var imageAttachments = attachments
+        .Where(a => a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    var turnRequest = new SmartTurnRequest(
+        BranchId: req.BranchId,
+        UserText: req.Content,
+        Attachments: attachments,
+        HasImageAttachment: imageAttachments.Count > 0,
+        AttachmentContentTypes: imageAttachments.Select(a => a.ContentType).ToList(),
+        ManualRouteOverride: overrideKind,
+        RequestTokenHash: HashToken(GetBearerToken(http.Request)));
+
+    http.Response.ContentType = "text/event-stream";
+    http.Response.Headers.CacheControl = "no-cache";
+    http.Response.Headers.Connection = "keep-alive";
+
+    try
+    {
+        await foreach (var evt in facade.ExecuteSmartTurnAsync(turnRequest, ct))
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(evt.Data, SseJson.Options);
+            await http.Response.WriteAsync($"event: {evt.Type}\ndata: {json}\n\n", ct);
+            await http.Response.Body.FlushAsync(ct);
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Client disconnected — normal; no error response needed
+    }
+    catch
+    {
+        await WriteSseAsync(http.Response, "error", new { message = "Smart chat failed." }, CancellationToken.None);
+    }
+
+    return Results.Empty;
+});
+
+// ── Generated image serve (auth + ownership required) ────────────────────
+app.MapGet("/api/generated-images/{filename}", async (
+    string filename,
+    HttpContext http,
+    CancellationToken ct) =>
+{
+    // Layer 1: strict UUID.{ext} filename only (no path traversal possible)
+    if (!System.Text.RegularExpressions.Regex.IsMatch(
+        filename,
+        @"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|gif|webp)$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+    {
+        return Results.BadRequest(new { error = "Invalid filename" });
+    }
+
+    var resolvedDir = generatedImagesDir;  // use the configured directory, not cwd
+    var resolvedPath = Path.GetFullPath(Path.Combine(resolvedDir, filename));
+
+    // Layer 2: path containment check with trailing separator (defence in depth)
+    // Prevents "/var/images-alt/..." from matching "/var/images" as a prefix.
+    var safeRoot = resolvedDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                   + Path.DirectorySeparatorChar;
+    if (!resolvedPath.StartsWith(safeRoot, StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Invalid filename" });
+
+    if (!File.Exists(resolvedPath))
+        return Results.NotFound(new { error = "Image not found" });
+
+    // Ownership check: verify the image was generated in a branch this session can access
+    var imageId = Guid.Parse(Path.GetFileNameWithoutExtension(filename));
+    var imageRepo = http.RequestServices.GetRequiredService<IGeneratedImageRepository>();
+    if (!await imageRepo.ExistsForSessionAsync(imageId, HashToken(GetBearerToken(http.Request)), ct))
+        return Results.Forbid();
+
+    var contentType = Path.GetExtension(filename).ToLowerInvariant() switch
+    {
+        ".jpg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".webp" => "image/webp",
+        _ => "image/png"
+    };
+    return Results.File(resolvedPath, contentType);
+});
+
+// Bootstrap GeneratedImages table (idempotent)
+{
+    using var scope = app.Services.CreateScope();
+    var dbF = scope.ServiceProvider.GetRequiredService<IDbContextFactory<EminentAiDbContext>>();
+    await using var db = await dbF.CreateDbContextAsync();
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "GeneratedImages" (
+            "Id"        TEXT NOT NULL CONSTRAINT "PK_GeneratedImages" PRIMARY KEY,
+            "BranchId"  TEXT NOT NULL,
+            "SessionTokenHash" TEXT NULL,
+            "CreatedAt" TEXT NOT NULL,
+            CONSTRAINT "FK_GeneratedImages_Branches_BranchId" FOREIGN KEY ("BranchId") REFERENCES "Branches" ("Id") ON DELETE CASCADE
+        );
+        """);
+    var connection = db.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+        await connection.OpenAsync();
+    await using (var command = connection.CreateCommand())
+    {
+        command.CommandText = """PRAGMA table_info("GeneratedImages");""";
+        var hasSessionTokenHash = false;
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (reader.GetString(1).Equals("SessionTokenHash", StringComparison.OrdinalIgnoreCase))
+            {
+                hasSessionTokenHash = true;
+                break;
+            }
+        }
+
+        if (!hasSessionTokenHash)
+            db.Database.ExecuteSqlRaw("""ALTER TABLE "GeneratedImages" ADD COLUMN "SessionTokenHash" TEXT NULL;""");
+    }
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_GeneratedImages_BranchId" ON "GeneratedImages" ("BranchId");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_GeneratedImages_Id_SessionTokenHash" ON "GeneratedImages" ("Id", "SessionTokenHash");""");
 }
 
 app.Run();
@@ -1396,6 +1646,11 @@ public record StartAgentRunRequest(string Goal, string[]? Connectors, string? Mo
 public record ApprovalRequest(string Decision, bool? Remember);
 public record ConnectorRequest(string Name, ConnectorTransport? Transport, string CommandOrUrl, PolicyProfile? PolicyProfile);
 public record PullModelRequest(string Name);
+public record SmartChatRequest(
+    Guid BranchId,
+    string Content,
+    List<SendAttachmentRequest>? Attachments,
+    string? ManualRouteOverride);
 public record RegisterRequest(string FullName, string Email, string Password);
 public record LoginRequest(string Email, string Password);
 public record ForgotPasswordRequest(string Email);

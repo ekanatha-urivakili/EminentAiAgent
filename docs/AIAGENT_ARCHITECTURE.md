@@ -187,9 +187,9 @@ Key implementation files:
 Key implementation files:
 
 - `Ollama/OllamaClient.cs`: wraps Ollama `/api/chat`, `/api/tags`, and `/api/pull`.
-- `Mcp/McpHost.cs`: hosts stdio MCP clients, lists tools, namespaces tool names, and calls MCP tools.
+- `Mcp/McpHost.cs`: hosts stdio MCP clients, lists tools, namespaces tool names, and calls MCP tools. Now parallelizes tool listing across connectors.
 - `Tools/BuiltinToolRunner.cs`: provides built-in `filesystem.*` and `shell.run` tools.
-- `Security/PolicyEngine.cs`: evaluates connector rules and remembers approval decisions.
+- `Security/PolicyEngine.cs`: evaluates connector rules asynchronously and remembers approval decisions. Uses a compiled regex cache for high-performance glob matching.
 - `Security/PiiRedactor.cs`: regex redaction for common tokens, keys, cards, SSNs, private keys, and auth headers.
 - `Persistence/EminentAiDbContext.cs`: EF Core mappings and indexes.
 - `Persistence/ConversationRepository.cs`: conversation, branch, and message persistence.

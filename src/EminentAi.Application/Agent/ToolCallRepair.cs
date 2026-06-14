@@ -134,9 +134,18 @@ public static partial class ToolCallRepair
     private static string MechanicalRepair(string json)
     {
         var s = json.Trim();
-        s = Regex.Replace(s, ",\\s*([}\\]])", "$1");          // trailing commas
-        s = Regex.Replace(s, "(?<=[{,]\\s*)'([^']*)'\\s*:", "\"$1\":"); // single-quoted keys
-        s = Regex.Replace(s, ":\\s*'([^']*)'", ": \"$1\"");   // single-quoted values
+
+        // Fix trailing commas in objects and arrays
+        s = Regex.Replace(s, @",\s*([}\]])", "$1");
+
+        // Surgical replacement of single-quoted keys: { 'key': ... } -> { "key": ... }
+        // We look for { or , followed by whitespace, then 'key' then :
+        s = Regex.Replace(s, @"([{,]\s*)'([^']*)'(\s*:)", "$1\"$2\"$3");
+
+        // Surgical replacement of single-quoted string values: : 'value' -> : "value"
+        // We look for : followed by whitespace, then 'value'
+        // This is still a bit risky if the value contains ' itself.
+        s = Regex.Replace(s, @"(:\s*)'([^']*)'", "$1\"$2\"");
 
         var open = s.Count(c => c == '{') - s.Count(c => c == '}');
         if (open > 0) s += new string('}', open);

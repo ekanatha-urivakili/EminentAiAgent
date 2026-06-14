@@ -16,6 +16,7 @@ public class EminentAiDbContext : DbContext
     public DbSet<AgentStep> AgentSteps => Set<AgentStep>();
     public DbSet<ConnectorConfig> Connectors => Set<ConnectorConfig>();
     public DbSet<PolicyRule> PolicyRules => Set<PolicyRule>();
+    public DbSet<GeneratedImage> GeneratedImages => Set<GeneratedImage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -93,6 +94,17 @@ public class EminentAiDbContext : DbContext
         modelBuilder.Entity<PolicyRule>(entity =>
         {
             entity.HasKey(e => e.Id);
+        });
+
+        modelBuilder.Entity<GeneratedImage>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.BranchId);
+            entity.HasIndex(e => new { e.Id, e.SessionTokenHash });
+            entity.HasOne(e => e.Branch)
+                  .WithMany()
+                  .HasForeignKey(e => e.BranchId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -71,6 +71,11 @@ export interface ChatMsg {
   tokensOut?: number;
   createdAt?: string;
   streaming?: boolean;
+  // Smart chat routing metadata — persists across re-renders
+  routingDecision?: RoutingDecision;
+  generatedImageUrl?: string;
+  generatedFluxPrompt?: string;
+  imageGenStage?: ImageGenStage;
 }
 
 export interface ChatSource {
@@ -303,4 +308,31 @@ export interface AgentRunDetail {
   finishedAt?: string;
   finalAnswer?: string;
   steps: AgentStepDetail[];
+}
+
+// ── Smart chat / A2A routing ─────────────────────────────────────────────────
+export type AgentKind = 'vision' | 'coding' | 'architecture' | 'imageGeneration' | 'general';
+
+export interface RoutingDecision {
+  intent: AgentKind;
+  model: string;
+  provider: string;
+  reason: string;
+  classificationMs: number;
+  wasFastPath: boolean;
+  manualOverrideApplied: boolean;
+}
+
+export interface ImageGenerationResult {
+  url: string;
+  filename: string;
+  fluxPrompt: string;
+  generationMs: number;
+}
+
+export type ImageGenStage = 'translating' | 'generating' | 'saving';
+
+export interface SmartChatEvent {
+  event: 'routing_decision' | 'token' | 'image_gen_progress' | 'image_generated' | 'done' | 'routing_error';
+  data: Record<string, unknown>;
 }

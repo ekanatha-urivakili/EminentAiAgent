@@ -175,3 +175,17 @@ public class PolicyRule
 
     public ConnectorConfig Connector { get; set; } = null!;
 }
+
+/// <summary>
+/// Tracks ownership of AI-generated image files.
+/// Used by GET /api/generated-images/:filename to enforce bearer token + ownership checks.
+/// </summary>
+public class GeneratedImage
+{
+    public Guid Id { get; set; } = Guid.NewGuid();  // UUID = filename without .png
+    public Guid BranchId { get; set; }
+    public string? SessionTokenHash { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public Branch Branch { get; set; } = null!;
+}

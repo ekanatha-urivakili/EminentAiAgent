@@ -21,22 +21,29 @@ public sealed class McpHost(IDbContextFactory<EminentAiDbContext> dbFactory) : I
 
     public async Task<IReadOnlyList<ToolSchema>> GetToolsAsync(string[] connectorNames, CancellationToken ct = default)
     {
-        var allTools = new List<ToolSchema>();
-        foreach (var name in connectorNames)
+        var tasks = connectorNames.Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(name => GetToolsForConnectorAsync(name, ct));
+
+        var results = await Task.WhenAll(tasks);
+        return results.SelectMany(r => r).ToList();
+    }
+
+    private async Task<IReadOnlyList<ToolSchema>> GetToolsForConnectorAsync(string name, CancellationToken ct)
+    {
+        try
         {
             var client = await GetOrConnectAsync(name, ct);
             var tools = await client.ListToolsAsync((ModelContextProtocol.RequestOptions?)null, ct);
-            foreach (var tool in tools)
-            {
-                // Namespace tools to avoid collisions: "jira.create_issue"
-                allTools.Add(new ToolSchema(
-                    $"{name}.{tool.Name}",
-                    tool.Description ?? string.Empty,
-                    JsonNode.Parse(tool.JsonSchema.GetRawText())!
-                ));
-            }
+            return tools.Select(tool => new ToolSchema(
+                $"{name}.{tool.Name}",
+                tool.Description ?? string.Empty,
+                JsonNode.Parse(tool.JsonSchema.GetRawText())!
+            )).ToList();
         }
-        return allTools;
+        catch
+        {
+            return Array.Empty<ToolSchema>();
+        }
     }
 
     public async Task<JsonNode> CallToolAsync(string connectorName, string toolName, JsonNode args, CancellationToken ct = default)
@@ -52,18 +59,24 @@ public sealed class McpHost(IDbContextFactory<EminentAiDbContext> dbFactory) : I
             : JsonNode.Parse(JsonSerializer.Serialize(result.Content))!;
     }
 
-    private Task<McpClient> GetOrConnectAsync(string name, CancellationToken ct)
+    private async Task<McpClient> GetOrConnectAsync(string name, CancellationToken ct)
     {
-        // Lazy ensures concurrent callers share a single connect attempt per connector.
-        var lazy = _clients.GetOrAdd(name, key =>
-            new Lazy<Task<McpClient>>(() => ConnectAsync(key, ct), LazyThreadSafetyMode.ExecutionAndPublication));
-
-        if (lazy.IsValueCreated && lazy.Value.IsFaulted)
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            _clients.TryRemove(name, out _); // allow reconnect after a failed attempt
-            return GetOrConnectAsync(name, ct);
+            var lazy = _clients.GetOrAdd(name, key =>
+                new Lazy<Task<McpClient>>(() => ConnectAsync(key, ct), LazyThreadSafetyMode.ExecutionAndPublication));
+
+            try
+            {
+                return await lazy.Value;
+            }
+            catch
+            {
+                _clients.TryRemove(name, out _);
+                if (attempt > 0) throw;
+            }
         }
-        return lazy.Value;
+        throw new InvalidOperationException($"Failed to connect to connector '{name}'");
     }
 
     private async Task<McpClient> ConnectAsync(string name, CancellationToken ct)
@@ -80,12 +93,14 @@ public sealed class McpHost(IDbContextFactory<EminentAiDbContext> dbFactory) : I
         IClientTransport transport;
         if (config.Transport == ConnectorTransport.Stdio)
         {
-            var parts = config.CommandOrUrl.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (!McpCommandLine.TryParse(config.CommandOrUrl, out var command, out var arguments))
+                throw new InvalidOperationException($"Connector '{name}' has an invalid command line");
+
             transport = new StdioClientTransport(new StdioClientTransportOptions
             {
                 Name = name,
-                Command = parts[0],
-                Arguments = parts.Skip(1).ToArray()
+                Command = command,
+                Arguments = arguments
             });
         }
         else

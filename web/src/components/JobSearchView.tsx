@@ -108,13 +108,14 @@ export function JobSearchView() {
           <ResultsTab results={jobResults} loading={jobLoading} error={jobError} />
         )}
         {tab === 'settings' && (
-          <SettingsTab settings={jobSettings} onSave={saveJobSettings} />
+          <SettingsTab key={JSON.stringify(jobSettings)} settings={jobSettings} onSave={saveJobSettings} />
         )}
         {tab === 'cvs' && (
           <CvsTab files={cvFiles} onUpload={uploadCv} onDelete={deleteCv} onReload={loadCvFiles} />
         )}
         {tab === 'sources' && (
           <SourcesTab
+            key={JSON.stringify(jobSettings)}
             sources={jobSources}
             onRefresh={loadJobSources}
             onIngestIndeed={ingestIndeedJobs}
@@ -415,14 +416,6 @@ function SettingsTab({
   const jobLoading = useStore((s) => s.jobLoading);
   const runIndeedIngestScript = useStore((s) => s.runIndeedIngestScript);
   const runIndeedPullScript = useStore((s) => s.runIndeedPullScript);
-
-  // Sync store settings into local form state when they load from the API.
-  // Deferred to avoid the "setState in effect body" lint warning while still
-  // capturing the async load that happens after mount.
-  useEffect(() => {
-    const id = setTimeout(() => setForm(settings), 0);
-    return () => clearTimeout(id);
-  }, [settings]);
 
   const addKeyword = () => {
     const kw = newKeyword.trim();
@@ -1088,10 +1081,6 @@ function SourcesTab({
   const configuredSecrets = new Set(form.configuredSecretKeys);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    setForm(settings);
-  }, [settings]);
 
   const handleSave = async () => {
     setSaving(true);

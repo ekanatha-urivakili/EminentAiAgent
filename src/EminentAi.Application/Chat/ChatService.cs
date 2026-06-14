@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using EminentAi.Application.Abstractions;
+using EminentAi.Application.Agents;
 using EminentAi.Domain;
 
 namespace EminentAi.Application.Chat;
@@ -57,6 +59,7 @@ public class ChatService(IConversationRepository repo, IOllamaClient ollama, IPi
 
     public async IAsyncEnumerable<ChatDelta> SendMessageAsync(
         Guid branchId, string content, string? modelOverride = null, List<ChatAttachment>? attachments = null,
+        AgentProfile? profile = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var branch = await repo.GetBranchAsync(branchId, ct)
@@ -95,7 +98,8 @@ public class ChatService(IConversationRepository repo, IOllamaClient ollama, IPi
         await repo.SaveChangesAsync(ct);
 
         var model = modelOverride ?? branch.Conversation!.ModelDefault;
-        var messages = BuildContext(branch.Conversation!.SystemPrompt, history);
+        var systemPrompt = profile?.SystemPrompt ?? branch.Conversation!.SystemPrompt;
+        var messages = BuildContext(systemPrompt, history);
         messages.Add(new ChatMessage("user", redacted, imageAttachments.Select(a => a.DataBase64).ToList()));
 
         await foreach (var delta in StreamAndPersistAsync(branchId, userMessage.Id, model, messages, ct))
@@ -155,7 +159,7 @@ public class ChatService(IConversationRepository repo, IOllamaClient ollama, IPi
         };
 
         var started = DateTime.UtcNow;
-        var fullContent = "";
+        var fullContent = new StringBuilder();
         Usage? usage = null;
 
         var request = new ChatRequest(model, messages, Temperature: temperature);
@@ -171,13 +175,13 @@ public class ChatService(IConversationRepository repo, IOllamaClient ollama, IPi
             }
             catch (OperationCanceledException) { break; }   // client went away — keep partial content
 
-            if (delta.Token is not null) fullContent += delta.Token;
+            if (delta.Token is not null) fullContent.Append(delta.Token);
             if (delta.Done) usage = delta.Usage;
             yield return delta with { MessageId = assistantMessage.Id };
         }
 
         // Persist whatever we got, even if the stream ended early.
-        assistantMessage.Content = fullContent;
+        assistantMessage.Content = fullContent.ToString();
         assistantMessage.TokensIn = usage?.In;
         assistantMessage.TokensOut = usage?.Out;
         assistantMessage.LatencyMs = (long)(DateTime.UtcNow - started).TotalMilliseconds;

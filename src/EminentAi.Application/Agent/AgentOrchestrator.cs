@@ -59,7 +59,22 @@ public sealed class AgentOrchestrator(
             StepBudget = Math.Clamp(opts.StepBudget, 1, 50),
             TokenBudget = opts.TokenBudget
         };
-        await runs.AddRunAsync(run, CancellationToken.None);
+        string? persistError = null;
+        try
+        {
+            await runs.AddRunAsync(run, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            persistError = ex.Message;
+        }
+
+        if (persistError is not null)
+        {
+            yield return new AgentEvent("error", new { message = $"Failed to persist agent run: {persistError}" });
+            broker.CompleteRun(runId);
+            yield break;
+        }
 
         IReadOnlyList<ToolSchema> tools;
         var toolError = (string?)null;
@@ -207,7 +222,7 @@ public sealed class AgentOrchestrator(
                     ? PolicyVerdict.Deny
                     : isBuiltin
                         ? (mutating ? PolicyVerdict.Ask : PolicyVerdict.Allow)
-                        : policy.Evaluate(connectorName, toolName, call.Arguments);
+                        : await policy.EvaluateAsync(connectorName, toolName, call.Arguments, ct);
 
                 // Taint escalation: once untrusted external data has been read,
                 // even allow-listed writes require a human.

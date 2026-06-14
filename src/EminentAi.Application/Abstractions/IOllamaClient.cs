@@ -57,4 +57,11 @@ public interface IOllamaClient
     Task<bool> IsHealthyAsync(CancellationToken ct = default);
 
     IAsyncEnumerable<PullDelta> PullModelAsync(string name, CancellationToken ct = default);
+
+    /// <summary>
+    /// Generates an image via POST /api/generate (non-chat endpoint used by Flux2 diffusion models).
+    /// Returns the base64-encoded PNG string from the response body.
+    /// Call this only after the Flux spike confirms response shape is { "response": "base64..." }.
+    /// </summary>
+    Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default);
 }

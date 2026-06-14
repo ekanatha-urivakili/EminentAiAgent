@@ -1,6 +1,28 @@
-import { CheckCircle2, ArrowRight, Play, LayoutList, Loader2, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, ArrowRight, Play, LayoutList, Loader2, AlertTriangle, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useStore } from '../state/store';
+import type { Plan } from '../lib/types';
+
+function downloadPlanAsMarkdown(plan: Plan) {
+  const lines = [
+    `# Plan: ${plan.goal}`,
+    '',
+    ...plan.steps.flatMap((s) => [
+      `## Step ${s.ordinal}: ${s.title}`,
+      s.detail ? s.detail : '',
+      '',
+    ]),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'eminentai-plan.md';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export function PlanView() {
   const plan = useStore((s) => s.plan);
@@ -79,7 +101,14 @@ export function PlanView() {
           ))}
         </div>
 
-        <div className="mt-10 flex justify-end">
+        <div className="mt-10 flex items-center justify-between gap-4 flex-wrap">
+          <button
+            onClick={() => downloadPlanAsMarkdown(plan)}
+            className="flex items-center gap-2 px-5 py-3 rounded-full font-semibold border border-border bg-background hover:bg-muted transition-colors text-base text-muted-foreground hover:text-foreground"
+          >
+            <Download size={16} />
+            Download plan
+          </button>
           <button
             onClick={promote}
             className="flex items-center gap-2 bg-primary text-primary-foreground px-7 py-3 rounded-full font-semibold hover:bg-primary/90 transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 text-base"
