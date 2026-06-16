@@ -63,8 +63,8 @@ public sealed record JobSearchCriteria
     public string? GmailCredentialsJson { get; init; }
     public string? GmailUserEmail { get; init; }
     public string? GmailSearchQuery { get; init; } = "label:job-alerts is:unread";
-    public string? IndeedIngestScript { get; init; } = "/Users/ekanathareddyurivakili/Documents/GitHub/AiJobSearchAgent/ingest_indeed.sh";
-    public string? IndeedPullScript { get; init; } = "/Users/ekanathareddyurivakili/Documents/GitHub/AiJobSearchAgent/ingest_jobs.sh";
+    public string? IndeedIngestScript { get; init; } = "/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/scripts/ingest_indeed.sh";
+    public string? IndeedPullScript { get; init; } = "/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/scripts/ingest_jobs.sh";
     public List<string> ConfiguredSecretKeys { get; init; } = new();
 }
 
@@ -199,7 +199,7 @@ public sealed class IndeedDirectBuffer
         }
     }
 
-    public IReadOnlyCollection<NormalizedJob> GetAll() => (IReadOnlyCollection<NormalizedJob>)_jobs.Values;
+    public IReadOnlyCollection<NormalizedJob> GetAll() => _jobs.Values.ToList();
     public int Count => _jobs.Count;
 
     private static string FirstValue(params string?[] values) =>

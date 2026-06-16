@@ -43,12 +43,34 @@ web/                          React 19 + Vite + Tailwind UI
 vscode-ext/                   VS Code extension: chat sidebar, FIM completions, agent edits
 ```
 
+## Install Ollama
+
+### macOS
+
+```bash
+brew install ollama
+```
+
+### Linux
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### Windows
+
+```powershell
+winget install Ollama.Ollama
+```
+
+Or download the installer directly from [ollama.com/download](https://ollama.com/download) and run it.
+
 ## Prerequisites
 
 ```bash
-brew services start ollama
-ollama pull qwen2.5-coder:7b
-ollama pull qwen2.5-coder:1.5b-base
+ollama serve                          # start the daemon (macOS: brew services start ollama)
+ollama pull qwen2.5-coder:7b          # primary coding model
+ollama pull qwen2.5-coder:1.5b-base  # FIM completions model
 npm install --prefix web
 npm install --prefix vscode-ext
 ```
