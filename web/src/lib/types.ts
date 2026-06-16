@@ -1,5 +1,5 @@
 export type Mode = 'Chat' | 'Plan' | 'Agent';
-export type AppView = 'chat' | 'ollama' | 'library' | 'mailpit' | 'connectors' | 'jobs' | 'observability';
+export type AppView = 'chat' | 'ollama' | 'library' | 'mailpit' | 'connectors' | 'jobs' | 'observability' | 'settings';
 export type Theme = 'light' | 'dark' | 'navy' | 'system';
 
 export interface ModelInfo {

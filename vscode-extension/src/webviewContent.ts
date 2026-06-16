@@ -2,9 +2,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
-/** Cache template so disk is only read once per activation. */
-let _htmlTemplate: string | null = null;
-
 export function getWebviewContent(_webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = generateNonce();
 
@@ -16,13 +13,9 @@ export function getWebviewContent(_webview: vscode.Webview, extensionUri: vscode
     `font-src 'none'`,
   ].join('; ');
 
-  if (!_htmlTemplate) {
-    const htmlPath = path.join(extensionUri.fsPath, 'media', 'chat.html');
-    _htmlTemplate = fs.readFileSync(htmlPath, 'utf8');
-  }
-  let html = _htmlTemplate;
+  const htmlPath = path.join(extensionUri.fsPath, 'media', 'chat.html');
+  let html = fs.readFileSync(htmlPath, 'utf8');
 
-  // Inject CSP and nonce
   html = html
     .replace('__CSP__', csp)
     .replace(/__NONCE__/g, nonce);

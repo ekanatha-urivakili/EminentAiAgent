@@ -1,8 +1,8 @@
 {
   "name": "eminentai",
   "displayName": "EminentAI",
-  "description": "Local AI coding assistant powered by Ollama — Agent, Ask, and Plan modes",
-  "version": "0.1.0",
+  "description": "Local AI coding assistant powered by Ollama \u2014 Agent, Ask, and Plan modes",
+  "version": "0.2.0",
   "publisher": "eminentai",
   "icon": "resources/icon.png",
   "license": "MIT",
@@ -13,9 +13,22 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["AI", "Chat", "Other"],
-  "keywords": ["ollama", "ai", "llm", "local", "copilot", "agent"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "ollama",
+    "ai",
+    "llm",
+    "local",
+    "copilot",
+    "agent"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -76,19 +89,29 @@
         },
         "eminentai.pinnedModels": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Models to pin at the top of the model picker"
         },
         "eminentai.defaultMode": {
           "type": "string",
-          "enum": ["agent", "ask", "plan"],
+          "enum": [
+            "agent",
+            "ask",
+            "plan"
+          ],
           "default": "agent",
           "description": "Default interaction mode"
         },
         "eminentai.defaultThinkingEffort": {
           "type": "string",
-          "enum": ["low", "medium", "high"],
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
           "default": "medium",
           "description": "Default thinking effort level"
         },
@@ -110,6 +133,100 @@
           "minimum": 2,
           "maximum": 100,
           "description": "Maximum conversation history messages to send per request"
+        },
+        "eminentai.enabledModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of enabled model IDs (empty = all enabled). Managed via EminentAI Settings."
+        },
+        "eminentai.azureEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Azure OpenAI integration"
+        },
+        "eminentai.azureEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Azure OpenAI base URL (e.g., https://my-resource.openai.azure.com)"
+        },
+        "eminentai.azureDeployment": {
+          "type": "string",
+          "default": "",
+          "description": "Azure OpenAI deployment name"
+        },
+        "eminentai.cmdEnterSubmit": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, Cmd/Ctrl+Enter submits and Enter inserts newline"
+        },
+        "eminentai.queueMessages": {
+          "type": "string",
+          "enum": ["after", "queue"],
+          "default": "after",
+          "description": "Behavior when sending a message while agent is running"
+        },
+        "eminentai.agentAutocomplete": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show contextual suggestions while prompting"
+        },
+        "eminentai.showTips": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show rotating tips on the empty screen"
+        },
+        "eminentai.autoApproveModeTransitions": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow agent to switch modes without asking first"
+        },
+        "eminentai.webSearchTool": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow agent to search the web for relevant information"
+        },
+        "eminentai.autoAcceptWebSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip approval dialog for web searches"
+        },
+        "eminentai.awsBedrockEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use AWS Bedrock to access Claude models through your AWS account"
+        },
+        "eminentai.awsBedrockRegion": {
+          "type": "string",
+          "default": "us-east-1",
+          "description": "AWS region for Bedrock"
+        },
+        "eminentai.awsBedrockModel": {
+          "type": "string",
+          "default": "us.anthropic.claude-sonnet-4-6",
+          "description": "AWS Bedrock model ID"
+        },
+        "eminentai.customRules": {
+          "type": "string",
+          "default": "",
+          "description": "Custom rules and instructions added to every prompt"
+        },
+        "eminentai.proxyEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use a proxy for API requests"
+        },
+        "eminentai.proxyUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Proxy URL (e.g., http://proxy.example.com:8080)"
+        },
+        "eminentai.betaFeatures": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable experimental beta features"
         }
       }
     },
@@ -119,6 +236,13 @@
           "command": "eminentai.openChat",
           "group": "eminentai",
           "when": "editorHasSelection"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "eminentai.newSession",
+          "when": "view == eminentai.chatView",
+          "group": "navigation"
         }
       ]
     },

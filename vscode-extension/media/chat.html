@@ -155,7 +155,6 @@ html,body{height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(
       <button class="tb-btn" id="btn-new" title="New session (Ctrl+Shift+I)">＋</button>
       <button class="tb-btn" id="btn-refresh" title="Refresh models">⟳</button>
       <button class="tb-btn" id="btn-toggle" title="Toggle sessions">☰</button>
-      <button class="tb-btn" id="btn-settings" title="Settings">⚙</button>
     </div>
   </div>
 
@@ -211,8 +210,6 @@ html,body{height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(
     <div class="p-item" data-m="agent"><span class="p-check" id="ck-agent">✓</span><span class="p-item-lbl">Agent</span><span class="p-item-sub">⇧⌘I</span></div>
     <div class="p-item" data-m="ask"><span class="p-check" id="ck-ask"></span><span class="p-item-lbl">Ask</span></div>
     <div class="p-item" data-m="plan"><span class="p-check" id="ck-plan"></span><span class="p-item-lbl">Plan</span></div>
-    <div class="p-sep"></div>
-    <div class="p-item" id="cfg-agents"><span class="p-check"></span><span class="p-item-lbl" style="color:var(--fg2)">Configure Custom Agents…</span></div>
   </div>
 </div>
 
@@ -245,8 +242,8 @@ const post = msg => vscode.postMessage(msg);
 // ── state ────────────────────────────────────────────────────────────────
 const S = {
   sessions: [], activeId: null,
-  models: [], pinned: [],
-  model: '', mode: 'agent', effort: 'medium',
+  models: [],
+  model: '', modelName: '', mode: 'agent', effort: 'medium',
   streaming: false, streamId: null, streamEl: null, streamBuf: '',
   attached: null,
 };
@@ -354,7 +351,7 @@ function addMsg(role,content,meta={}){
   wrap.appendChild(bubble);
   if(meta.model||meta.tokens||meta.dur){
     const m = document.createElement('div'); m.className='msg-meta';
-    if(meta.model) m.innerHTML+='<span class="model-lbl">'+esc(meta.model)+'</span>';
+    if(meta.model){ const lbl=meta.model.replace(/^[^:]+:/,''); m.innerHTML+='<span class="model-lbl">'+esc(lbl)+'</span>'; }
     if(meta.tokens) m.innerHTML+='<span>'+meta.tokens+' tok</span>';
     if(meta.dur)   m.innerHTML+='<span>'+fmtMs(meta.dur)+'</span>';
     wrap.appendChild(m);
@@ -403,48 +400,72 @@ function streamEnd(tokens,dur){
 function renderModelPop(){
   const q=(ge('model-q').value||'').toLowerCase();
   const inner=ge('model-inner'); inner.innerHTML='';
-  const { models, pinned, model: sel } = S;
+  const { models, model: sel } = S;
+  const PROVIDER_LABELS={openai:'OpenAI',anthropic:'Anthropic',google:'Google',ollama:'Ollama'};
 
-  function mkItem(name, sub, isPinned, badge){
+  function mkItem(m){
+    const isSel = m.id===sel;
     const el=document.createElement('div');
-    el.className='p-item'+(name===sel?' sel':''); el.dataset.v=name;
-    el.innerHTML='<span class="p-check">'+(name===sel?'✓':'')+'</span>'
-      +'<span class="p-item-lbl">'+esc(name)+'</span>'
-      +(badge?'<span class="p-badge">'+esc(badge)+'</span>':'')
+    el.className='p-item'+(isSel?' sel':''); el.dataset.v=m.id;
+    let sub='';
+    if(m.parameterSize) sub+=m.parameterSize;
+    if(m.size) sub+=(sub?' · ':'')+fmtB(m.size);
+    if(m.contextLength) sub+=(sub?' · ':'')+Math.round(m.contextLength/1000)+'k ctx';
+    const provBadge='<span class="p-badge" style="background:var(--bg);color:var(--fg2);border:1px solid var(--border)">'+esc(PROVIDER_LABELS[m.provider]||m.provider)+'</span>';
+    el.innerHTML='<span class="p-check">'+(isSel?'✓':'')+'</span>'
+      +'<span class="p-item-lbl">'+esc(m.name)+'</span>'
+      +provBadge
       +(sub?'<span class="p-item-sub">'+esc(sub)+'</span>':'');
-    if(isPinned!==null){
-      el.innerHTML+='<button class="p-pin" title="'+(isPinned?'Unpin':'Pin')+'">'+(isPinned?'★':'☆')+'</button>';
-      el.querySelector('.p-pin').onclick=e=>{ e.stopPropagation(); post({type:isPinned?'unpin_model':'pin_model',modelName:name}); closeAll(); };
-    }
-    el.onclick=()=>setModel(name);
+    el.innerHTML+='<button class="p-pin" title="'+(m.pinned?'Unpin':'Pin')+'">'+(m.pinned?'★':'☆')+'</button>';
+    el.querySelector('.p-pin').onclick=function(e){
+      e.stopPropagation();
+      post({type:m.pinned?'unpin_model':'pin_model',modelId:m.id});
+      closeAll();
+    };
+    el.onclick=function(){ setModel(m.id); };
     return el;
   }
 
-  // Auto
-  inner.appendChild(mkItem('auto','',null,''));
-  inner.appendChild(Object.assign(document.createElement('div'),{className:'p-sep'}));
+  const filtered=models.filter(function(m){
+    return !q||m.name.toLowerCase().includes(q)||m.id.toLowerCase().includes(q);
+  }).filter(function(m){ return m.enabled!==false; });
 
-  const pinnedModels=models.filter(m=>pinned.includes(m.name)&&(!q||m.name.toLowerCase().includes(q)));
-  const otherModels =models.filter(m=>!pinned.includes(m.name)&&(!q||m.name.toLowerCase().includes(q)));
+  const pinnedList=filtered.filter(function(m){ return m.pinned; });
+  const otherList =filtered.filter(function(m){ return !m.pinned; });
 
-  if(pinnedModels.length){
+  if(pinnedList.length){
     const lbl=document.createElement('div'); lbl.className='p-label'; lbl.textContent='Pinned';
     inner.appendChild(lbl);
-    pinnedModels.forEach(m=>inner.appendChild(mkItem(m.name,m.size?fmtB(m.size):'',true,m.details?.parameter_size||'')));
-    if(otherModels.length) inner.appendChild(Object.assign(document.createElement('div'),{className:'p-sep'}));
+    pinnedList.forEach(function(m){ inner.appendChild(mkItem(m)); });
+    if(otherList.length) inner.appendChild(Object.assign(document.createElement('div'),{className:'p-sep'}));
   }
-  if(otherModels.length){
-    if(pinnedModels.length){ const lbl=document.createElement('div'); lbl.className='p-label'; lbl.textContent='All Models'; inner.appendChild(lbl); }
-    otherModels.forEach(m=>inner.appendChild(mkItem(m.name,m.size?fmtB(m.size):'',false,m.details?.parameter_size||'')));
-  }
-  if(!models.length){
+
+  ['openai','anthropic','google','ollama'].forEach(function(p){
+    const list=otherList.filter(function(m){ return m.provider===p; });
+    if(!list.length) { return; }
+    const lbl=document.createElement('div'); lbl.className='p-label';
+    lbl.textContent=PROVIDER_LABELS[p]||p;
+    inner.appendChild(lbl);
+    list.forEach(function(m){ inner.appendChild(mkItem(m)); });
+  });
+
+  if(!filtered.length){
     const el=document.createElement('div'); el.className='p-item'; el.style.color='var(--fg2)';
-    el.innerHTML='<span class="p-item-lbl">No models — is Ollama running?</span>';
+    el.innerHTML='<span class="p-item-lbl">'+(models.length?'No matches':'No models — check Ollama or add API keys in Settings')+'</span>';
     inner.appendChild(el);
   }
 }
 
-function setModel(name){ S.model=name; ge('model-lbl').textContent=name==='auto'?'Auto':name; closeAll(); }
+function setModel(id){
+  S.model=id;
+  if(id==='auto'||!id){ S.modelName='Auto'; }
+  else {
+    const m = S.models.find(function(x){ return x.id===id; });
+    S.modelName = m ? m.name : id.replace(/^[^:]+:/,'');
+  }
+  ge('model-lbl').textContent = S.modelName || 'Select model';
+  closeAll();
+}
 
 // ── mode/effort ───────────────────────────────────────────────────────────
 const modeLabels={agent:'Agent',ask:'Ask',plan:'Plan'};
@@ -475,7 +496,6 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ if(S.streaming)po
 
 ge('btn-mode').onclick=e=>openPop('ov-mode',e.currentTarget);
 document.querySelectorAll('#pop-mode [data-m]').forEach(el=>el.onclick=()=>{ setMode(el.dataset.m); closeAll(); });
-ge('cfg-agents').onclick=()=>{ closeAll(); post({type:'open_file',path:'settings'}); };
 
 ge('btn-model').onclick=e=>{ openPop('ov-model',e.currentTarget); renderModelPop(); };
 ge('model-q').oninput=renderModelPop;
@@ -529,7 +549,6 @@ ge('btn-new').onclick=ge('btn-new2').onclick=()=>{
 };
 ge('btn-refresh').onclick=()=>post({type:'get_models'});
 ge('btn-toggle').onclick=()=>ge('sessions-panel').classList.toggle('collapsed');
-ge('btn-settings').onclick=()=>post({type:'open_file',path:'settings'});
 ge('btn-clear').onclick=()=>{ if(S.activeId) post({type:'clear_session',sessionId:S.activeId}); };
 // btn-insert: code='' signals extension to extract last assistant response itself
 ge('btn-insert').onclick=()=>post({type:'insert_at_cursor',code:''});
@@ -539,8 +558,13 @@ window.addEventListener('message',e=>{
   const msg=e.data;
   switch(msg.type){
     case 'models':
-      S.models=msg.models||[]; S.pinned=msg.pinned||[];
-      if(!S.model&&S.models.length){ setModel(S.pinned[0]||S.models[0]?.name||''); }
+      S.models=msg.models||[];
+      if(!S.model&&S.models.length){
+        const firstPinned=S.models.find(function(m){ return m.pinned&&m.enabled!==false; });
+        const firstEnabled=S.models.find(function(m){ return m.enabled!==false; });
+        if(firstPinned) setModel(firstPinned.id);
+        else if(firstEnabled) setModel(firstEnabled.id);
+      }
       break;
     case 'sessions':
       S.sessions=msg.sessions||[]; S.activeId=msg.activeId||null;

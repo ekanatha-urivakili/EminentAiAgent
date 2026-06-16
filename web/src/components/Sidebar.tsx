@@ -1,8 +1,12 @@
-import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, ArchiveRestore, Mail, Briefcase, Activity } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Edit3, MessageCircle, Trash2, PanelLeftClose, Plug, Search, Library, Cpu, ArchiveRestore, Mail, Briefcase, Activity, Settings, LogOut } from 'lucide-react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
 import { BrandLogo } from './BrandLogo';
+
+function initials(name: string) {
+  return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
 
 export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggle: () => void; onNavigate?: () => void }) {
   const conversations = useStore((s) => s.conversations);
@@ -13,6 +17,21 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
   const connectors = useStore((s) => s.connectors);
   const appView = useStore((s) => s.appView);
   const setAppView = useStore((s) => s.setAppView);
+  const admin = useStore((s) => s.admin);
+  const logoutAdmin = useStore((s) => s.logoutAdmin);
+  const setTheme = useStore((s) => s.setTheme);
+
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [profileOpen]);
 
   // Recents only shows non-archived conversations
   const recentConversations = useMemo(
@@ -122,35 +141,104 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
               )}
             </div>
 
-            <div className="p-3 border-t border-border text-[11px] text-muted-foreground">
-              100% local · zero cloud inference
+            {/* Profile footer */}
+            <div className="border-t border-border p-2 relative" ref={profileRef}>
+              {/* Popup menu */}
+              {profileOpen && (
+                <div className="absolute bottom-full left-2 right-2 mb-1 rounded-xl border border-border bg-popover shadow-xl overflow-hidden z-50">
+                  <div className="py-1">
+                    <button
+                      onClick={() => { setProfileOpen(false); navigate('settings'); }}
+                      className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm text-foreground hover:bg-muted transition-colors"
+                    >
+                      <Settings size={15} /> Settings
+                    </button>
+                  </div>
+                  <div className="border-t border-border py-1">
+                    <button
+                      onClick={() => { setProfileOpen(false); logoutAdmin(); }}
+                      className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <LogOut size={15} /> Log Out
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Profile row */}
+              <button
+                onClick={() => setProfileOpen((v) => !v)}
+                className="flex items-center gap-2.5 w-full rounded-lg px-2 py-2 hover:bg-muted transition-colors group text-left"
+              >
+                <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center flex-shrink-0 select-none">
+                  {initials(admin?.fullName ?? 'A')}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold truncate leading-tight">{admin?.fullName ?? 'Admin'}</div>
+                  <div className="text-[10px] text-muted-foreground leading-tight">Free Plan</div>
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); navigate('settings'); }}
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/70 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                  title="Settings"
+                >
+                  <Settings size={14} />
+                </button>
+              </button>
             </div>
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center py-3 gap-1">
-            {(
-              [
-                { view: null,           icon: Edit3,     title: 'New chat',         action: createConversation },
-                { view: 'library',      icon: Library,   title: 'Library',          action: () => navigate('library') },
-                { view: 'ollama',       icon: Cpu,       title: 'Ollama',           action: () => navigate('ollama') },
-                { view: 'mailpit',      icon: Mail,      title: 'Mailpit',          action: () => navigate('mailpit') },
-                { view: 'connectors',   icon: Plug,      title: 'MCP Connectors',   action: () => navigate('connectors') },
-                { view: 'jobs',         icon: Briefcase, title: 'Job Search Agent', action: () => navigate('jobs') },
-                { view: 'observability',icon: Activity,  title: 'Observability',    action: () => navigate('observability') },
-              ] as const
-            ).map(({ view, icon: Icon, title, action }) => (
+            <div className="flex flex-col items-center gap-1 flex-1">
+              {(
+                [
+                  { view: null,           icon: Edit3,     title: 'New chat',         action: createConversation },
+                  { view: 'library',      icon: Library,   title: 'Library',          action: () => navigate('library') },
+                  { view: 'ollama',       icon: Cpu,       title: 'Ollama',           action: () => navigate('ollama') },
+                  { view: 'mailpit',      icon: Mail,      title: 'Mailpit',          action: () => navigate('mailpit') },
+                  { view: 'connectors',   icon: Plug,      title: 'MCP Connectors',   action: () => navigate('connectors') },
+                  { view: 'jobs',         icon: Briefcase, title: 'Job Search Agent', action: () => navigate('jobs') },
+                  { view: 'observability',icon: Activity,  title: 'Observability',    action: () => navigate('observability') },
+                  { view: 'settings',     icon: Settings,  title: 'Settings',         action: () => navigate('settings') },
+                ] as const
+              ).map(({ view, icon: Icon, title, action }) => (
+                <button
+                  key={title}
+                  onClick={action}
+                  title={title}
+                  className={cn(
+                    'flex items-center justify-center w-10 h-10 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground',
+                    view && appView === view && 'bg-muted text-foreground',
+                  )}
+                >
+                  <Icon size={18} />
+                </button>
+              ))}
+            </div>
+            {/* Profile avatar in collapsed state */}
+            <div className="pb-1 border-t border-border pt-2 w-full flex justify-center" ref={profileRef}>
+              {profileOpen && (
+                <div className="absolute bottom-14 left-[72px] w-48 rounded-xl border border-border bg-popover shadow-xl overflow-hidden z-50">
+                  <div className="py-1">
+                    <button onClick={() => { setProfileOpen(false); navigate('settings'); }} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm text-foreground hover:bg-muted transition-colors">
+                      <Settings size={15} /> Settings
+                    </button>
+                  </div>
+                  <div className="border-t border-border py-1">
+                    <button onClick={() => { setProfileOpen(false); logoutAdmin(); }} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
+                      <LogOut size={15} /> Log Out
+                    </button>
+                  </div>
+                </div>
+              )}
               <button
-                key={title}
-                onClick={action}
-                title={title}
-                className={cn(
-                  'flex items-center justify-center w-10 h-10 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground',
-                  view && appView === view && 'bg-muted text-foreground',
-                )}
+                onClick={() => setProfileOpen((v) => !v)}
+                title={admin?.fullName ?? 'Profile'}
+                className="w-9 h-9 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center hover:opacity-90 transition-opacity select-none"
               >
-                <Icon size={18} />
+                {initials(admin?.fullName ?? 'A')}
               </button>
-            ))}
+            </div>
           </div>
         )}
       </div>

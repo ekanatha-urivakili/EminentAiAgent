@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { OllamaClient, buildSystemPrompt, effortToTemperature, buildMessages } from './ollamaClient';
+import { streamChat, listOllamaModels, validateOllamaUrl } from './llmClient';
 import { SessionManager } from './sessionManager';
+import { buildSystemPrompt, effortToTemperature, buildMessages } from './ollamaClient';
 import type { WebviewMessage, ExtensionMessage, Mode, ThinkingEffort } from './types';
 import { getWebviewContent } from './webviewContent';
 
@@ -16,7 +17,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly sessionManager: SessionManager,
-    private readonly ollamaClient: OllamaClient,
   ) {}
 
   resolveWebviewView(
@@ -42,9 +42,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     });
 
     webviewView.onDidChangeVisibility(() => {
-      if (webviewView.visible) {
-        this.sendSessions();
-      }
+      if (webviewView.visible) { this.sendSessions(); }
     });
   }
 
@@ -111,11 +109,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         break;
 
       case 'pin_model':
-        await this.pinModel(msg.modelName, true);
+        await this.pinModel(msg.modelId, true);
         break;
 
       case 'unpin_model':
-        await this.pinModel(msg.modelName, false);
+        await this.pinModel(msg.modelId, false);
         break;
 
       case 'insert_at_cursor':
@@ -124,12 +122,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
       case 'get_active_file': {
         const ctx = await this.getActiveFileContext();
-        const session = this.sessionManager.getActive();
-        if (session && ctx) {
-          this.post({ type: 'insert_code', code: ctx });
-        }
+        if (ctx) { this.post({ type: 'insert_code', code: ctx }); }
         break;
       }
+
     }
   }
 
@@ -143,7 +139,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
     const { sessionId, content, model, mode, effort, attachedCode } = msg;
 
-    // Compose final user content
     let userContent = content;
     if (attachedCode) {
       userContent = `${content}\n\n\`\`\`\n${attachedCode}\n\`\`\``;
@@ -156,11 +151,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const maxHistory = cfg.get<number>('maxHistoryMessages', 20);
     const systemPrompt = buildSystemPrompt(mode, effort);
     const temperature = effortToTemperature(effort);
-
     const messages = buildMessages(
       systemPrompt,
       history.map(m => ({ role: m.role, content: m.content })),
-      maxHistory * 2, // pairs
+      maxHistory * 2,
     );
 
     const msgId = `msg-${Date.now()}`;
@@ -170,34 +164,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
     this._abortController = new AbortController();
 
-    this.ollamaClient.streamChat(
-      { model, messages, stream: true, options: { temperature } },
-      (delta) => {
-        this._pendingContent += delta;
-        this.post({ type: 'stream_delta', msgId, delta });
-      },
-      (tokens, durationMs) => {
-        this.sessionManager.addAssistantMessage(sessionId, this._pendingContent, model, tokens, durationMs);
-        this.post({ type: 'stream_end', msgId, tokens, durationMs });
-        this._abortController = null;
-        this._pendingMsgId = null;
-        this._pendingContent = '';
-        this.sendSessions(); // update title in sessions list
-      },
-      (err) => {
-        const isCancel = err.message === 'Cancelled' || err.message.includes('aborted');
-        if (!isCancel) {
-          this.post({ type: 'stream_error', msgId, error: err.message });
-        } else {
-          // Save partial content on cancel
-          if (this._pendingContent) {
-            this.sessionManager.addAssistantMessage(sessionId, this._pendingContent + '\n\n*(cancelled)*', model, 0, 0);
+    const ollamaUrl = cfg.get<string>('ollamaUrl', 'http://localhost:11434');
+
+    streamChat(
+      model,
+      messages,
+      temperature,
+      { ollamaUrl },
+      {
+        onDelta: (delta) => {
+          this._pendingContent += delta;
+          this.post({ type: 'stream_delta', msgId, delta });
+        },
+        onDone: (tokens, durationMs) => {
+          this.sessionManager.addAssistantMessage(sessionId, this._pendingContent, model, tokens, durationMs);
+          this.post({ type: 'stream_end', msgId, tokens, durationMs });
+          this._abortController = null;
+          this._pendingMsgId = null;
+          this._pendingContent = '';
+          this.sendSessions();
+        },
+        onError: (err) => {
+          const isCancel = err.message === 'Cancelled' || err.message.includes('aborted');
+          if (!isCancel) {
+            this.post({ type: 'stream_error', msgId, error: err.message });
+          } else {
+            if (this._pendingContent) {
+              this.sessionManager.addAssistantMessage(sessionId, this._pendingContent + '\n\n*(cancelled)*', model, 0, 0);
+            }
+            this.post({ type: 'stream_end', msgId, tokens: 0, durationMs: 0 });
           }
-          this.post({ type: 'stream_end', msgId, tokens: 0, durationMs: 0 });
-        }
-        this._abortController = null;
-        this._pendingMsgId = null;
-        this._pendingContent = '';
+          this._abortController = null;
+          this._pendingMsgId = null;
+          this._pendingContent = '';
+        },
       },
       this._abortController.signal,
     );
@@ -214,21 +214,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   async refreshModels(): Promise<void> {
     try {
-      const models = await this.ollamaClient.listModels();
       const cfg = vscode.workspace.getConfiguration('eminentai');
-      const pinned = cfg.get<string[]>('pinnedModels', []);
-      this.post({ type: 'models', models, pinned });
-    } catch (err) {
-      this.post({ type: 'error', message: `Cannot reach Ollama: ${String(err)}` });
+      const url = validateOllamaUrl(cfg.get<string>('ollamaUrl', 'http://localhost:11434'));
+      const models = await listOllamaModels(url);
+      this.post({ type: 'models', models });
+    } catch {
+      this.post({ type: 'error', message: 'Failed to load models — is Ollama running at localhost:11434?' });
     }
   }
 
-  private async pinModel(name: string, pin: boolean): Promise<void> {
+  private async pinModel(modelId: string, pin: boolean): Promise<void> {
     const cfg = vscode.workspace.getConfiguration('eminentai');
     const pinned = cfg.get<string[]>('pinnedModels', []);
     const updated = pin
-      ? [...new Set([...pinned, name])]
-      : pinned.filter(p => p !== name);
+      ? [...new Set([...pinned, modelId])]
+      : pinned.filter(p => p !== modelId);
     await cfg.update('pinnedModels', updated, vscode.ConfigurationTarget.Global);
     await this.refreshModels();
   }
@@ -263,8 +263,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       return;
     }
     await editor.edit(builder => {
-      const pos = editor.selection.active;
-      builder.insert(pos, code);
+      builder.insert(editor.selection.active, code);
     });
   }
 
@@ -282,23 +281,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     return `// File: ${fname}\n\`\`\`${lang}\n${snippet}\n\`\`\``;
   }
 
-  /** Inject selected editor text into the webview input. */
   injectText(text: string): void {
     this.post({ type: 'insert_code', code: text });
   }
 
-  /** Called from extension.ts when configuration changes. */
   onConfigurationChanged(): void {
     void this.sendConfig();
     void this.refreshModels();
   }
 
-  /** Cancel any in-flight stream and release resources (called on extension deactivate). */
   dispose(): void {
     this.cancelStream();
   }
 
-  /** Expose for the insertAtCursor command. */
   getLastAssistantContent(): string | undefined {
     const session = this.sessionManager.getActive();
     if (!session) { return undefined; }

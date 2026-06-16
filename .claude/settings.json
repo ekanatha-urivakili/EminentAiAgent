@@ -36,10 +36,43 @@
       "Bash(gh api *)",
       "Bash(sed -n '540,552p' /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/web/src/components/ConnectorsView.tsx)",
       "Bash(sed -n '265,278p' /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/web/src/components/OllamaView.tsx)",
-      "Bash(sed -n '278,292p' /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/web/src/state/store.ts)"
+      "Bash(sed -n '278,292p' /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/web/src/state/store.ts)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(code --version)",
+      "Read(//Applications/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(mdfind \"kMDItemCFBundleIdentifier = 'com.microsoft.VSCode'\")",
+      "Bash(ls \"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/\" 2>/dev/null; ls /usr/local/bin/code 2>/dev/null; ls ~/Applications/ | grep -i code 2>/dev/null)",
+      "Read(//Users/ekanathareddyurivakili/Applications/**)",
+      "Bash(\"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --version)",
+      "Bash('/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code' --extensionDevelopmentPath=/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension --new-window)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(screencapture -x /tmp/vscode_ext_test.png)",
+      "Bash(\"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --extensionDevelopmentPath=\"/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension\")",
+      "Bash(echo \"VS Code Extension Development Host launched \\(PID: $!\\)\")",
+      "Bash(\"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --install-extension \"/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension/eminentai-0.2.0.vsix\" --force)",
+      "Bash(\"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" --extensionDevelopmentPath=\"/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension\" --new-window)",
+      "Bash(echo \"Launched Extension Development Host PID $!\")",
+      "Bash(screencapture -x /tmp/vsext_test.png)",
+      "Bash(osascript -e ' *)",
+      "Bash(screencapture -x /tmp/current_state.png)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('name:', d.get\\('name'\\)\\); print\\('scripts:', list\\(d.get\\('scripts',{}\\).keys\\(\\)\\)\\)\")",
+      "Bash(open http://localhost:5175/)",
+      "Bash(screencapture -x /tmp/web_settings.png)",
+      "Bash(open -a \"Google Chrome\" \"http://localhost:5175/\")",
+      "Bash(open -a \"Safari\" \"http://localhost:5175/\")",
+      "Bash(open \"http://localhost:5175/\")",
+      "Bash(screencapture -x /tmp/web_app.png)",
+      "Bash(lsof -ti:5173,5174,5175)",
+      "Bash(awk '{print $6,$7,$8,$9}')",
+      "Bash(mkdir -p /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension/.vscode)",
+      "Bash(code --install-extension /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension/eminentai-0.2.0.vsix --force)",
+      "Bash(echo \"watcher PID: $!\")"
     ],
     "additionalDirectories": [
-      "/Users/ekanathareddyurivakili/Library/LaunchAgents"
+      "/Users/ekanathareddyurivakili/Library/LaunchAgents",
+      "/Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension"
     ]
   }
 }
