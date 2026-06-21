@@ -15,16 +15,17 @@ namespace EminentAi.Application.Agents.ImageGeneration;
 ///   Agent 1 — qwen3:latest (prompt engineer)
 ///     Analyses the user's free-text request, understands intent (multiple
 ///     variants, themes, formats, brand names) and expands it into one or
-///     more optimised Flux2 prompts while the model is still warm in VRAM.
+///     more optimised image prompts while the model is still warm in VRAM.
 ///
-///   Agent 2 — x/flux2-klein:4b (image generator)
+///   Agent 2 — x/z-image-turbo (image generator, primary)
+///              x/flux2-klein:4b (image generator, fallback)
 ///     Receives each polished prompt and produces a PNG.
 ///
 /// Full pipeline sequence:
-///   1. qwen3:latest  → analyse request, expand to N Flux prompts  [VRAM: other models still loaded]
+///   1. qwen3:latest      → analyse request, expand to N prompts  [VRAM: other models still loaded]
 ///   2. Snapshot loaded models
-///   3. Kill ALL loaded models to free VRAM for Flux
-///   4. x/flux2-klein:4b → generate image for each expanded prompt
+///   3. Kill ALL loaded models to free VRAM for image gen
+///   4. x/z-image-turbo  → generate image for each prompt (falls back to x/flux2-klein:4b on failure)
 ///   5. Save each PNG to Generated_images/
 ///   6. Restore previously loaded models (fire-and-forget)
 /// </summary>
@@ -35,8 +36,9 @@ public sealed class ImageGenerationAgent(
     IPiiRedactor redactor,
     string outputDirectory) : ISpecializedAgent
 {
-    private const string FluxModel    = "x/flux2-klein:4b";
-    private const string AnalystModel = "qwen3:latest";
+    private const string PrimaryModel  = "x/z-image-turbo";
+    private const string FallbackModel = "x/flux2-klein:4b";
+    private const string AnalystModel  = "qwen3:latest";
 
     // Matches text wrapped in double-quotes, e.g. "A cute baby", "Bold text"
     private static readonly Regex QuotedPromptRegex =
@@ -47,9 +49,9 @@ public sealed class ImageGenerationAgent(
         new(@"<think>[\s\S]*?</think>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static readonly string AnalystSystemPrompt = """
-        You are an expert Flux2 diffusion-model prompt engineer working inside an agent pipeline.
+        You are an expert diffusion-model prompt engineer working inside an agent pipeline.
         Your ONLY job is to convert the user's image request into one or more highly optimised
-        Flux2 generation prompts, then return them as JSON.
+        image generation prompts, then return them as JSON.
 
         RULES
         ─────
@@ -138,11 +140,34 @@ public sealed class ImageGenerationAgent(
             });
 
             var sw       = Stopwatch.StartNew();
-            string? base64Png = null;
-            string? genError  = null;
+            string? base64Png       = null;
+            string? genError        = null;
+            string? primaryFailMsg  = null;
 
-            try   { base64Png = await GenerateViaCliAsync(FluxModel, ep.FluxPrompt, ct); }
-            catch (Exception ex) { genError = ex.Message; }
+            try
+            {
+                base64Png = await GenerateViaCliAsync(PrimaryModel, ep.FluxPrompt, ct);
+            }
+            catch (Exception primaryEx)
+            {
+                primaryFailMsg = primaryEx.Message;
+            }
+
+            if (primaryFailMsg is not null)
+            {
+                yield return new SmartChatEvent("image_gen_progress", new
+                {
+                    stage    = "primary_model_failed",
+                    model    = PrimaryModel,
+                    fallback = FallbackModel,
+                    error    = primaryFailMsg,
+                    current  = i + 1,
+                    total    = expandedPrompts.Count
+                });
+
+                try   { base64Png = await GenerateViaCliAsync(FallbackModel, ep.FluxPrompt, ct); }
+                catch (Exception ex) { genError = ex.Message; }
+            }
 
             sw.Stop();
 
@@ -220,7 +245,7 @@ public sealed class ImageGenerationAgent(
             {
                 intent  = "imageGeneration",
                 message = "All image generation attempts failed. " +
-                          "Ensure x/flux2-klein:4b is installed: ollama pull x/flux2-klein:4b"
+                          $"Ensure models are installed: ollama pull {PrimaryModel} && ollama pull {FallbackModel}"
             });
             yield break;
         }
@@ -254,7 +279,7 @@ public sealed class ImageGenerationAgent(
         var header     = $"> **{AnalystModel} understood:** {analysis.Understanding}\n\n";
         var imageLines = generatedResults.Select((r, idx) =>
             $"**{r.Description}**\n\n![{r.Description}]({r.Url})\n\n" +
-            $"*Flux prompt: {r.FluxPrompt}*");
+            $"*Prompt: {r.FluxPrompt}*");
         var messageContent = header + string.Join("\n\n---\n\n", imageLines);
 
         var assistantMessage = new Message
@@ -262,7 +287,7 @@ public sealed class ImageGenerationAgent(
             BranchId        = context.BranchId,
             Role            = MessageRole.Assistant,
             Content         = messageContent,
-            Model           = FluxModel,
+            Model           = PrimaryModel,
             ParentMessageId = userMessage.Id
         };
 
@@ -283,7 +308,7 @@ public sealed class ImageGenerationAgent(
         // For quoted-prompt lists, tell qwen3 to enhance each one
         var quotedPrompts = ExtractQuotedPrompts(userText);
         var inputForQwen  = quotedPrompts.Count > 0
-            ? $"Enhance these image prompts for Flux2:\n" +
+            ? $"Enhance these image prompts:\n" +
               string.Join("\n", quotedPrompts.Select((p, i) => $"{i + 1}. \"{p}\""))
             : userText;
 
