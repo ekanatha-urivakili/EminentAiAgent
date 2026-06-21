@@ -64,4 +64,16 @@ public interface IOllamaClient
     /// Call this only after the Flux spike confirms response shape is { "response": "base64..." }.
     /// </summary>
     Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default);
+
+    /// <summary>
+    /// Forcibly unloads a model from VRAM by sending a keep_alive=0 generate request.
+    /// Safe to call on models that are not currently loaded — the call will be a no-op.
+    /// </summary>
+    Task UnloadModelAsync(string modelName, CancellationToken ct = default);
+
+    /// <summary>
+    /// Warms up a model by loading it into memory without producing output.
+    /// Fire-and-forget friendly — errors are silently swallowed.
+    /// </summary>
+    Task WarmUpModelAsync(string modelName, CancellationToken ct = default);
 }

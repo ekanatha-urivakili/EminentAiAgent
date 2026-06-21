@@ -33,12 +33,16 @@ Recommended path:
 ## Layout
 
 ```text
-src/EminentAi.Domain          Entities: conversations, branches, messages, agent runs, policy
+src/EminentAi.Domain          Entities: conversations, branches, messages, agent runs,
+                              generated images, policy
 src/EminentAi.Application     Use cases: ChatService, PlannerService, AgentOrchestrator,
-                              ApprovalBroker, ToolCallRepair
-src/EminentAi.Infrastructure  OllamaClient, McpHost, PolicyEngine, PiiRedactor,
+                              AgentOrchestratorFacade, IIntentRouter, IModelRouter,
+                              ISpecializedAgent, ImageGenerationAgent, ApprovalBroker
+src/EminentAi.Infrastructure  OllamaClient, IntentRouterService, ModelRouterService,
+                              OllamaModelProvider, McpHost, PolicyEngine, PiiRedactor,
                               BuiltinToolRunner, EF Core SQLite persistence
 src/EminentAi.Api             ASP.NET Core Minimal API + SSE endpoints on 127.0.0.1:5210
+Generated_images/             AI-generated PNGs — gitignored, served via /api/generated-images/
 web/                          React 19 + Vite + Tailwind UI
 vscode-ext/                   VS Code extension: chat sidebar, FIM completions, agent edits
 ```
@@ -65,12 +69,31 @@ winget install Ollama.Ollama
 
 Or download the installer directly from [ollama.com/download](https://ollama.com/download) and run it.
 
+## Installed Ollama Models
+
+| Model | Size | Tier | Role |
+| --- | --- | --- | --- |
+| `qwen3.5:2b` | 2.7 GB | fast | Intent classifier — stays warm, sub-500 ms |
+| `qwen2.5-coder:1.5b` | 986 MB | fast | Code Agent + VS Code FIM completions |
+| `qwen2.5:latest` | 4.7 GB | balanced | General Agent / Architecture fallback |
+| `qwen3:latest` | 5.2 GB | balanced | Architecture Agent (primary) + Image prompt engineer |
+| `gemma4:e4b` | 9.6 GB | balanced | Architecture Agent fallback |
+| `qwen2.5vl:latest` | 6.0 GB | vision | Vision Agent — only multimodal model |
+| `x/flux2-klein:4b` | 5.7 GB | image_gen | Image generation — Flux2 diffusion |
+| `x/z-image-turbo` | 12 GB | image_gen | High-quality image generation |
+| `nomic-embed-text:latest` | 274 MB | embedding | Reserved: RAG / semantic search |
+
 ## Prerequisites
 
 ```bash
 ollama serve                          # start the daemon (macOS: brew services start ollama)
-ollama pull qwen2.5-coder:7b          # primary coding model
-ollama pull qwen2.5-coder:1.5b-base  # FIM completions model
+ollama pull qwen3.5:2b                # intent classifier
+ollama pull qwen3:latest              # architecture agent + image prompt engineer
+ollama pull qwen2.5:latest            # general agent
+ollama pull qwen2.5vl:latest          # vision agent
+ollama pull qwen2.5-coder:1.5b        # code agent + FIM completions
+ollama pull x/flux2-klein:4b          # image generation (Flux2)
+ollama pull x/z-image-turbo           # image generation (high quality, 12 GB)
 npm install --prefix web
 npm install --prefix vscode-ext
 ```
@@ -116,6 +139,16 @@ The backend uses `src/EminentAi.Api/appsettings.json`. Important settings:
 - **Chat**: streaming conversation persisted to SQLite. Regenerate creates a sibling message; fork creates a new branch.
 - **Plan**: read-only planning mode that returns validated JSON with repair retries.
 - **Agent**: autonomous execution with step/token/time budgets, loop detection, tool-call repair, policy checks, and human approval for writes.
+- **Smart Chat** (`POST /api/chat/smart`): agent-to-agent routing — intent is classified by `qwen3.5:2b`, the right specialist model is selected automatically, and the turn is dispatched to the appropriate agent (Vision, Code, Architecture, ImageGeneration, General). A `routing_decision` SSE event is emitted before the first token so the UI can show which model handled the request.
+
+### Image Generation Pipeline
+
+Smart Chat routes image requests through a two-agent pipeline:
+
+1. **Agent 1 — `qwen3:latest` (prompt engineer)**: analyses the request, expands it into one or more optimised Flux2 prompts.
+2. **Agent 2 — Flux diffusion model** (`x/flux2-klein:4b` or `x/z-image-turbo`): generates a PNG for each expanded prompt.
+
+VRAM management: all loaded models are unloaded before generation to give Flux full GPU memory, then restored afterwards. Progress is streamed via `image_gen_progress` SSE events so the UI shows a live pipeline panel. Generated PNGs are saved to `Generated_images/` and served through `/api/generated-images/{filename}`.
 
 Built-in connectors:
 
@@ -149,11 +182,24 @@ External stdio MCP connectors can be registered through `/api/connectors`.
 | POST | `/api/messages/{id}/regenerate` | Sibling regenerate via SSE |
 | POST | `/api/branches/{id}/fork` | Fork from a message |
 | POST | `/api/chat` | Stateless streaming chat for the VS Code extension |
+| POST | `/api/chat/smart` | A2A smart chat — auto-routes by intent, streams SSE |
+| GET | `/api/generated-images/{filename}` | Serve a generated PNG (auth + ownership required) |
 | POST | `/api/plan` | Goal to validated plan JSON |
 | POST | `/api/agent/runs` | Start an agent run; response is SSE |
 | POST | `/api/agent/runs/{id}/approvals/{stepId}` | Approve/reject a tool step |
 | POST | `/api/agent/runs/{id}/cancel` | Cancel a run |
 | GET/POST/DELETE | `/api/connectors` | MCP connector registry |
+
+### Smart Chat SSE Events
+
+| Event | When | Key fields |
+| --- | --- | --- |
+| `routing_decision` | After intent and model resolved, before first token | `intent`, `model`, `provider`, `wasFastPath` |
+| `token` | Per token during text generation | `text` |
+| `image_gen_progress` | Pipeline stage transitions | `stage` (`analyzing_request` / `analysis_done` / `freeing_vram` / `generating` / `saving` / `restoring_models`) |
+| `image_generated` | After each PNG is saved and persisted | `url`, `filename`, `fluxPrompt`, `generationMs` |
+| `done` | After DB persist completes | `messageId` |
+| `routing_error` | No model found or invalid override | `intent`, `message` |
 
 ## Password Reset
 

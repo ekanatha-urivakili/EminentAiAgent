@@ -201,7 +201,7 @@ export const useStore = create<AppState>((set, get) => ({
   branches: [],
   messages: [],
   isStreaming: false,
-  smartModeEnabled: true,
+  smartModeEnabled: localStorage.getItem('eminentai.smartMode') !== 'false', // persisted; default true
 
   loadConversations: async () => {
     try { set({ conversations: await api.listConversations() }); } catch { /* offline */ }
@@ -350,7 +350,11 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  toggleSmartMode: () => set((s) => ({ smartModeEnabled: !s.smartModeEnabled })),
+  toggleSmartMode: () => set((s) => {
+    const next = !s.smartModeEnabled;
+    localStorage.setItem('eminentai.smartMode', String(next));
+    return { smartModeEnabled: next };
+  }),
 
   sendSmartMessage: async (content, attachments) => {
     let { activeBranchId } = get();
@@ -408,15 +412,52 @@ export const useStore = create<AppState>((set, get) => ({
               }
 
               if (event === 'image_gen_progress') {
-                return { ...m, imageGenStage: data.stage as import('../lib/types').ImageGenStage };
+                const current = data.current as number | undefined;
+                const total = data.total as number | undefined;
+                const stage = data.stage as import('../lib/types').ImageGenStage;
+                return {
+                  ...m,
+                  imageGenStage: stage,
+                  imageGenProgress: (current !== undefined && total !== undefined)
+                    ? { current, total, stage: data.stage as string }
+                    : m.imageGenProgress,
+                  // Capture which models are being killed/restored for the progress panel
+                  ...(stage === 'freeing_vram' && data.killingModels
+                    ? { imageGenKillingModels: data.killingModels as string[] }
+                    : {}),
+                  ...(stage === 'restoring_models' && data.models
+                    ? { imageGenRestoringModels: data.models as string[] }
+                    : {}),
+                  ...(stage === 'generating' && data.prompt
+                    ? { imageGenCurrentPrompt: data.prompt as string }
+                    : {}),
+                  // qwen3 analysis result
+                  ...(stage === 'analyzing_request' && data.analystModel
+                    ? { imageGenAnalystModel: data.analystModel as string }
+                    : {}),
+                  ...(stage === 'analysis_done' && data.understanding
+                    ? { imageGenUnderstanding: data.understanding as string,
+                        imageGenProgress: { current: 0, total: data.total as number, stage: 'analysis_done' } }
+                    : {}),
+                };
               }
 
               if (event === 'image_generated') {
+                const newImage: import('../lib/types').ImageGenerationResult = {
+                  url: data.url as string,
+                  filename: data.filename as string,
+                  fluxPrompt: data.fluxPrompt as string,
+                  description: (data.description as string) ?? 'Image',
+                  generationMs: data.generationMs as number,
+                };
                 return {
                   ...m,
+                  // Keep legacy single-image fields for backwards compat
                   generatedImageUrl: data.url as string,
                   generatedFluxPrompt: data.fluxPrompt as string,
-                  imageGenStage: undefined,
+                  // Append to the multi-image array
+                  generatedImages: [...(m.generatedImages ?? []), newImage],
+                  imageGenStage: (data.total as number) > 1 ? m.imageGenStage : undefined,
                 };
               }
 

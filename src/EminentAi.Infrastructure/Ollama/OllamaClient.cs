@@ -199,6 +199,36 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         return body.Response;
     }
 
+    public async Task UnloadModelAsync(string modelName, CancellationToken ct = default)
+    {
+        try
+        {
+            // Setting keep_alive to 0 instructs Ollama to immediately evict the model from VRAM.
+            var payload = new { model = modelName, prompt = "", keep_alive = 0, stream = false };
+            using var response = await http.PostAsJsonAsync("/api/generate", payload, JsonOpts, ct);
+            // 200 = unloaded, 404 = model not loaded — both are success for our purpose.
+        }
+        catch
+        {
+            // Swallow: unload is best-effort; if the model wasn't loaded the VRAM is free already.
+        }
+    }
+
+    public async Task WarmUpModelAsync(string modelName, CancellationToken ct = default)
+    {
+        try
+        {
+            // An empty generate request with a long keep_alive loads the model into VRAM.
+            var payload = new { model = modelName, prompt = "", keep_alive = "10m", stream = false };
+            using var response = await http.PostAsJsonAsync("/api/generate", payload, JsonOpts, ct);
+            // Best-effort — we don't throw if the model is no longer available.
+        }
+        catch
+        {
+            // Silently ignore — warm-up is an optimisation, not a hard requirement.
+        }
+    }
+
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 
     private sealed class OllamaGenerateResponse

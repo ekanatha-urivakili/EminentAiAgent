@@ -24,8 +24,9 @@ public sealed class IntentRouterService(
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Fast-path: image generation trigger phrases
+    // Also catches quoted-prompt lists like: "A cute baby", "Bold text on dark background"
     private static readonly Regex ImageGenKeywords =
-        new(@"^(generate|draw|create a (logo|image|picture|banner)|design an? image|make an? logo)",
+        new(@"^(generate|draw|create a (logo|image|picture|banner)|design an? image|make an? logo)|^\s*""[^""]{3,}""(\s*,\s*""[^""]{3,}"")*\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Strips everything except A-Z and underscore for safe enum matching

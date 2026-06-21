@@ -22,6 +22,7 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import type { ChatMsg, ChatSource } from '../lib/types';
 import { RoutingBadge } from './RoutingBadge';
 import { GeneratedImage } from './GeneratedImage';
+import { ImageGenProgressPanel } from './ImageGenProgressPanel';
 
 type Feedback = 'liked' | 'disliked' | undefined;
 type ExportFormat = 'pdf' | 'markdown' | 'docx' | 'txt';
@@ -457,14 +458,50 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
                 </div>
               )}
 
-              {/* Generated image (image gen agent) */}
-              {(message.generatedImageUrl || message.imageGenStage) && (
-                <GeneratedImage
-                  url={message.generatedImageUrl}
-                  fluxPrompt={message.generatedFluxPrompt}
-                  stage={message.imageGenStage}
-                  className="mb-2"
-                />
+              {/* ── Image generation: progress panel + completed images ── */}
+              {(message.imageGenStage || (message.generatedImages && message.generatedImages.length > 0)) && (
+                <div className="flex flex-col gap-3 mb-2">
+                  {/* Live progress panel — shown while still generating */}
+                  {message.imageGenStage && (
+                    <ImageGenProgressPanel
+                      stage={message.imageGenStage}
+                      progress={message.imageGenProgress}
+                      killingModels={message.imageGenKillingModels}
+                      restoringModels={message.imageGenRestoringModels}
+                      currentPrompt={message.imageGenCurrentPrompt}
+                      completedCount={message.generatedImages?.length ?? 0}
+                      understanding={message.imageGenUnderstanding}
+                      analystModel={message.imageGenAnalystModel}
+                    />
+                  )}
+
+                  {/* Completed images — appear as each one finishes */}
+                  {message.generatedImages && message.generatedImages.length > 0 && (
+                    <div className="flex flex-col gap-4">
+                      {message.generatedImages.map((img, idx) => (
+                        <div key={img.filename ?? idx} className="flex flex-col gap-1">
+                          {(message.generatedImages!.length > 1 || (message.imageGenProgress?.total ?? 0) > 1) && (
+                            <p className="text-xs text-muted-foreground font-semibold flex items-center gap-1.5">
+                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-muted text-[10px] font-bold">
+                                {idx + 1}
+                              </span>
+                              {img.description && img.description !== 'Image'
+                                ? <span className="text-foreground/80">{img.description}</span>
+                                : <span>of {message.imageGenProgress?.total ?? message.generatedImages!.length}</span>
+                              }
+                            </p>
+                          )}
+                          <GeneratedImage
+                            url={img.url}
+                            fluxPrompt={img.fluxPrompt}
+                            stage={undefined}
+                            className="w-full"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
 
               <div className="w-full pt-1.5 prose prose-slate dark:prose-invert navy:prose-invert max-w-none">

@@ -21,6 +21,9 @@ out/
 # CV uploads (user data — not committed)
 CVs/
 
+# Generated images
+*.png
+
 # macOS
 .DS_Store
 

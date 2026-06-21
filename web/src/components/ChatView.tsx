@@ -1,4 +1,4 @@
-import { MessageCircle, Sparkles, Shield, Cpu, GitBranch } from 'lucide-react';
+import { MessageCircle, Sparkles, Shield, Cpu, GitBranch, Zap, ZapOff } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -59,6 +59,8 @@ export function ChatView() {
   const isStreaming = useStore((s) => s.isStreaming);
   const sendMessage = useStore((s) => s.sendMessage);
   const voiceModeEnabled = useStore((s) => s.voiceModeEnabled);
+  const smartModeEnabled = useStore((s) => s.smartModeEnabled);
+  const toggleSmartMode = useStore((s) => s.toggleSmartMode);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastSpokenIdRef = useRef<string | null>(null);
   const userScrolledUpRef = useRef(false);
@@ -104,10 +106,27 @@ export function ChatView() {
     window.speechSynthesis?.speak(utterance);
   }, [voiceModeEnabled, isStreaming, messages]);
 
+  const SmartModeOffBanner = !smartModeEnabled ? (
+    <div className="mx-4 mt-3 flex items-center gap-2.5 rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40 px-4 py-2.5 text-sm">
+      <ZapOff size={15} className="flex-shrink-0 text-amber-600 dark:text-amber-400" />
+      <span className="flex-1 text-amber-800 dark:text-amber-300">
+        <strong>Auto (smart routing) is off.</strong> Image generation, code routing, and vision won't work.
+      </span>
+      <button
+        onClick={toggleSmartMode}
+        className="flex-shrink-0 flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-semibold transition-colors"
+      >
+        <Zap size={12} />
+        Turn on
+      </button>
+    </div>
+  ) : null;
+
   if (messages.length === 0) {
     return (
       <div className="flex flex-col h-full">
         <BranchSwitcher />
+        {SmartModeOffBanner}
         <div className="flex flex-col items-center justify-center flex-1 min-h-[60vh] px-3 sm:px-4 pb-48 sm:pb-32">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center shadow-lg mb-6">
             <MessageCircle size={26} className="text-white" />
@@ -136,6 +155,7 @@ export function ChatView() {
   return (
     <div className="flex flex-col">
       <BranchSwitcher />
+      {SmartModeOffBanner}
       <div className="pb-72 sm:pb-56">
         <div className="max-w-3xl mx-auto px-4 sm:px-6">
           {messages.map((m) => (

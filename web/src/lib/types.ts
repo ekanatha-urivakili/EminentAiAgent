@@ -73,9 +73,16 @@ export interface ChatMsg {
   streaming?: boolean;
   // Smart chat routing metadata — persists across re-renders
   routingDecision?: RoutingDecision;
-  generatedImageUrl?: string;
-  generatedFluxPrompt?: string;
+  generatedImageUrl?: string;       // legacy single-image (kept for back-compat)
+  generatedFluxPrompt?: string;     // legacy single-image prompt
+  generatedImages?: ImageGenerationResult[]; // multi-image: populated as each image arrives
   imageGenStage?: ImageGenStage;
+  imageGenProgress?: { current: number; total: number; stage: string };
+  imageGenKillingModels?: string[];   // models being unloaded before generation
+  imageGenRestoringModels?: string[]; // models being reloaded after generation
+  imageGenCurrentPrompt?: string;     // prompt currently being generated
+  imageGenUnderstanding?: string;     // qwen3's one-line understanding of the request
+  imageGenAnalystModel?: string;      // which model did the analysis
 }
 
 export interface ChatSource {
@@ -327,10 +334,11 @@ export interface ImageGenerationResult {
   url: string;
   filename: string;
   fluxPrompt: string;
+  description: string;
   generationMs: number;
 }
 
-export type ImageGenStage = 'translating' | 'generating' | 'saving';
+export type ImageGenStage = 'analyzing_request' | 'analysis_done' | 'freeing_vram' | 'generating' | 'saving' | 'restoring_models' | 'gen_failed' | 'save_failed';
 
 export interface SmartChatEvent {
   event: 'routing_decision' | 'token' | 'image_gen_progress' | 'image_generated' | 'done' | 'routing_error';

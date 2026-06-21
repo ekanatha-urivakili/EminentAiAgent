@@ -47,6 +47,18 @@
 | Regex overhead in security | Medium | Added compiled `RegexCache` to `PolicyEngine` for glob pattern matching |
 | Classifier latency on missing model | Low | Not proactively health-checked in `IntentRouterService`; failed classifier calls are caught and default to `General` |
 
+### v3.1 → v3.2 (ImageGenerationAgent — Actual Implementation)
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Analyst model was `qwen3.5:2b` in spec | High | Actual impl uses `qwen3:latest` — larger reasoning model for higher-quality Flux prompt expansion |
+| Single-image pipeline in spec | High | Actual impl expands one request into N prompts, generates N images, streams each separately |
+| `/api/generate` HTTP call for Flux | High | Actual impl uses `ollama run` CLI — avoids response-shape uncertainty; captures PNG from working directory or base64 in stdout |
+| No VRAM management in spec | Medium | Actual impl snapshots loaded models → unloads all → runs Flux → restores; prevents VRAM OOM on 16 GB systems |
+| SSE stages in spec: `translating`, `generating`, `saving` | Medium | Actual stages: `analyzing_request`, `analysis_done`, `freeing_vram`, `generating`, `saving`, `restoring_models` + `gen_failed`, `save_failed` |
+| `ImageGenProgressPanel` not in frontend file map | Low | New component added: collapsible pipeline panel with per-step status, progress bar, A2A badge, model chips |
+| `x/z-image-turbo` not in model table | Low | Added — 12 GB high-quality image generation model |
+
 ---
 
 ## Table of Contents
@@ -116,25 +128,19 @@ POST /api/chat/smart
 NAME                       SIZE     TIER           ROLE
 ────────────────────────────────────────────────────────────────────────
 qwen3.5:2b                 2.7 GB   fast           Intent classifier — stays warm, sub-500ms
-qwen2.5-coder:1.5b         986 MB   fast           Code Agent
+qwen2.5-coder:1.5b         986 MB   fast           Code Agent + VS Code FIM completions
 qwen2.5:latest             4.7 GB   balanced       General Agent / Architecture fallback
-qwen3:latest               5.2 GB   balanced       Architecture Agent — primary
+qwen3:latest               5.2 GB   balanced       Architecture Agent (primary) + Image prompt engineer
 gemma4:e4b                 9.6 GB   balanced       Architecture Agent — fallback
 qwen2.5vl:latest           6.0 GB   vision         Vision Agent — only multimodal model
-x/flux2-klein:4b           5.7 GB   image_gen      Image Generation — Flux2 diffusion
+x/flux2-klein:4b           5.7 GB   image_gen      Image generation — Flux2 diffusion
+x/z-image-turbo            12 GB    image_gen      Image generation — high quality
 nomic-embed-text:latest    274 MB   embedding      Reserved: RAG / semantic search
 ```
 
-**VRAM management:** `keep_alive: "10m"` already in `OllamaClient.BuildPayload` keeps the last-used model warm. `qwen3.5:2b` is small enough to coexist with other models on 16 GB. `flux2-klein` triggers a full swap — the `image_gen_progress {stage:"generating"}` SSE event is mandatory UX before that swap begins.
+**VRAM management:** `ImageGenerationAgent` takes an active approach — it snapshots all currently loaded models via `/api/ps`, unloads each with `keep_alive=0`, runs the Flux model, then fire-and-forgets `WarmUpModelAsync` for each previously loaded model. This prevents OOM on 16 GB systems when Flux needs the full VRAM budget. Progress is streamed via `image_gen_progress` SSE events so the UI is never silent during the 30–180 s generation window.
 
-**Flux response shape used by `ImageGenerationAgent`:**
-
-```bash
-curl http://127.0.0.1:11434/api/generate \
-  -d '{"model":"x/flux2-klein:4b","prompt":"minimalist logo, AI startup","stream":false}'
-```
-
-`OllamaClient.GenerateImageAsync` currently expects the response body to be `{ "response": "<base64 PNG string>" }`. If the local Flux model returns a different shape, update `GenerateImageAsync` and `ImageGenerationAgent.SaveImageAsync`.
+**Generation method:** `ImageGenerationAgent` uses the `ollama run <model> "<prompt>"` CLI — not `/api/generate`. This avoids response-shape uncertainty across Flux model variants. The agent checks the working directory for a written PNG first (Strategy A), then falls back to extracting base64 from stdout (Strategy B). Generation timeout is 15 minutes.
 
 ---
 
@@ -836,67 +842,82 @@ public async IAsyncEnumerable<ChatDelta> SendMessageAsync(
 classDiagram
     class ImageGenerationAgent {
         -IOllamaClient _ollama
-        -ChatService _chat
+        -IGeneratedImageRepository _imageRepo
+        -IConversationRepository _conversationRepo
+        -IPiiRedactor _redactor
         -string _outputDirectory
+        -const string FluxModel = "x/flux2-klein:4b"
+        -const string AnalystModel = "qwen3:latest"
         +Kind: AgentKind = ImageGeneration
         +ExecuteAsync(SmartChatContext, ModelRoute, CancellationToken) IAsyncEnumerable~SmartChatEvent~
-        -TranslateToFluxPromptAsync(string userPrompt, CancellationToken) Task~string~
-        -GenerateAndSaveAsync(string model, string fluxPrompt, CancellationToken) Task~(string path, string filename)~
-        -PersistImageMessageAsync(SmartChatContext, string imageUrl, string fluxPrompt) Task~Guid~
+        -AnalyzeAndExpandPromptsAsync(userText, ct) Task~AnalysisResult~
+        -GenerateViaCliAsync(model, prompt, ct) Task~string~
+        -SaveImageAsync(base64Raw, ct) Task~(FullPath, Filename)~
     }
 
     ImageGenerationAgent ..|> ISpecializedAgent
     ImageGenerationAgent --> IOllamaClient
-    ImageGenerationAgent --> ChatService
+    ImageGenerationAgent --> IGeneratedImageRepository
+    ImageGenerationAgent --> IConversationRepository
 ```
 
-**Internal pipeline:**
+**Actual pipeline (v3.2):**
 
 ```mermaid
 flowchart LR
-    A["User prompt"] --> B["Translate\nqwen3.5:2b · temp 0.3"]
-    B --> C["Flux prompt string"]
-    C --> D["POST /api/generate\nflux2-klein · stream false\n⚠ spike first"]
-    D --> E["base64 PNG\n(shape unconfirmed)"]
-    E --> F["Save PNG\n/generated-images/uuid.png"]
-    F --> G["Persist:\nGeneratedImages row\n+ Message row\nvia ChatService"]
-    G --> H["Yield image_generated\nthen done"]
+    A["User prompt"] --> B["Agent 1: qwen3:latest\nAnalyse + expand to N Flux prompts\nJSON: understanding + prompts[]"]
+    B --> C["Snapshot loaded models\nvia /api/ps"]
+    C --> D["Unload all models\nkeep_alive=0 · 500ms settle"]
+    D --> E["For each expanded prompt:\nollama run flux2-klein prompt\n15-min timeout"]
+    E --> F["Strategy A: PNG in workdir\nStrategy B: base64 in stdout"]
+    F --> G["Save to Generated_images/uuid.png\nPath containment check"]
+    G --> H["INSERT GeneratedImages\n+ INSERT Message\nwith all image markdown"]
+    H --> I["image_generated SSE\ndone SSE"]
+    I --> J["WarmUp previously\nloaded models\nfire-and-forget"]
 ```
 
-**Flux translation prompt** (sent to `qwen3.5:2b`):
+**Analyst system prompt** (sent to `qwen3:latest`, temp 0.2, force JSON):
 
-```
-You are a Flux2 image prompt engineer. Convert the user's description into
-a comma-separated keyword list of 10–20 terms describing the image visually.
-
-Rules:
-- Visual attributes only: style, colours, mood, composition, medium.
-- Art style keywords: vector, digital art, photorealistic, minimalist.
-- Quality boosters when relevant: high detail, sharp, professional.
-- No negatives — Flux uses a separate negative_prompt field.
-- Output ONLY the prompt string. No quotes, no explanation, no prefix.
-
-User request: {userPrompt}
+The analyst is instructed to return:
+```json
+{
+  "understanding": "One sentence: what the user wants",
+  "prompts": [
+    { "description": "short human-readable label", "prompt": "the Flux2 prompt" }
+  ]
+}
 ```
 
-**`IOllamaClient` image-generation method:**
+For multi-variant requests (dark/light theme, different sizes, multiple colour schemes), the analyst generates a separate prompt object per variant. `<think>…</think>` reasoning blocks from qwen3 are stripped before JSON parsing.
+
+**Quoted-prompt shortcut:** Input of the form `"A cute baby", "Bold text"` bypasses the analyst and sends each quoted string directly to Flux with enhancement instructions.
+
+**`IOllamaClient` methods used by `ImageGenerationAgent`:**
 
 ```csharp
-Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default);
+Task<string> ChatOnceAsync(ChatRequest request, CancellationToken ct);       // Agent 1: qwen3 analysis
+Task<IReadOnlyList<LoadedModelInfo>> GetLoadedModelsAsync(CancellationToken ct); // VRAM snapshot
+Task UnloadModelAsync(string modelName, CancellationToken ct);               // VRAM free
+Task WarmUpModelAsync(string modelName, CancellationToken ct);               // VRAM restore (fire-and-forget)
+// GenerateImageAsync is NOT used — CLI path via `ollama run` is used instead
 ```
+
+**SSE stages emitted:**
+
+| Stage | Meaning |
+|---|---|
+| `analyzing_request` | qwen3:latest is processing the request |
+| `analysis_done` | Expansion complete; `understanding` and `total` counts emitted |
+| `freeing_vram` | Unloading models; `killingModels[]` list emitted |
+| `generating` | Flux is running for prompt N of M; `prompt`, `description` emitted |
+| `gen_failed` | Flux failed for one image; pipeline continues with next |
+| `saving` | PNG detected; writing to disk |
+| `save_failed` | Write failed; pipeline continues |
+| `restoring_models` | Fire-and-forget warm-up; `models[]` list emitted |
 
 **Ownership persistence** — before `done` is emitted:
 
-```sql
--- New table (bootstrapped in Program.cs)
-CREATE TABLE IF NOT EXISTS "GeneratedImages" (
-    "Id"        TEXT NOT NULL PRIMARY KEY,   -- UUID = filename without .png
-    "BranchId"  TEXT NOT NULL,
-    "CreatedAt" TEXT NOT NULL
-);
-```
-
-Both `GeneratedImages` row and `Message` row are written before `done` is yielded.
+Both `GeneratedImages` row and `Message` row (containing markdown for all successful images) are written before `done` is yielded.
 
 ---
 
@@ -1417,13 +1438,26 @@ Returns 400 for invalid filename, 401 for bad/missing token, 403 for ownership m
 | Event | Emitter | Timing guarantee | Fields |
 |---|---|---|---|
 | `routing_decision` | `AgentOrchestratorFacade` | After both intent AND model resolved; before first token | `intent`, `model`, `provider`, `reason`, `classificationMs`, `wasFastPath`, `manualOverrideApplied` |
-| `token` | Specialized agent | Per token during generation | `text` |
-| `image_gen_progress` | `ImageGenerationAgent` | 3× during pipeline stages | `stage` ("translating"/"generating"/"saving"); `fluxPrompt` on "generating" |
-| `image_generated` | `ImageGenerationAgent` | After FS write AND DB persist | `url`, `filename`, `fluxPrompt`, `generationMs` |
-| `done` | Specialized agent | After DB persist; carries ID from ChatService | `messageId`, `tokensUsed`? |
-| `routing_error` | `AgentOrchestratorFacade` | When no model resolved or override invalid | `intent`, `message`, `ollamaPullCommand`? |
+| `token` | Specialized agent | Per token during text generation | `text` |
+| `image_gen_progress` | `ImageGenerationAgent` | Multiple times — one per stage transition | `stage` (see below), plus stage-specific fields |
+| `image_generated` | `ImageGenerationAgent` | After each PNG is written AND DB row inserted | `url`, `filename`, `fluxPrompt`, `description`, `index`, `total`, `generationMs` |
+| `done` | Specialized agent | After all DB persists complete | `messageId` |
+| `routing_error` | `AgentOrchestratorFacade` | When no model resolved or override invalid | `intent`, `message` |
 
-Persistence is an internal step. It is never visible to the client as an SSE event. `done` is the sole signal that the turn is complete and the message is durable.
+**`image_gen_progress` stage field values:**
+
+| Stage | Extra fields | UI meaning |
+|---|---|---|
+| `analyzing_request` | `analystModel` | qwen3 is reading the request |
+| `analysis_done` | `understanding`, `total`, `prompts[]` | Expansion complete |
+| `freeing_vram` | `killingModels[]` | Unloading models before Flux |
+| `generating` | `current`, `total`, `prompt`, `description` | Flux running |
+| `gen_failed` | `current`, `total`, `error` | Flux failed; continuing |
+| `saving` | `current`, `total` | Writing PNG to disk |
+| `save_failed` | `current`, `total`, `error` | Write failed; continuing |
+| `restoring_models` | `models[]` | Warming up previously loaded models |
+
+Persistence is an internal step. It is never visible to the client as an SSE event. `done` is the sole signal that the turn is complete and all messages are durable.
 
 ---
 
@@ -1527,11 +1561,30 @@ src/EminentAi.Api/Program.cs
 ```
 web/src/
 ├── components/
-│   ├── RoutingBadge.tsx       ← intent icon + model name pill, 200ms fade-in
-│   └── GeneratedImage.tsx     ← inline PNG + Download + Copy URL + expandable Flux prompt
+│   ├── RoutingBadge.tsx           ← intent icon + model name pill, 200ms fade-in
+│   ├── GeneratedImage.tsx         ← inline PNG + Download + Copy URL + expandable Flux prompt
+│   └── ImageGenProgressPanel.tsx  ← collapsible pipeline panel: 5 steps, progress bar,
+│                                     A2A badge, model chips, per-step spinner/check icons
 └── lib/
-    └── intentMeta.ts          ← AgentKind → { label, icon, badgeColor }
+    └── intentMeta.ts              ← AgentKind → { label, icon, badgeColor }
 ```
+
+**`ImageGenProgressPanel` props:**
+
+```typescript
+interface ImageGenProgressProps {
+  stage?: ImageGenStage;
+  progress?: { current: number; total: number; stage: string };
+  killingModels?: string[];
+  restoringModels?: string[];
+  currentPrompt?: string;
+  completedCount?: number;
+  understanding?: string;   // qwen3's one-line understanding
+  analystModel?: string;    // e.g. "qwen3:latest"
+}
+```
+
+The panel collapses to a headline + progress bar by default. Expanding reveals the full 5-step pipeline with per-step icons (spinner while active, checkmark when done, dimmed circle when pending), an A2A badge showing `qwen3:latest → flux2-klein:4b`, and model chips for the VRAM unload step.
 
 ### Frontend modified files
 
@@ -1755,6 +1808,6 @@ Run against `IntentRouterService` in unit tests. `ClassificationRecord.RawLabel`
 
 ---
 
-*Document version: 3.1 — 2026-06-14*
-*Supersedes v3.0. Async policy evaluation, MCP discovery parallelization, model-provider health checks, and security hardening added. Facade-level intent/model resolution remains sequential by design.*
+*Document version: 3.2 — 2026-06-21*
+*Supersedes v3.1. `ImageGenerationAgent` updated to reflect actual implementation: `qwen3:latest` as analyst, multi-image prompt expansion, VRAM snapshot/unload/restore pipeline via `ollama run` CLI, new SSE stages, `ImageGenProgressPanel` frontend component, and `x/z-image-turbo` model added to the model table.*
  

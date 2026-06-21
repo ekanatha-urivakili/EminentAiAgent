@@ -100,9 +100,29 @@ builder.Services.AddSingleton(DataResidencyPolicy.DefaultLocal);
 builder.Services.AddScoped<IGeneratedImageRepository, GeneratedImageRepository>();
 
 // Register all ISpecializedAgent implementations
+// Default to a "Generated_images" folder at the project root (one level above bin/Debug/net*/),
+// falling back to cwd if the repository root can't be resolved.
+static string ResolveProjectRoot()
+{
+    // Walk up from the running assembly looking for the .slnx / solution marker
+    var dir = AppContext.BaseDirectory;
+    for (var i = 0; i < 8; i++)
+    {
+        if (Directory.GetFiles(dir, "*.slnx").Length > 0 ||
+            Directory.GetFiles(dir, "*.sln").Length > 0)
+            return dir;
+        var parent = Directory.GetParent(dir);
+        if (parent is null) break;
+        dir = parent.FullName;
+    }
+    return Directory.GetCurrentDirectory();
+}
+
 var generatedImagesDir = Path.GetFullPath(
     builder.Configuration["EminentAi:GeneratedImagesDir"]
-    ?? Path.Combine(Directory.GetCurrentDirectory(), "generated-images"));
+    ?? Path.Combine(ResolveProjectRoot(), "Generated_images"));
+
+Directory.CreateDirectory(generatedImagesDir);
 builder.Services.AddScoped<ISpecializedAgent, VisionAgent>();
 builder.Services.AddScoped<ISpecializedAgent, CodeAgent>();
 builder.Services.AddScoped<ISpecializedAgent, ArchitectureAgent>();

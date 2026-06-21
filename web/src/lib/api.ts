@@ -1,4 +1,7 @@
-const BASE = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:5210';
+// In development Vite proxies /api/* → http://127.0.0.1:5210 (see vite.config.ts).
+// Use a relative base so the browser never makes a cross-origin request.
+// Set VITE_API_URL to override (e.g. for Docker or remote deployments).
+const BASE = import.meta.env.VITE_API_URL ?? '';
 
 export interface SseEvent {
   event: string;
