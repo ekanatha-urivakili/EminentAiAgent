@@ -47,7 +47,7 @@ const PIPELINE: PipelineStep[] = [
     detail: ({ analystModel, understanding }) =>
       understanding
         ? `"${understanding}"`
-        : `${analystModel ?? 'qwen3:latest'} is understanding your request and writing optimised Flux prompts`,
+        : `${analystModel ?? 'qwen3:latest'} is understanding your request and writing optimised image prompts`,
   },
   {
     id:     'freeing_vram',
@@ -56,7 +56,7 @@ const PIPELINE: PipelineStep[] = [
     detail: ({ killingModels }) =>
       killingModels?.length
         ? `Unloading: ${killingModels.join(', ')}`
-        : 'Stopping all running models so Flux has full VRAM',
+        : 'Stopping all running models to free VRAM for image generation',
   },
   {
     id:     'generating',
@@ -68,7 +68,7 @@ const PIPELINE: PipelineStep[] = [
         : '';
       return currentPrompt
         ? `"${currentPrompt}"${countStr}`
-        : `Running x/flux2-klein:4b${countStr} — typically 30–180 s`;
+        : `Running x/z-image-turbo${countStr} — typically 30–180 s`;
     },
   },
   {
@@ -284,7 +284,7 @@ export function ImageGenProgressPanel(props: ImageGenProgressProps) {
               <p className="text-[10px] text-violet-600/70 dark:text-violet-400/70">
                 <span className="font-mono">{analystModel ?? 'qwen3:latest'}</span>
                 {' '}→ prompt engineer → {' '}
-                <span className="font-mono">x/flux2-klein:4b</span>
+                <span className="font-mono">x/z-image-turbo</span>
                 {' '}→ image generator
               </p>
             </div>
@@ -318,7 +318,7 @@ export function ImageGenProgressPanel(props: ImageGenProgressProps) {
           {stage === 'generating' && (
             <p className="mt-1 flex items-start gap-1.5 text-[10px] text-muted-foreground/55 italic">
               <Zap size={10} className="flex-shrink-0 mt-0.5" />
-              Flux runs fully on-device — 30–180 s per image depending on your hardware.
+              Runs fully on-device — 30–180 s per image depending on your hardware.
             </p>
           )}
         </div>

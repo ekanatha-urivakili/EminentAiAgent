@@ -68,7 +68,9 @@
       "Bash(awk '{print $6,$7,$8,$9}')",
       "Bash(mkdir -p /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension/.vscode)",
       "Bash(code --install-extension /Users/ekanathareddyurivakili/Documents/GitHub/EminentAiAgent/vscode-extension/eminentai-0.2.0.vsix --force)",
-      "Bash(echo \"watcher PID: $!\")"
+      "Bash(echo \"watcher PID: $!\")",
+      "Bash(find /etc /usr/local/etc /opt /Users/ekanathareddyurivakili -name \"Caddyfile\" -o -name \"caddy.json\" -o -name \"AdGuardHome.yaml\" -o -name \"adguardhome*\" 2>/dev/null | grep -v \".Trash\" | head -20)",
+      "Read(//private/etc/**)"
     ],
     "additionalDirectories": [
       "/Users/ekanathareddyurivakili/Library/LaunchAgents",

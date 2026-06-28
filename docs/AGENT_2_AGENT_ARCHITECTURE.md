@@ -1724,7 +1724,7 @@ gantt
 | General | `qwen2.5:latest` | Any `balanced` tier | Any `fast` tier | Any installed model |
 
 When `DataResidencyPolicy.LocalOnly = true`, only `IsLocal = true` models reach the priority list. Cloud providers are filtered out before any name match runs.
-
+ 
 ---
 
 ## 16. Security Considerations

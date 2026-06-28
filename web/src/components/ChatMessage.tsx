@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  BrainCircuit,
   Check,
   Copy,
   Download,
@@ -9,7 +8,6 @@ import {
   FileText,
   Flame,
   GitBranch,
-  ListChecks,
   RefreshCw,
   Search,
   Share2,
@@ -29,13 +27,6 @@ type ExportFormat = 'pdf' | 'markdown' | 'docx' | 'txt';
 type ActionStatus = 'Copied' | 'Liked' | 'Disliked' | 'Shared' | 'Exported' | 'Unavailable' | undefined;
 const COLLAPSE_TEXT_LENGTH = 420;
 const COLLAPSE_LINE_COUNT = 3;
-
-const thinkingSteps = [
-  { label: 'Reading your prompt', detail: 'Identifying the language, intent, and context.', icon: Search },
-  { label: 'Planning the answer', detail: 'Choosing the clearest structure before writing.', icon: BrainCircuit },
-  { label: 'Checking edge cases', detail: 'Looking for details that could change the explanation.', icon: ListChecks },
-  { label: 'Composing response', detail: 'Turning the reasoning into a useful answer.', icon: Flame },
-];
 
 const sourceUrlPattern = /https?:\/\/[^\s)\]>"]+/g;
 const markdownLinkPattern = /\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g;
@@ -226,61 +217,38 @@ function makeDocx(content: string) {
   ]);
 }
 
-function ThinkingIndicator({ hasContent }: { hasContent: boolean }) {
-  const [step, setStep] = useState(0);
-
-  useEffect(() => {
-    if (hasContent) return undefined;
-    const timer = window.setInterval(() => {
-      setStep((current) => (current + 1) % thinkingSteps.length);
-    }, 1800);
-    return () => window.clearInterval(timer);
-  }, [hasContent]);
-
-  const current = hasContent
-    ? { label: 'Writing response', detail: 'Streaming tokens into the answer.', icon: Flame }
-    : thinkingSteps[step];
-  const Icon = current.icon;
-
+function StreamingPanel({ model, hasContent }: { model?: string; hasContent: boolean }) {
   if (hasContent) {
     return (
-      <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-full border border-border bg-background/70 px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
+      <span className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
         <span className="relative flex h-2 w-2">
           <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70 animate-ping" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
         </span>
-        <span>{current.label}</span>
-      </div>
+        Generating
+      </span>
     );
   }
 
   return (
     <div className="w-full max-w-xl rounded-2xl border border-border bg-background/85 p-4 shadow-sm">
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-3">
         <div className="relative flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-rose-500 text-white shadow-sm">
-          <Icon size={17} />
+          <Flame size={17} />
           <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-background bg-emerald-500" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="text-sm font-medium leading-tight">{current.label}</p>
-            <div className="flex items-center gap-1" aria-hidden="true">
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.2s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/75 [animation-delay:-0.1s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/50" />
-            </div>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium">Generating</p>
+            <span className="flex gap-0.5" aria-hidden>
+              <span className="h-1.5 w-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.2s]" />
+              <span className="h-1.5 w-1.5 rounded-full bg-primary/75 animate-bounce [animation-delay:-0.1s]" />
+              <span className="h-1.5 w-1.5 rounded-full bg-primary/50 animate-bounce" />
+            </span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{current.detail}</p>
-          <div className="mt-3 grid grid-cols-4 gap-1.5" aria-hidden="true">
-            {thinkingSteps.map((item, index) => (
-              <div
-                key={item.label}
-                className={cn(
-                  'h-1.5 rounded-full transition-colors duration-300',
-                  index <= step ? 'bg-primary' : 'bg-muted',
-                )}
-              />
-            ))}
+          {model && <p className="mt-0.5 text-xs font-mono text-muted-foreground">{model}</p>}
+          <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full w-2/5 rounded-full bg-gradient-to-r from-orange-400 to-rose-500 animate-pulse" />
           </div>
         </div>
       </div>
@@ -506,7 +474,7 @@ export function ChatMessage({ message }: { message: ChatMsg }) {
 
               <div className="w-full pt-1.5 prose prose-slate dark:prose-invert navy:prose-invert max-w-none">
                 {hasAssistantContent && <MarkdownRenderer content={message.content} />}
-                {message.streaming && <ThinkingIndicator hasContent={hasAssistantContent} />}
+                {message.streaming && <StreamingPanel model={message.model} hasContent={hasAssistantContent} />}
               </div>
             </>
           )}
