@@ -110,6 +110,12 @@ Mailpit SMTP runs on `127.0.0.1:1025`; its web UI is `http://localhost:8025`.
 
 Start everything:
 
+**Windows (PowerShell):**
+```powershell
+./start.ps1
+```
+
+**macOS/Linux (bash):**
 ```bash
 ./start.sh
 ```

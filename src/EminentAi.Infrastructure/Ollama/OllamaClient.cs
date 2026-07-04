@@ -14,6 +14,11 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    // Circuit breaker: avoid hammering a non-running Ollama every 5 s.
+    // Static so all instances (scoped/transient) share the same cooldown.
+    private static long _unhealthyUntilTicks = long.MinValue;
+    private static readonly long CooldownTicks = TimeSpan.FromSeconds(30).Ticks;
+
     public async IAsyncEnumerable<ChatDelta> ChatStreamAsync(
         ChatRequest req, [EnumeratorCancellation] CancellationToken ct = default)
     {
@@ -108,15 +113,24 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         }
     }
 
+    public void ResetHealthCooldown() =>
+        Interlocked.Exchange(ref _unhealthyUntilTicks, long.MinValue);
+
     public async Task<bool> IsHealthyAsync(CancellationToken ct = default)
     {
+        if (DateTime.UtcNow.Ticks < Interlocked.Read(ref _unhealthyUntilTicks))
+            return false;
+
         try
         {
             using var response = await http.GetAsync("/api/tags", ct);
-            return response.IsSuccessStatusCode;
+            var ok = response.IsSuccessStatusCode;
+            Interlocked.Exchange(ref _unhealthyUntilTicks, ok ? long.MinValue : DateTime.UtcNow.Ticks + CooldownTicks);
+            return ok;
         }
         catch
         {
+            Interlocked.Exchange(ref _unhealthyUntilTicks, DateTime.UtcNow.Ticks + CooldownTicks);
             return false;
         }
     }

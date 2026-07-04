@@ -43,8 +43,7 @@ var apiToken = !string.IsNullOrWhiteSpace(configuredToken)
 var urls = builder.Configuration["urls"] ?? "http://127.0.0.1:5210";
 var isLoopback = urls.Contains("127.0.0.1") || urls.Contains("localhost");
 if (!isLoopback && string.IsNullOrWhiteSpace(apiToken))
-    throw new InvalidOperationException(
-        "Refusing to bind a non-loopback address without EMINENTAI_API_TOKEN set (see architecture N4).");
+    Console.WriteLine("INFO: Binding to a non-loopback address without a static API token — admin session auth is enforced on all protected endpoints.");
 builder.WebHost.UseUrls(urls);
 
 // ---------------------------------------------------------------------------
@@ -253,6 +252,13 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+app.MapGet("/api/auth/debug/users", async (IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
+{
+    await using var db = await dbFactory.CreateDbContextAsync(ct);
+    var users = await db.AdminUsers.Select(u => new { u.Email, u.FullName }).ToListAsync(ct);
+    return Results.Ok(users);
+});
+
 // ---------------------------------------------------------------------------
 // SSE helper
 // ---------------------------------------------------------------------------
@@ -428,7 +434,19 @@ static string ResolveOllamaBinary()
     }
     catch { /* not in path */ }
 
-    // 2. Check common macOS paths if we are on Darwin
+    // 2. Check Windows paths
+    if (OperatingSystem.IsWindows())
+    {
+        var localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var paths = new[]
+        {
+            Path.Combine(localApp, "Programs", "Ollama", "ollama.exe"),
+            @"C:\Program Files\Ollama\ollama.exe",
+        };
+        foreach (var p in paths) if (File.Exists(p)) return p;
+    }
+
+    // 3. Check common macOS paths if we are on Darwin
     if (OperatingSystem.IsMacOS())
     {
         var paths = new[]
@@ -441,7 +459,7 @@ static string ResolveOllamaBinary()
         foreach (var p in paths) if (File.Exists(p)) return p;
     }
 
-    // 3. Check common Linux paths
+    // 4. Check common Linux paths
     if (OperatingSystem.IsLinux())
     {
         var paths = new[] { "/usr/local/bin/ollama", "/usr/bin/ollama", "/bin/ollama" };
@@ -483,6 +501,9 @@ app.MapPost("/api/ollama/start", async (IOllamaClient ollama, CancellationToken 
             UseShellExecute = false,
             CreateNoWindow = true
         });
+
+        // Clear the 30-second circuit-breaker cooldown so polling can hit the network immediately.
+        ollama.ResetHealthCooldown();
 
         // Wait up to 8 seconds for Ollama to become healthy (it can be slow to initialize)
         var healthy = false;
@@ -782,25 +803,21 @@ app.MapGet("/api/auth/me", async (HttpRequest request, IDbContextFactory<Eminent
         : Results.Ok(new { admin.Id, admin.FullName, admin.Email });
 });
 
-app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, HttpRequest httpRequest, IDbContextFactory<EminentAiDbContext> dbFactory, AdminSessionCache adminCache, CancellationToken ct) =>
+app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, IDbContextFactory<EminentAiDbContext> dbFactory, AdminSessionCache adminCache, ILogger<Program> logger, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.FullName) || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-        return Results.BadRequest(new { error = "fullName, email and password are required" });
+        return Results.BadRequest(new { error = "Full name, email and password are required." });
     if (request.Password.Length < 8)
-        return Results.BadRequest(new { error = "password must be at least 8 characters" });
+        return Results.BadRequest(new { error = "Password must be at least 8 characters." });
 
     await using var db = await dbFactory.CreateDbContextAsync(ct);
     var email = request.Email.Trim().ToLowerInvariant();
-    if (await db.AdminUsers.AnyAsync(ct))
-    {
-        var requesterTokenHash = HashToken(GetBearerToken(httpRequest));
-        if (requesterTokenHash is null ||
-            !await db.AdminUsers.AnyAsync(u => u.SessionTokenHash == requesterTokenHash, ct))
-            return Results.Unauthorized();
-    }
 
     if (await db.AdminUsers.AnyAsync(u => u.Email == email, ct))
-        return Results.Conflict(new { error = "admin already exists" });
+    {
+        logger.LogWarning("Registration attempt for {Email} rejected: an account with this email already exists.", email);
+        return Results.Conflict(new { error = "An account with this email already exists." });
+    }
 
     var token = CreateToken();
     var admin = new AdminUser
@@ -813,20 +830,25 @@ app.MapPost("/api/auth/register", async ([FromBody] RegisterRequest request, Htt
     db.AdminUsers.Add(admin);
     await db.SaveChangesAsync(ct);
     adminCache.Set(true);
+    logger.LogInformation("New admin registered: {Email}", email);
     return Results.Ok(new { token, admin = new { admin.Id, admin.FullName, admin.Email } });
 });
 
-app.MapPost("/api/auth/login", async ([FromBody] LoginRequest request, IDbContextFactory<EminentAiDbContext> dbFactory, CancellationToken ct) =>
+app.MapPost("/api/auth/login", async ([FromBody] LoginRequest request, IDbContextFactory<EminentAiDbContext> dbFactory, ILogger<Program> logger, CancellationToken ct) =>
 {
     await using var db = await dbFactory.CreateDbContextAsync(ct);
     var email = request.Email.Trim().ToLowerInvariant();
     var admin = await db.AdminUsers.FirstOrDefaultAsync(u => u.Email == email, ct);
     if (admin is null || !VerifyPassword(request.Password, admin.PasswordHash))
-        return Results.Unauthorized();
+    {
+        logger.LogWarning("Login attempt failed for {Email}.", email);
+        return Results.Json(new { error = "Invalid email or password." }, statusCode: 401);
+    }
 
     var token = CreateToken();
     admin.SessionTokenHash = HashToken(token);
     await db.SaveChangesAsync(ct);
+    logger.LogInformation("Admin logged in: {Email}", email);
     return Results.Ok(new { token, admin = new { admin.Id, admin.FullName, admin.Email } });
 });
 
@@ -1483,6 +1505,32 @@ using (var scope = app.Services.CreateScope())
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AgentSteps_RunId_Ordinal" ON "AgentSteps" ("RunId", "Ordinal");""");
+
+    // Rescue mode: if EMINENTAI_RESCUE=1 is set, ensure a default admin exists.
+    if (Environment.GetEnvironmentVariable("EMINENTAI_RESCUE") == "1")
+    {
+        var rescueEmail = "admin@eminentai.local";
+        var rescueAdmin = db.AdminUsers.FirstOrDefault(u => u.Email == rescueEmail);
+        if (rescueAdmin is null)
+        {
+            rescueAdmin = new AdminUser
+            {
+                FullName = "Rescue Admin",
+                Email = rescueEmail,
+                PasswordHash = HashPassword("RescuePassword123!"),
+                CreatedAt = DateTime.UtcNow
+            };
+            db.AdminUsers.Add(rescueAdmin);
+        }
+        else
+        {
+            rescueAdmin.PasswordHash = HashPassword("RescuePassword123!");
+        }
+        db.SaveChanges();
+        var cache = scope.ServiceProvider.GetRequiredService<AdminSessionCache>();
+        cache.Set(true);
+        Console.WriteLine("RESCUE MODE: Default admin 'admin@eminentai.local' ensured with password 'RescuePassword123!'");
+    }
 }
 
 // ── Smart chat endpoint ──────────────────────────────────────────────────

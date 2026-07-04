@@ -56,6 +56,9 @@ public interface IOllamaClient
 
     Task<bool> IsHealthyAsync(CancellationToken ct = default);
 
+    /// <summary>Clears the 30-second unhealthy cooldown so the next IsHealthyAsync call hits the network immediately.</summary>
+    void ResetHealthCooldown();
+
     IAsyncEnumerable<PullDelta> PullModelAsync(string name, CancellationToken ct = default);
 
     /// <summary>

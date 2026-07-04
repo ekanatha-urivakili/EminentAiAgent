@@ -1,6 +1,11 @@
+<<<<<<< Updated upstream
 // In development Vite proxies /api/* → http://127.0.0.1:5210 (see vite.config.ts).
 // Use a relative base so the browser never makes a cross-origin request.
 // Set VITE_API_URL to override (e.g. for Docker or remote deployments).
+=======
+// Empty string = relative URLs → Vite proxy forwards /api/* to the backend.
+// Set VITE_API_URL only when bypassing the proxy (e.g. production direct calls).
+>>>>>>> Stashed changes
 const BASE = import.meta.env.VITE_API_URL ?? '';
 
 export interface SseEvent {

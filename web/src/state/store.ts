@@ -89,6 +89,7 @@ interface AppState {
   authLoading: boolean;
   authError?: string;
   loadAdmin: () => Promise<void>;
+  clearAuthError: () => void;
   registerAdmin: (fullName: string, email: string, password: string) => Promise<void>;
   loginAdmin: (email: string, password: string) => Promise<void>;
   logoutAdmin: () => void;
@@ -471,9 +472,11 @@ export const useStore = create<AppState>((set, get) => ({
               }
 
               if (event === 'routing_error') {
+                const pullCmd = data.ollamaPullCommand as string | undefined;
+                const pullHint = pullCmd ? `\n\nRun: \`${pullCmd}\`` : '';
                 return {
                   ...m,
-                  content: `⚠️ ${data.message as string}`,
+                  content: `⚠️ ${data.message as string}${pullHint}`,
                   streaming: false,
                 };
               }
@@ -759,6 +762,8 @@ export const useStore = create<AppState>((set, get) => ({
       set({ admin: undefined, authLoading: false });
     }
   },
+
+  clearAuthError: () => set({ authError: undefined }),
 
   registerAdmin: async (fullName, email, password) => {
     set({ authLoading: true, authError: undefined });
