@@ -211,6 +211,21 @@ export class ApiClient {
   async listModels(): Promise<string[]> {
     const names = new Set<string>();
 
+    // Default cloud models
+    const defaults = [
+      'openai:gpt-4o',
+      'openai:gpt-4o-mini',
+      'openai:gpt-4-turbo',
+      'openai:o1',
+      'openai:o1-mini',
+      'anthropic:claude-3-5-sonnet-20241022',
+      'anthropic:claude-3-5-haiku-20241022',
+      'anthropic:claude-3-opus-20240229',
+      'google:gemini-2.0-flash',
+      'google:gemini-1.5-pro-latest',
+    ];
+    defaults.forEach(d => names.add(d));
+
     try {
       const r = await fetch(`${this.backendUrl()}/api/models`, {
         headers: await this.backendHeaders()
@@ -225,17 +240,6 @@ export class ApiClient {
         }
       }
     } catch { /* fall back to Ollama */ }
-
-    try {
-      const r = await fetch(`${this.ollamaUrl()}/api/tags`, {
-        signal: AbortSignal.timeout(2000)
-      });
-      if (r.ok) {
-        const body = await r.json() as unknown;
-        const models = isRecord(body) && Array.isArray(body.models) ? body.models : [];
-        models.filter(isOllamaTag).forEach(m => names.add(m.name));
-      }
-    } catch { /* no local Ollama models available */ }
 
     return [...names].sort((a, b) => a.localeCompare(b));
   }

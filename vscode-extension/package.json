@@ -2,7 +2,7 @@
   "name": "eminentai",
   "displayName": "EminentAI",
   "description": "Local AI coding assistant powered by Ollama \u2014 Agent, Ask, and Plan modes",
-  "version": "0.4.0",
+  "version": "0.7.1",
   "publisher": "eminentai",
   "icon": "resources/icon.png",
   "license": "MIT",
@@ -84,8 +84,8 @@
         },
         "eminentai.defaultModel": {
           "type": "string",
-          "default": "ollama:gemma4:e4b",
-          "description": "Default model ID or Ollama model name"
+          "default": "auto",
+          "description": "Auto lets the local orchestrator select and manage the appropriate Ollama model."
         },
         "eminentai.visionModel": {
           "type": "string",
