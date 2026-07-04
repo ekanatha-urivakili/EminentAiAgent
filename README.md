@@ -44,7 +44,8 @@ src/EminentAi.Infrastructure  OllamaClient, IntentRouterService, ModelRouterServ
 src/EminentAi.Api             ASP.NET Core Minimal API + SSE endpoints on 127.0.0.1:5210
 Generated_images/             AI-generated PNGs — gitignored, served via /api/generated-images/
 web/                          React 19 + Vite + Tailwind UI
-vscode-ext/                   VS Code extension: chat sidebar, FIM completions, agent edits
+vscode-extension/             VS Code extension: chat, workspace tools, Git/tool commands,
+                              web search, approvals, persistent EminentAI.md instructions
 ```
 
 ## Install Ollama
@@ -73,10 +74,10 @@ Or download the installer directly from [ollama.com/download](https://ollama.com
 
 | Model | Size | Tier | Role |
 | --- | --- | --- | --- |
-| `qwen3.5:2b` | 2.7 GB | fast | Intent classifier — stays warm, sub-500 ms |
+| `qwen3:8b` | 5.2 GB | balanced | Intent classifier, general agent, architecture, tool orchestration |
 | `qwen2.5-coder:1.5b` | 986 MB | fast | Code Agent + VS Code FIM completions |
 | `qwen2.5:latest` | 4.7 GB | balanced | General Agent / Architecture fallback |
-| `qwen3:latest` | 5.2 GB | balanced | Architecture Agent (primary) + Image prompt engineer |
+| `qwen3:latest` | 5.2 GB | balanced | Alias retained for image prompt engineering |
 | `gemma4:e4b` | 9.6 GB | balanced | Architecture Agent fallback |
 | `qwen2.5vl:latest` | 6.0 GB | vision | Vision Agent — only multimodal model |
 | `x/flux2-klein:4b` | 5.7 GB | image_gen | Image generation — Flux2 diffusion |
@@ -87,15 +88,14 @@ Or download the installer directly from [ollama.com/download](https://ollama.com
 
 ```bash
 ollama serve                          # start the daemon (macOS: brew services start ollama)
-ollama pull qwen3.5:2b                # intent classifier
-ollama pull qwen3:latest              # architecture agent + image prompt engineer
+ollama pull qwen3:8b                  # classifier + local tool agent
 ollama pull qwen2.5:latest            # general agent
 ollama pull qwen2.5vl:latest          # vision agent
 ollama pull qwen2.5-coder:1.5b        # code agent + FIM completions
 ollama pull x/flux2-klein:4b          # image generation (Flux2)
 ollama pull x/z-image-turbo           # image generation (high quality, 12 GB)
 npm install --prefix web
-npm install --prefix vscode-ext
+npm install --prefix vscode-extension
 ```
 
 Mailpit is used only for local password-reset emails:
@@ -129,7 +129,8 @@ The backend uses `src/EminentAi.Api/appsettings.json`. Important settings:
 | --- | ---: | --- |
 | `ConnectionStrings:Default` | `Data Source=eminentai.db` | Local SQLite database |
 | `EminentAi:OllamaUrl` | `http://127.0.0.1:11434` | Ollama API |
-| `EminentAi:WorkspaceRoot` | empty | Sandbox root for filesystem and shell tools |
+| `EminentAi:OllamaApiKey` / `OLLAMA_API_KEY` | empty | Server-side key for Ollama web search and fetch |
+| `EminentAi:WorkspaceRoot` | nearest Git root | Sandbox root for filesystem and shell tools; falls back to `~/EminentAiWorkspace` |
 | `EminentAi:AllowedOrigins` | Vite localhost origins | CORS allowlist |
 | `EminentAi:ApiToken` | empty | Optional API token; required for non-loopback binding |
 | `EminentAi:Smtp` | Mailpit defaults | Password-reset email transport |
@@ -138,8 +139,72 @@ The backend uses `src/EminentAi.Api/appsettings.json`. Important settings:
 
 - **Chat**: streaming conversation persisted to SQLite. Regenerate creates a sibling message; fork creates a new branch.
 - **Plan**: read-only planning mode that returns validated JSON with repair retries.
-- **Agent**: autonomous execution with step/token/time budgets, loop detection, tool-call repair, policy checks, and human approval for writes.
-- **Smart Chat** (`POST /api/chat/smart`): agent-to-agent routing — intent is classified by `qwen3.5:2b`, the right specialist model is selected automatically, and the turn is dispatched to the appropriate agent (Vision, Code, Architecture, ImageGeneration, General). A `routing_decision` SSE event is emitted before the first token so the UI can show which model handled the request.
+- **Agent**: autonomous execution with `qwen3:8b`, repository inspection, targeted file replacement, ZIP creation, step/token/time budgets, policy checks, and human approval for mutations.
+- **Smart Chat** (`POST /api/chat/smart`): agent-to-agent routing — intent is classified by `qwen3:8b`, the right specialist model is selected automatically, and the turn is dispatched to the appropriate agent (Vision, Code, Architecture, ImageGeneration, General). A `routing_decision` SSE event is emitted before the first token so the UI can show which model handled the request.
+
+## Current Architecture
+
+### HLD-01 — Local system
+
+```mermaid
+flowchart LR
+    User[User]
+    Web[React web app]
+    VS[VS Code extension]
+    Api[ASP.NET Core API]
+    Agent[AgentOrchestrator]
+    VsAgent[VS Code WorkspaceAgent]
+    Ollama[Local Ollama]
+    Files[Approved local workspace]
+    Search[Ollama web search/fetch]
+    Db[(SQLite)]
+
+    User --> Web --> Api
+    User --> VS
+    Api --> Agent --> Ollama
+    Agent --> Files
+    Agent --> Search
+    Api --> Db
+    VS --> VsAgent --> Ollama
+    VsAgent --> Files
+    VsAgent --> Search
+```
+
+### LLD-01 — Agent tool decision
+
+```mermaid
+flowchart TD
+    Prompt[Prompt + EminentAI.md] --> Model[Ollama tool-capable model]
+    Model --> Decision{Tool call?}
+    Decision -->|No| Answer[Render answer, Mermaid, links]
+    Decision -->|Read-only| Execute[Execute in workspace scope]
+    Decision -->|Mutation or command| Approval[Approve once / allow session / reject]
+    Approval -->|Approved| Execute
+    Approval -->|Rejected| Observation[Return rejection observation]
+    Execute --> Observation --> Model
+```
+
+### SD-01 — Permissioned workspace change
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Chat
+    participant Agent
+    participant Ollama
+    participant Tools
+
+    User->>Chat: Request repository change
+    Chat->>Agent: Prompt + workspace root + EminentAI.md
+    Agent->>Ollama: Messages + tool schemas
+    Ollama-->>Agent: write_file or run_command
+    Agent-->>Chat: Approval request
+    User-->>Agent: Approve once / session / reject
+    Agent->>Tools: Execute approved operation
+    Tools-->>Agent: Result
+    Agent->>Ollama: Tool result
+    Ollama-->>Chat: Verified final response
+```
 
 ### Image Generation Pipeline
 
@@ -154,8 +219,9 @@ Built-in connectors:
 
 | Connector | Purpose | Safety |
 | --- | --- | --- |
-| `filesystem` | Read/write files under `EminentAi:WorkspaceRoot` | Writes require approval |
+| `filesystem` | Tree/content search, read, targeted replacement, move/delete, and ZIP creation under the selected local workspace | Mutations require approval |
 | `shell` | Run commands from the workspace root | Always approval-gated, timeout-limited, denylisted |
+| `web` | Ollama web search and page fetch with source URLs | Requires a server-side Ollama API key |
 
 External stdio MCP connectors can be registered through `/api/connectors`.
 
@@ -229,7 +295,7 @@ sqlite3 src/EminentAi.Api/eminentai.db \
 Development host:
 
 ```bash
-cd vscode-ext
+cd vscode-extension
 npm install
 npm run compile
 ```
@@ -239,21 +305,23 @@ Open the repository in VS Code, press `F5`, and launch the extension development
 Installable VSIX:
 
 ```bash
-cd vscode-ext
+cd vscode-extension
 npm install
 npm run package
-npx @vscode/vsce package
-code --install-extension eminentai-copilot-0.1.0.vsix
+code --install-extension eminentai-0.4.0.vsix
 ```
 
 Features:
 
-- Activity-bar chat sidebar backed by `/api/chat`.
-- Direct Ollama fallback when the backend is offline.
-- Inline FIM completions through Ollama `/api/generate`.
-- Selection commands: explain, fix, refactor, generate tests.
-- `EminentAi: Agent Edit (multi-file)` for backend agent runs with approval prompts.
-- Status-bar health check and model switcher.
+- Activity-bar chat with direct local Ollama streaming.
+- PNG, JPEG, WebP, and GIF attachments for vision-capable Ollama models.
+- Workspace-scoped list, read, search, and approved file writes.
+- Read-only Git inspection plus approval-gated Git mutations.
+- Approval-gated build, test, Docker, package, and tool install/update commands.
+- Ollama web search with linked sources.
+- In-chat approval cards and session-scoped grants.
+- Mermaid HLD, LLD, sequence, and flowchart rendering.
+- `EminentAI.md` loaded before every workspace prompt.
 
 Detailed implementation and diagrams are in `VS_CODE_EXTENSION.md`.
 
@@ -263,5 +331,5 @@ Detailed implementation and diagrams are in `VS_CODE_EXTENSION.md`.
 dotnet build EminentAi.slnx
 dotnet test EminentAi.slnx --no-build
 cd web && npm run build && npm run lint
-cd ../vscode-ext && npm run compile && npm run package
+cd ../vscode-extension && npm run compile && npm run package
 ```

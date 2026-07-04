@@ -9,5 +9,7 @@ tsconfig.json
 !out/**
 !media/**
 !resources/**
+**/*.test.js
+**/*.test.js.map
 node_modules/**
 .eslintignore

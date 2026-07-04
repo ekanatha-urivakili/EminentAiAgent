@@ -14,10 +14,14 @@ export function getWebviewContent(_webview: vscode.Webview, extensionUri: vscode
   ].join('; ');
 
   const htmlPath = path.join(extensionUri.fsPath, 'media', 'chat.html');
+  const mermaidUri = _webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, 'media', 'mermaid.min.js'),
+  );
   let html = fs.readFileSync(htmlPath, 'utf8');
 
   html = html
     .replace('__CSP__', csp)
+    .replace('__MERMAID_URI__', mermaidUri.toString())
     .replace(/__NONCE__/g, nonce);
 
   return html;

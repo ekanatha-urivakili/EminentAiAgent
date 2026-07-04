@@ -123,13 +123,15 @@ function TimelineItem({ item }: { item: AgentTimelineItem }) {
 }
 
 // ── Idle config panel ─────────────────────────────────────────────────────────
-const BUILTIN_CONNECTORS = ['filesystem', 'shell'];
+const BUILTIN_CONNECTORS = ['filesystem', 'shell', 'web'];
 
 function AgentIdleConfig() {
   const agentStepBudget = useStore((s) => s.agentStepBudget);
   const setAgentStepBudget = useStore((s) => s.setAgentStepBudget);
   const agentConnectors = useStore((s) => s.agentConnectors);
   const setAgentConnectors = useStore((s) => s.setAgentConnectors);
+  const agentWorkspaceRoot = useStore((s) => s.agentWorkspaceRoot);
+  const setAgentWorkspaceRoot = useStore((s) => s.setAgentWorkspaceRoot);
   const connectors = useStore((s) => s.connectors);
   const loadConnectors = useStore((s) => s.loadConnectors);
 
@@ -168,6 +170,21 @@ function AgentIdleConfig() {
           <span>1 (quick)</span>
           <span>50 (deep)</span>
         </div>
+      </div>
+
+      <div>
+        <label className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Local workspace path
+        </label>
+        <input
+          value={agentWorkspaceRoot}
+          onChange={(event) => setAgentWorkspaceRoot(event.target.value)}
+          placeholder="Leave blank for this repository, or enter /absolute/local/path"
+          className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Reads stay inside this folder. Every edit, create, move, delete, ZIP, or shell command requires approval.
+        </p>
       </div>
 
       {/* Connector selection */}
@@ -228,8 +245,8 @@ export function AgentView() {
         <div className="text-center">
           <h1 className="text-3xl font-bold tracking-tight mb-2">Agent mode</h1>
           <p className="text-muted-foreground text-base text-center max-w-md leading-relaxed">
-            Give the agent a goal. It works with sandboxed filesystem and shell tools —
-            every write action pauses for your approval, and a security policy gates everything.
+            Give the agent a goal. It can inspect this repository, edit files, and create ZIP archives —
+            every mutation pauses for your approval.
           </p>
         </div>
         <AgentIdleConfig />

@@ -1,3 +1,6 @@
+import type { ApprovalMode } from './approvalPolicy';
+export type { ApprovalMode } from './approvalPolicy';
+
 export type Mode = 'agent' | 'ask' | 'plan';
 export type ThinkingEffort = 'low' | 'medium' | 'high';
 export type Provider = 'ollama' | 'openai' | 'anthropic' | 'google';
@@ -38,6 +41,13 @@ export interface LLMModel {
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  images?: string[];
+}
+
+export interface ImageAttachment {
+  name: string;
+  contentType: string;
+  dataBase64: string;
 }
 
 export interface OllamaChatRequest {
@@ -102,11 +112,16 @@ export type ExtensionMessage =
   | { type: 'models'; models: LLMModel[] }
   | { type: 'sessions'; sessions: Session[]; activeId: string | null }
   | { type: 'session'; session: Session }
+  | { type: 'images_selected'; images: ImageAttachment[] }
   | { type: 'stream_start'; msgId: string }
+  | { type: 'agent_status'; msgId: string; status: string }
+  | { type: 'file_change'; path: string; additions: number; deletions: number }
   | { type: 'stream_delta'; msgId: string; delta: string }
   | { type: 'stream_end'; msgId: string; tokens: number; durationMs: number }
   | { type: 'stream_error'; msgId: string; error: string }
-  | { type: 'config'; ollamaUrl: string; contextLines: number }
+  | { type: 'approval_request'; requestId: string; tool: string; summary: string }
+  | { type: 'approval_mode'; mode: ApprovalMode }
+  | { type: 'config'; ollamaUrl: string; contextLines: number; defaultModel: string }
   | { type: 'error'; message: string }
   | { type: 'insert_code'; code: string };
 
@@ -114,18 +129,34 @@ export type ExtensionMessage =
 
 export type WebviewMessage =
   | { type: 'ready' }
+  | { type: 'select_images' }
   | { type: 'get_models' }
   | { type: 'get_sessions' }
   | { type: 'new_session'; model: string; mode: Mode; effort: ThinkingEffort }
   | { type: 'switch_session'; sessionId: string }
   | { type: 'delete_session'; sessionId: string }
   | { type: 'rename_session'; sessionId: string; title: string }
-  | { type: 'send_message'; sessionId: string; content: string; model: string; mode: Mode; effort: ThinkingEffort; attachedCode?: string }
+  | {
+      type: 'send_message';
+      sessionId: string;
+      content: string;
+      model: string;
+      mode: Mode;
+      effort: ThinkingEffort;
+      attachedCode?: string;
+      attachedImages?: ImageAttachment[];
+    }
   | { type: 'cancel_stream' }
   | { type: 'pin_model'; modelId: string }
   | { type: 'unpin_model'; modelId: string }
   | { type: 'insert_at_cursor'; code: string }
   | { type: 'open_file'; path: string }
+  | { type: 'review_file_change'; path: string }
+  | { type: 'undo_file_change'; path: string }
+  | { type: 'open_external'; url: string }
+  | { type: 'approval_response'; requestId: string; decision: 'once' | 'session' | 'reject' }
+  | { type: 'get_approval_mode' }
+  | { type: 'set_approval_mode'; mode: ApprovalMode }
   | { type: 'get_active_file' }
   | { type: 'clear_session'; sessionId: string };
 

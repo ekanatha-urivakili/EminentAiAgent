@@ -1,5 +1,7 @@
 # Setup Instructions for Hybrid Deployment
 
+> Status: experimental deployment guide. The current verified configuration is localhost-only. Do not expose workspace, shell, Git, package-installation, or tool-management capabilities through a tunnel without strong authentication, per-user authorization, and OS-level isolation.
+
 Follow these steps to deploy the frontend to Railway and connect it to your local laptop.
 
 ## 1. Local Laptop: Cloudflare Tunnel Setup

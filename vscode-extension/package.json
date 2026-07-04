@@ -2,7 +2,7 @@
   "name": "eminentai",
   "displayName": "EminentAI",
   "description": "Local AI coding assistant powered by Ollama \u2014 Agent, Ask, and Plan modes",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "publisher": "eminentai",
   "icon": "resources/icon.png",
   "license": "MIT",
@@ -84,8 +84,13 @@
         },
         "eminentai.defaultModel": {
           "type": "string",
+          "default": "ollama:gemma4:e4b",
+          "description": "Default model ID or Ollama model name"
+        },
+        "eminentai.visionModel": {
+          "type": "string",
           "default": "",
-          "description": "Default model name (leave blank for auto-select)"
+          "description": "Installed Ollama vision model used to analyze image attachments before handing off to the selected coding model. Leave blank to auto-select the smallest installed vision-capable model."
         },
         "eminentai.pinnedModels": {
           "type": "array",
@@ -164,7 +169,10 @@
         },
         "eminentai.queueMessages": {
           "type": "string",
-          "enum": ["after", "queue"],
+          "enum": [
+            "after",
+            "queue"
+          ],
           "default": "after",
           "description": "Behavior when sending a message while agent is running"
         },
@@ -264,7 +272,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "package": "vsce package --no-dependencies"
+    "test": "tsc -p ./ && node --test out/*.test.js",
+    "package": "vsce package --no-dependencies",
+    "publish:marketplace": "vsce publish --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -274,5 +284,8 @@
     "@vscode/vsce": "^2.29.0",
     "eslint": "^8.57.0",
     "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "mermaid": "^11.16.0"
   }
 }
