@@ -127,11 +127,13 @@ public sealed class AgentOrchestratorFacade(
         return agent;
     }
 
-    private static string? RecommendedPullCommand(AgentKind intent) => intent switch
+    private static string RecommendedPullCommand(AgentKind intent) => intent switch
     {
-        AgentKind.Vision         => "ollama pull qwen2.5vl:latest",
+        AgentKind.Vision          => "ollama pull qwen2.5vl:latest",
         AgentKind.ImageGeneration => "ollama pull x/flux2-klein:4b",
-        _                        => null
+        AgentKind.Coding          => "ollama pull qwen2.5-coder:7b",
+        AgentKind.Architecture    => "ollama pull qwen3:latest",
+        _                         => "ollama pull qwen2.5:latest",
     };
 }
 

@@ -14,6 +14,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const admin = useStore((s) => s.admin);
   const authLoading = useStore((s) => s.authLoading);
   const authError = useStore((s) => s.authError);
+  const clearAuthError = useStore((s) => s.clearAuthError);
   const registerAdmin = useStore((s) => s.registerAdmin);
   const loginAdmin = useStore((s) => s.loginAdmin);
   const forgotPassword = useStore((s) => s.forgotPassword);
@@ -32,19 +33,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (admin) return <>{children}</>;
 
-  const clearMessages = () => { setInfoMsg(''); setLocalError(''); setForgotSent(false); };
+  const clearMessages = () => { setInfoMsg(''); setLocalError(''); setForgotSent(false); clearAuthError(); };
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     clearMessages();
 
     if (mode === 'register') {
-      void registerAdmin(fullName, email, password);
+      await registerAdmin(fullName, email, password);
       return;
     }
 
     if (mode === 'login') {
-      void loginAdmin(email, password);
+      await loginAdmin(email, password);
       return;
     }
 
@@ -91,7 +92,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
           <div>
             <h1 className="text-xl font-semibold">EminentAi Admin</h1>
             <p className="text-sm text-muted-foreground">
-              {mode === 'register' ? 'Create your admin profile'
+              {mode === 'register' ? 'Create an admin account'
                 : mode === 'forgot' ? 'Reset your password'
                 : mode === 'reset' ? 'Set a new password'
                 : 'Sign in to continue'}

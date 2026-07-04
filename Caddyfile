@@ -1,0 +1,11 @@
+{
+    # Use the mkcert certs already in certs/ — don't try to get Let's Encrypt certs
+    auto_https off
+}
+
+https://eka.eminent.ai {
+    tls C:\Users\ekana\Documents\GitHub\EminentAiAgent\certs\eka.eminent.ai.pem C:\Users\ekana\Documents\GitHub\EminentAiAgent\certs\eka.eminent.ai-key.pem
+
+    # Proxy everything to the Vite dev server
+    reverse_proxy localhost:5173
+}

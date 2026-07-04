@@ -2,6 +2,11 @@
 # EminentAi startup: backend (ASP.NET Core, 127.0.0.1:5210) + web UI (Vite, :5173).
 set -e
 
+# -- Windows check ------------------------------------------------------------
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+    echo "💡 It looks like you're on Windows. For a better experience, try: ./start.ps1"
+fi
+
 # ── kill any stale processes on the ports we need ────────────────────────────
 kill_port() {
     local port=$1
@@ -33,8 +38,8 @@ if ! curl -s --max-time 2 http://127.0.0.1:11434/api/tags > /dev/null; then
     echo "   Then pull models: ollama pull qwen2.5-coder:7b"
 fi
 
-echo "🚀 Starting EminentAi backend on http://127.0.0.1:5210 ..."
-dotnet run --project src/EminentAi.Api --urls http://127.0.0.1:5210 &
+echo "🚀 Starting EminentAi backend on http://0.0.0.0:5210 (network-accessible) ..."
+dotnet run --project src/EminentAi.Api &
 
 echo "📦 Starting web UI ..."
 (cd web && npm run dev) &

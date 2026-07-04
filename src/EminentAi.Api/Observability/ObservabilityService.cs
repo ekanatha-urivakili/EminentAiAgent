@@ -15,10 +15,10 @@ public sealed class ObservabilityService(
 {
     public async Task<ObservabilityData> GetDataAsync(CancellationToken ct)
     {
-        var loadedModels = await ollama.GetLoadedModelsAsync(ct);
+        var ollamaOk = await ollama.IsHealthyAsync(ct);
+        var loadedModels = ollamaOk ? await ollama.GetLoadedModelsAsync(ct) : Array.Empty<LoadedModelInfo>();
         var systemMetrics = GetSystemMetrics();
         var jobSearchHealth = await GetJobSearchHealthAsync(ct);
-        var ollamaOk = await ollama.IsHealthyAsync(ct);
 
         return new ObservabilityData(systemMetrics, loadedModels, jobSearchHealth, ollamaOk);
     }
