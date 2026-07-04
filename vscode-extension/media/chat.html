@@ -77,7 +77,7 @@ html,body{height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(
 #chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 
 /* Messages */
-#messages{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px clamp(12px,3vw,32px) 10px;display:flex;flex-direction:column;gap:18px;max-height:64vh}
+#messages{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:18px clamp(12px,3vw,32px) 10px;display:flex;flex-direction:column;gap:18px}
 .msg-wrap{display:flex;flex-direction:column;gap:3px;max-width:100%;min-width:0}
 .msg-wrap.user{align-items:flex-end}
 .msg-wrap.assistant{align-items:flex-start}
@@ -161,8 +161,8 @@ html,body{height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(
 #error-close{background:none;border:none;color:#f48771;cursor:pointer;font-size:14px;margin-left:auto;line-height:1}
 
 /* Bottom */
-#bottom{flex-shrink:0;background:linear-gradient(to top,var(--bg) 72%,transparent);padding:10px clamp(10px,2vw,22px) 12px}
-#composer-shell{position:relative;display:flex;flex-direction:column;gap:3px;width:100%;background:var(--composer-bg);border:1px solid var(--input-border);border-radius:26px;padding:12px 13px 13px;box-shadow:var(--composer-shadow);transition:border-color .15s,box-shadow .15s}
+#bottom{flex-shrink:0;background:linear-gradient(to top,var(--bg) 72%,transparent);padding:8px clamp(10px,2vw,22px) 10px}
+#composer-shell{position:relative;display:flex;flex-direction:column;gap:2px;width:100%;background:var(--composer-bg);border:1px solid var(--input-border);border-radius:26px;padding:10px 11px;box-shadow:var(--composer-shadow);transition:border-color .15s,box-shadow .15s}
 #composer-shell:focus-within{border-color:color-mix(in srgb,var(--accent) 65%,var(--border));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent),var(--composer-shadow)}
 #ctx-bar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-height:0;padding:0 4px}
 .ctx-tag{display:flex;align-items:center;gap:5px;max-width:220px;background:color-mix(in srgb,var(--bg) 68%,transparent);border:1px solid var(--border);border-radius:10px;padding:5px 8px;font-size:11px;color:var(--fg2)}
@@ -170,10 +170,10 @@ html,body{height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(
 .ctx-rm{background:none;border:none;color:var(--fg3);cursor:pointer;font-size:11px;line-height:1}
 .ctx-rm:hover{color:var(--error)}
 #input-wrap{display:flex;width:100%;align-items:flex-end}
-#chat-input{width:100%;background:transparent;border:none;outline:none;color:var(--fg);font-family:var(--font);font-size:13.5px;padding:8px 10px 10px;resize:none;min-height:58px;max-height:190px;line-height:1.5}
+#chat-input{width:100%;background:transparent;border:none;outline:none;color:var(--fg);font-family:var(--font);font-size:13.5px;padding:6px 8px 7px;resize:none;min-height:46px;max-height:152px;line-height:1.5}
 #chat-input::placeholder{color:var(--fg3)}
-#composer-toolbar{display:flex;align-items:center;gap:5px;min-width:0}
-#composer-controls{display:flex;align-items:center;gap:5px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
+#composer-toolbar{display:flex;align-items:center;gap:3px;min-width:0}
+#composer-controls{display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
 #composer-controls::-webkit-scrollbar{display:none}
 #attach-wrap{position:relative;flex-shrink:0}
 #attach-btn{width:38px;height:38px;background:transparent;border:1px solid var(--border);color:var(--fg2);cursor:pointer;font-size:23px;line-height:1;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s,border-color .12s}
@@ -863,21 +863,9 @@ function setMode(m){
   S.mode=m; ge('mode-lbl').textContent=modeLabels[m]||m;
   ['agent','ask','plan'].forEach(x=>{ const el=ge('ck-'+x); if(el) el.textContent=x===m?'✓':''; });
   ge('btn-mode').classList.toggle('active',true);
-  // Agent mode always routes local models through the auto-orchestrator (it frees VRAM held
-  // by other models before running, and unloads + restores afterwards). Picking a specific
-  // local model here would silently be ignored server-side, so lock the picker to Auto to
-  // avoid confusion. Cloud models (OpenAI/Anthropic/Google) aren't affected by this lifecycle,
-  // so leave those selectable.
   const btnModel=ge('btn-model');
-  const isCloud = S.model && /^(openai|anthropic|google):/.test(S.model);
-  if(m==='agent' && !isCloud){
-    setModel('auto');
-    btnModel.classList.add('disabled');
-    btnModel.title='Agent mode always auto-selects and manages the local model.';
-  } else {
-    btnModel.classList.remove('disabled');
-    btnModel.title='';
-  }
+  btnModel.classList.remove('disabled');
+  btnModel.title='Choose Auto routing or a specific model for this request.';
 }
 function setEffort(e){
   S.effort=e; ge('effort-lbl').textContent={low:'Low',medium:'Medium',high:'High'}[e]||e;
@@ -1009,7 +997,7 @@ function doSend(){
 
 sendBtn.onclick=doSend;
 chatInput.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); }});
-function resizeInput(){ chatInput.style.height='auto'; chatInput.style.height=Math.min(chatInput.scrollHeight,140)+'px'; }
+function resizeInput(){ chatInput.style.height='auto'; chatInput.style.height=Math.min(chatInput.scrollHeight,112)+'px'; }
 chatInput.addEventListener('input',resizeInput);
 
 // Bottom bar buttons
@@ -1058,7 +1046,7 @@ window.addEventListener('message',e=>{
     case 'file_change': addFileChange(msg); break;
     case 'stream_delta': if(msg.msgId===S.streamId) streamDelta(msg.delta); break;
     case 'stream_end':   streamEnd(msg.tokens||0,msg.durationMs||0); break;
-    case 'stream_error': streamEnd(0,0); showErr('Error: '+msg.error); break;
+    case 'stream_error': streamEnd(0,0); showErr(/^error:/i.test(msg.error||'') ? msg.error : 'Error: '+msg.error); break;
     case 'approval_request': showApproval(msg); break;
     case 'approval_mode': setApprovalMode(msg.mode,{silent:true}); break;
     case 'error':        showErr(msg.message); break;

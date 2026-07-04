@@ -6,7 +6,7 @@ import { ApprovalModeStore } from './approvalModeStore';
 import { buildSystemPrompt, effortToTemperature, buildMessages } from './ollamaClient';
 import type { WebviewMessage, ExtensionMessage, LLMModel } from './types';
 import { getWebviewContent } from './webviewContent';
-import { resolveAutoModel, runWorkspaceAgent, getRunningModels, unloadModel, warmModel } from './workspaceAgent';
+import { resolveAutoModel, runWorkspaceAgent, getRunningModels, unloadModel } from './workspaceAgent';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'eminentai.chatView';
@@ -82,6 +82,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
       case 'set_approval_mode':
         await this.approvalModeStore.set(msg.mode);
+        this.sendApprovalMode();
         break;
 
       case 'select_images':
@@ -288,18 +289,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     };
 
     if (mode === 'agent' && !model.startsWith('openai:') && !model.startsWith('anthropic:') && !model.startsWith('google:')) {
-      // Agent mode always drives local Ollama models through the auto-router: it picks the
-      // model, frees VRAM held by anything else running, and cools down + restores afterwards.
-      // A manually-picked local model (e.g. qwen3:8b left selected from a previous session)
-      // must never bypass this lifecycle, since that's what leaves a model resident and the
-      // fans spinning for the whole session.
       const innerAgentOnDone = callbacks.onDone;
       callbacks.onDone = (tokens: number, durationMs: number) => {
         const summary = this._pendingContent.split('\n').find((line) => line.trim().length > 0)?.trim().slice(0, 200);
         void this.appendChangelogEntry(runFileChanges, summary).finally(() => innerAgentOnDone(tokens, durationMs));
       };
       void runWorkspaceAgent(
-        'auto',
+        model,
         messages,
         ollamaUrl,
         callbacks,
@@ -327,7 +323,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         const targetModel = rawModelName(resolvedModel);
         const purpose = autoPurpose ?? `${mode} mode`;
         const running = await getRunningModels(baseUrl, this._abortController.signal).catch(() => [] as string[]);
-        const previousModel = running.find((name) => name !== targetModel);
         callbacks.onModelActivity({ ts: Date.now(), action: 'selected', model: targetModel, purpose });
         if (running.length > 0) {
           await Promise.all(running.map((name) => unloadModel(baseUrl, name).catch(() => undefined)));
@@ -337,10 +332,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         const cooldown = async () => {
           await unloadModel(baseUrl, targetModel).catch(() => undefined);
           callbacks.onModelActivity({ ts: Date.now(), action: 'stopped', model: targetModel });
-          if (previousModel) {
-            await warmModel(baseUrl, previousModel).catch(() => undefined);
-            callbacks.onModelActivity({ ts: Date.now(), action: 'restored', model: previousModel });
-          }
         };
         const innerOnDone = callbacks.onDone;
         const innerOnError = callbacks.onError;
@@ -350,6 +341,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         callbacks.onError = (err: Error) => {
           void cooldown().finally(() => innerOnError(err));
         };
+      } else {
+        const baseUrl = validateOllamaUrl(ollamaUrl);
+        const running = await getRunningModels(baseUrl, this._abortController.signal).catch(() => [] as string[]);
+        if (running.length > 0) {
+          await Promise.all(running.map((name) => unloadModel(baseUrl, name).catch(() => undefined)));
+          for (const name of running) callbacks.onModelActivity({ ts: Date.now(), action: 'stopped', model: name });
+        }
       }
 
       streamChat(
@@ -384,6 +382,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       
       // Merge Ollama models with static default models
       const allModels: LLMModel[] = [
+        {
+          id: 'auto',
+          name: 'Auto',
+          provider: 'ollama',
+          enabled: true,
+          pinned: false,
+        },
         ...OPENAI_MODELS.map(m => ({ ...m, enabled: true, pinned: false })),
         ...ANTHROPIC_MODELS.map(m => ({ ...m, enabled: true, pinned: false })),
         ...GOOGLE_MODELS.map(m => ({ ...m, enabled: true, pinned: false })),

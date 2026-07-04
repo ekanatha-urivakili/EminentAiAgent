@@ -123,7 +123,6 @@ export async function runWorkspaceAgent(
   const sessionGrants = new Set<string>();
   const baseUrl = validateOllamaUrl(ollamaUrl);
   let model = '';
-  let previousModel: string | undefined;
   let finalContent: string | undefined;
   let failure: Error | undefined;
 
@@ -150,7 +149,6 @@ export async function runWorkspaceAgent(
     callbacks.onModelActivity({ ts: Date.now(), action: 'selected', model, purpose: choice.purpose });
 
     const runningModels = await getRunningModels(baseUrl, signal);
-    previousModel = runningModels.find((name) => name !== model);
     if (runningModels.length > 0) {
       callbacks.onStatus('Freeing model memory');
       pushTask(`Freeing memory: stopping ${runningModels.join(', ')}`);
@@ -220,12 +218,6 @@ export async function runWorkspaceAgent(
       await unloadModel(baseUrl, model).catch(() => undefined);
       callbacks.onModelActivity({ ts: Date.now(), action: 'stopped', model });
     }
-    if (previousModel && !signal.aborted) {
-      callbacks.onStatus(`Restoring ${previousModel}`);
-      pushTask(`Restoring ${previousModel}`);
-      await warmModel(baseUrl, previousModel).catch(() => undefined);
-      callbacks.onModelActivity({ ts: Date.now(), action: 'restored', model: previousModel });
-    }
     finishTasks();
   }
 
@@ -261,11 +253,11 @@ export async function resolveAutoModel(
   const request = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
   const isCoding = /\b(code|file|git|test|build|fix|debug|implement|refactor|review)\b/i.test(request);
   const isArchitecture = /\b(architecture|hld|lld|sequence|diagram|design)\b/i.test(request);
-  const purpose = isCoding ? 'coding' : isArchitecture ? 'architecture/planning' : 'general chat';
-  const preferences = isCoding
-    ? ['qwen3:8b', 'gemma4:e4b', 'qwen2.5-coder:1.5b', 'qwen3.5:2b']
-    : isArchitecture
-      ? ['gemma4:e4b', 'qwen3:8b', 'qwen3.5:2b']
+  const purpose = isArchitecture ? 'architecture/planning' : isCoding ? 'coding' : 'general chat';
+  const preferences = isArchitecture
+    ? ['gemma4:e4b', 'qwen3:8b', 'qwen3.5:2b']
+    : isCoding
+      ? ['qwen3:8b', 'gemma4:e4b', 'qwen2.5-coder:1.5b', 'qwen3.5:2b']
       : ['qwen3.5:2b', 'gemma4:e4b', 'qwen3:8b', 'qwen2.5:latest'];
   const selected = preferences.find((candidate) => installed.has(candidate))
     ?? [...installed].find((candidate) => !/embed|flux|image/i.test(candidate));
@@ -498,7 +490,24 @@ async function executeTool(
       const relative = getString(args, 'path');
       const target = resolveInWorkspace(root, relative);
       await assertInsideRealWorkspace(root, target);
-      const bytes = await vscode.workspace.fs.readFile(target);
+      let bytes: Uint8Array;
+      try {
+        bytes = await vscode.workspace.fs.readFile(target);
+      } catch (error) {
+        // Models routinely call read_file first to check whether something exists before
+        // deciding to create or edit it. Throwing here used to kill the whole agent turn on
+        // a perfectly normal "doesn't exist yet" case — return a result the model can act on
+        // (i.e. call write_file next) instead of aborting the run.
+        const code = (error as { code?: string } | undefined)?.code;
+        if (code === 'FileNotFound' || code === 'ENOENT' || /ENOENT|FileNotFound/i.test(String((error as Error)?.message))) {
+          return JSON.stringify({
+            error: 'not_found',
+            path: relative,
+            message: `No file exists at '${relative}' yet. Use write_file to create it.`,
+          });
+        }
+        throw error;
+      }
       if (bytes.byteLength > 1_000_000) throw new Error('File exceeds the 1 MB read limit.');
       return new TextDecoder().decode(bytes);
     }
@@ -543,8 +552,18 @@ async function executeTool(
       } catch {
         beforeContent = undefined;
       }
-      await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(target.fsPath)));
-      await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
+      const parent = vscode.Uri.file(path.dirname(target.fsPath));
+      try {
+        await vscode.workspace.fs.createDirectory(parent);
+        await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Unable to write workspace file '${relative}'${code ? ` (${code})` : ''}: ${detail}. `
+          + 'Inspect the project and use the actual workspace-relative source path.',
+        );
+      }
       const stats = changedLineCounts(beforeContent ?? '', content);
       onFileChange({ path: relative, beforeContent, afterContent: content, ...stats });
       return JSON.stringify({ path: relative, permission, bytesWritten: Buffer.byteLength(content) });
@@ -594,6 +613,22 @@ async function runCommand(
     if (decision === 'session') sessionGrants.add(permission);
   }
 
+  // Defensive check: a raw Node "spawn ENOTDIR" from a bad cwd is nearly undiagnosable once it
+  // reaches the chat as a bare error string. Confirm the workspace root itself still resolves to
+  // a real directory before we ever hand it to child_process, so a moved/deleted/renamed folder
+  // fails with a clear message instead of an opaque native error.
+  try {
+    const stat = await vscode.workspace.fs.stat(root);
+    if (stat.type !== vscode.FileType.Directory) {
+      throw new Error(`Workspace root ${root.fsPath} is not a directory.`);
+    }
+  } catch {
+    throw new Error(
+      `Cannot run '${summary}': the workspace folder ${root.fsPath} no longer resolves to a real `
+      + 'directory. If it was moved, renamed, or is on an unmounted drive, close and reopen the folder in VS Code.',
+    );
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(executable, commandArgs, {
       cwd: root.fsPath,
@@ -607,7 +642,19 @@ async function runCommand(
     signal.addEventListener('abort', abort, { once: true });
     child.stdout.on('data', (chunk: Buffer) => { stdout = clamp(stdout + chunk.toString()); });
     child.stderr.on('data', (chunk: Buffer) => { stderr = clamp(stderr + chunk.toString()); });
-    child.on('error', reject);
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      const code = err.code;
+      const hint = code === 'ENOENT'
+        ? `'${executable}' was not found. Make sure it's installed and on PATH for the shell VS Code was launched from.`
+        : code === 'ENOTDIR'
+          ? `A path component for '${executable}' or its resolved location isn't a real directory — this is `
+            + 'commonly a stale nvm/volta/asdf shim. Try running the same command directly in a terminal to '
+            + 'confirm it still works, then reopen this workspace.'
+          : err.message;
+      reject(new Error(`Failed to run '${summary}' in ${root.fsPath}${code ? ` (${code})` : ''}: ${hint}`));
+    });
     child.on('close', (exitCode) => {
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);
@@ -630,8 +677,7 @@ function clamp(value: string): string {
 }
 
 function resolveInWorkspace(root: vscode.Uri, relative: string): vscode.Uri {
-  if (path.isAbsolute(relative)) throw new Error('Use workspace-relative paths.');
-  const target = path.resolve(root.fsPath, relative);
+  const target = path.isAbsolute(relative) ? path.resolve(relative) : path.resolve(root.fsPath, relative);
   const prefix = root.fsPath.endsWith(path.sep) ? root.fsPath : `${root.fsPath}${path.sep}`;
   if (target !== root.fsPath && !target.startsWith(prefix)) throw new Error('Path escapes the open workspace.');
   return vscode.Uri.file(target);
