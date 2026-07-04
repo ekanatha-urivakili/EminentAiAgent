@@ -10,7 +10,7 @@ The project is a local-first AI copilot platform:
 - Streaming chat with persisted conversations.
 - Plan mode that produces editable, read-only execution plans.
 - Agent mode that can call tools, request approvals, and persist run transcripts.
-- Built-in filesystem and shell tools.
+- Built-in filesystem, shell, archive, and Ollama web-search tools.
 - MCP connector registry for external tool servers.
 - React/Vite admin UI and VS Code extension clients.
 - SQLite persistence for local single-user operation.
@@ -42,8 +42,11 @@ The project is a local-first AI copilot platform:
 │       ├── components
 │       ├── lib
 │       └── state
-├── vscode-ext
-│   └── src
+├── vscode-extension
+│   ├── src
+│   │   └── workspaceAgent.ts
+│   └── media
+├── EminentAI.md
 ├── docker-compose.yml
 └── start.sh
 ```
@@ -61,8 +64,8 @@ flowchart TB
     VSCode --> Extension[VS Code Extension]
 
     Web -->|REST + fetch SSE| Api[ASP.NET Core Minimal API]
-    Extension -->|REST + fetch SSE| Api
-    Extension -->|fallback chat/FIM| Ollama[Ollama Runtime]
+    Extension -->|Ask/Plan chat + Agent tools| Ollama[Ollama Runtime]
+    Extension -->|approved workspace operations| VsWorkspace[Open VS Code workspace]
 
     Api -->|HTTP /api/chat /api/tags /api/pull| Ollama
     Api -->|EF Core| Db[(SQLite eminentai.db)]
@@ -71,6 +74,7 @@ flowchart TB
     Api -->|SMTP| Mailpit[Mailpit]
     Api -->|HTTP with API key| Reed[Reed Jobs API]
     Api -->|HTTP search/pull metadata| OllamaRegistry[ollama.com registry]
+    Api -->|authenticated web search/fetch| WebSearch[Ollama web API]
 ```
 
 ### Container View
@@ -137,7 +141,7 @@ flowchart TB
         Api[ASP.NET Core API 127.0.0.1:5210]
         Ollama[Ollama 127.0.0.1:11434]
         Sqlite[(SQLite file)]
-        Workspace[EminentAi workspace root]
+        Workspace[Per-run selected workspace root]
         Docker[Docker Compose]
         Mailpit[Mailpit SMTP :1025 Web :8025]
     end
@@ -222,17 +226,17 @@ Primary implementation files:
 - `src/lib/api.ts`: typed REST and fetch-based SSE client.
 - `src/components/*`: UI features for chat, composer, plan, agent timeline, connectors, Ollama model management, Mailpit, library, job search, auth, and layout.
 
-### `vscode-ext`
+### `vscode-extension`
 
-The extension is a TypeScript VS Code extension.
+The extension is a TypeScript VS Code extension with a direct local Ollama tool loop.
 
 Primary implementation files:
 
-- `src/extension.ts`: activation, client creation, provider registration.
-- `src/apiClient.ts`: backend client, SSE parser, direct Ollama fallback, FIM completion calls, agent approval/cancel calls.
-- `src/chatView.ts`: webview chat sidebar with CSP nonce and text-only rendering.
-- `src/commands.ts`: explain/fix/refactor/test-gen, agent edit, and model picker commands.
-- `src/fim.ts`: inline completion provider using Ollama generate with FIM prompt tokens.
+- `src/extension.ts`: activation, commands, provider registration, status bar.
+- `src/chatViewProvider.ts`: chat orchestration, per-prompt `EminentAI.md` loading, approval promises.
+- `src/workspaceAgent.ts`: workspace tools, allowlisted Git/tool commands, official Ollama web search.
+- `src/llmClient.ts`: provider streaming and model discovery.
+- `media/chat.html`: CSP-safe UI, in-chat approvals, linked sources, bundled Mermaid rendering.
 
 ## Core Data Model
 
@@ -552,18 +556,34 @@ sequenceDiagram
 ```text
 filesystem.read_file(path)
 filesystem.list_directory(path)
+filesystem.list_tree(path)
 filesystem.write_file(path, content)
+filesystem.replace_in_file(path, oldText, newText)
+filesystem.create_directory(path)
+filesystem.move_path(source, destination)
+filesystem.delete_path(path)
+filesystem.create_zip(source, output)
 filesystem.search_files(query)
+filesystem.search_content(query)
 ```
 
 Controls:
 
-- Paths are resolved under `EminentAi:WorkspaceRoot`.
+- Paths are resolved under the per-run `WorkspaceRoot`, or the configured/default Git root.
 - Path traversal is blocked with full-path comparison.
 - Reads are limited to 1 MB.
 - Listings are capped.
 - Search returns up to 100 matches.
 - Writes require approval through the agent policy layer.
+
+### Built-in Web Tools
+
+```text
+web.search(query)
+web.fetch(url)
+```
+
+The backend uses the official Ollama web API and reads `EminentAi:OllamaApiKey` or `OLLAMA_API_KEY`. Search URLs remain in tool results and the agent prompt requires Markdown citations. `web.fetch` blocks loopback and private-network targets.
 
 ### Built-in Shell Tool
 
@@ -806,27 +826,27 @@ The Zustand store owns most client behavior:
 ```mermaid
 flowchart TD
     Activation[extension.ts activate] --> Config[Read eminentai settings]
-    Config --> ApiClient[ApiClient]
     Activation --> ChatProvider[ChatViewProvider]
-    Activation --> Commands[registerCommands]
-    Activation --> Fim[Inline completion provider]
-
-    ChatProvider -->|POST /api/chat SSE| Backend[EminentAi.Api]
-    ChatProvider -->|fallback /api/chat| Ollama[Ollama]
-    Fim -->|/api/generate FIM| Ollama
+    ChatProvider --> Instructions[Read EminentAI.md every prompt]
+    ChatProvider --> Agent[WorkspaceAgent]
+    Agent -->|/api/chat + tools| Ollama[Ollama]
+    Agent --> Workspace[First open workspace folder]
+    Agent --> Processes[Allowlisted Git/tool processes]
+    Agent --> Search[Ollama web search]
+    Agent --> Approval[In-chat approval broker]
+    Activation --> Commands[Command registry]
     Commands -->|selection prompts| ChatProvider
-    Commands -->|agent edit| Backend
-    Commands -->|approve/reject| Backend
 ```
 
 ### Extension Client Behavior
 
-- Uses backend chat when `/api/health` is reachable.
-- Falls back to direct Ollama for chat if backend is offline.
-- Uses direct Ollama `/api/generate` for fill-in-middle completions.
-- Starts agent runs through backend SSE.
-- Sends approvals and cancellations through backend REST calls.
-- Renders chat webview content with text nodes to avoid HTML injection.
+- Ask and Plan stream directly from the selected provider.
+- Local Ollama Agent mode uses native tool calls and a bounded 15-turn loop.
+- The first open workspace folder is the only filesystem root.
+- Read-only Git inspection is automatic; writes, Git mutations, and process commands require approval.
+- Approval cards support approve once, allow for the current run, and reject.
+- `EminentAI.md` is read before every prompt.
+- Mermaid diagrams and external source links render inside the CSP-restricted webview.
 
 ## API Surface
 
@@ -928,6 +948,7 @@ Recommended next step: move bootstrap SQL to EF Core migrations once schema stab
   },
   "EminentAi": {
     "OllamaUrl": "http://127.0.0.1:11434",
+    "OllamaApiKey": "",
     "WorkspaceRoot": "",
     "AllowedOrigins": ["http://localhost:5173", "http://127.0.0.1:5173"],
     "ApiToken": "",
@@ -945,6 +966,7 @@ Recommended next step: move bootstrap SQL to EF Core migrations once schema stab
 Environment variables:
 
 - `EMINENTAI_API_TOKEN`: optional global API token, required for non-loopback binding.
+- `OLLAMA_API_KEY`: enables official Ollama web search/fetch in the backend and VS Code extension.
 - `REED_API_KEY`: enables Reed job source.
 - Ollama environment variables can tune model residency outside this app.
 
@@ -994,7 +1016,7 @@ Current verification commands:
 dotnet build EminentAi.slnx
 cd web && npm run build
 cd web && npm run lint
-cd vscode-ext && npm run compile
+cd vscode-extension && npm run compile
 ```
 
 Current test gap:
@@ -1023,6 +1045,8 @@ Recommended tests:
 | Admin session token not enforced globally | API auth | Unauthorized local clients can call most routes | Add route groups or endpoint filters that require admin except auth/bootstrap routes |
 | Query token fallback | API auth | Token can leak in history/logs | Remove query token path and keep fetch SSE headers |
 | Shell is not OS-sandboxed | Agent tools | Commands can escape cwd boundaries | Use container/jail/allowlisted command runner for real isolation |
+| Web workspace path grants read access | Web agent | A user-entered absolute folder becomes readable for that run | Keep loopback binding and require explicit path entry; add OS bookmarks for desktop packaging |
+| VS Code complete-file writes | Extension agent | Larger conflict surface than patch edits | Add expected-content patch operations and diff preview |
 | MCP command string starts local processes | Connector host | Connector registration is high privilege | Require auth, validate commands, support explicit trusted connector presets |
 | Password reset is non-atomic | Auth | Concurrent token reuse possible | Conditional update in transaction |
 | `localStorage` session token | Web auth | XSS persistence risk | Prefer HttpOnly same-site cookie or in-memory token |

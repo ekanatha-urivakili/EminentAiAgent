@@ -8,6 +8,19 @@
 
 ## Revision Notes
 
+### v3.2 → v3.3 (Workspace Tools, Web Research, and IDE Agent)
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Smart models could describe file changes but not perform them | High | Agent mode now exposes scoped filesystem, archive, shell, and web tools |
+| Web agent was fixed to one repository root | High | `/api/agent/runs` accepts an explicit per-run local workspace path |
+| Ollama tool-call history was flattened into text | High | Assistant `tool_calls`, IDs, and tool names are preserved across model turns |
+| VS Code extension was chat-only | High | Added direct Ollama `WorkspaceAgent` with file, Git, command, and web tools |
+| VS Code approvals were outside chat | Medium | Added in-chat approve-once, session-grant, and reject cards |
+| Architecture diagrams rendered as source | Medium | Bundled Mermaid rendering in web and VS Code chats |
+| Workspace rules were not persistent | Medium | `EminentAI.md` is re-read before every VS Code prompt |
+| Web-search toggle had no execution path | Medium | Added official Ollama `web_search` and `web_fetch` integration with linked sources |
+
 ### v1 → v2
 
 | Finding | Severity | Resolution |
@@ -127,10 +140,10 @@ POST /api/chat/smart
 ```
 NAME                       SIZE     TIER           ROLE
 ────────────────────────────────────────────────────────────────────────
-qwen3.5:2b                 2.7 GB   fast           Intent classifier — stays warm, sub-500ms
+qwen3:8b                   5.2 GB   balanced       Intent classifier + tool orchestrator + architecture
 qwen2.5-coder:1.5b         986 MB   fast           Code Agent + VS Code FIM completions
 qwen2.5:latest             4.7 GB   balanced       General Agent / Architecture fallback
-qwen3:latest               5.2 GB   balanced       Architecture Agent (primary) + Image prompt engineer
+qwen3:latest               5.2 GB   balanced       Alias retained for image prompt engineering
 gemma4:e4b                 9.6 GB   balanced       Architecture Agent — fallback
 qwen2.5vl:latest           6.0 GB   vision         Vision Agent — only multimodal model
 x/flux2-klein:4b           5.7 GB   image_gen      Image generation — Flux2 diffusion
@@ -627,7 +640,7 @@ classDiagram
 | `HasImageAttachment && text matches \b(read\|extract\|what\|describe\|tell me about\|text in)\b` | `Vision` | `fastPath:vision` |
 | `text matches ^(generate\|draw\|create a (logo\|image\|picture\|banner)\|design an? image\|make an? logo)` | `ImageGeneration` | `fastPath:imageGen` |
 
-**Classification prompt** (sent to `qwen3.5:2b`, temperature 0.0, max 10 tokens):
+**Classification prompt** (sent to `qwen3:8b`, temperature 0.0, max 10 tokens):
 
 ```
 You are a one-word classifier. Reply with EXACTLY ONE label — no punctuation, no explanation.
@@ -993,7 +1006,7 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3.5:2b)
+    participant OC_C as OllamaClient (qwen3:8b)
     participant MR as ModelRouterService
     participant CA as CodeAgent
     participant CS as ChatService
@@ -1006,7 +1019,7 @@ sequenceDiagram
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
     IR->>IR: No fast-path match
-    IR->>OC_C: ChatOnceAsync(qwen3.5:2b, classifyPrompt, temp:0.0)
+    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt, temp:0.0)
     OC_C-->>IR: "CODING"
     IR->>IR: ParseIntentLabel("CODING") → Coding
     IR-->>AOF: IntentDecision{Coding, AgentProfile.Coding, rawLabel:"CODING", ms:430}
@@ -1044,7 +1057,7 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3.5:2b)
+    participant OC_C as OllamaClient (qwen3:8b)
     participant MR as ModelRouterService
     participant AA as ArchitectureAgent
     participant CS as ChatService
@@ -1056,7 +1069,7 @@ sequenceDiagram
 
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
-    IR->>OC_C: ChatOnceAsync(qwen3.5:2b, classifyPrompt)
+    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt)
     OC_C-->>IR: "ARCHITECTURE"
     IR-->>AOF: IntentDecision{Architecture, AgentProfile.Architecture, ms:450}
 
@@ -1097,7 +1110,7 @@ sequenceDiagram
     participant IR as IntentRouterService
     participant MR as ModelRouterService
     participant IGA as ImageGenerationAgent
-    participant OC_T as OllamaClient (qwen3.5:2b — translator)
+    participant OC_T as OllamaClient (qwen3:latest — prompt analyst)
     participant OC_F as OllamaClient (flux2-klein — generator)
     participant FS as Local Filesystem
     participant DB as SQLite
@@ -1122,7 +1135,7 @@ sequenceDiagram
     IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"translating"}
     API-->>Web: SSE: image_gen_progress {stage:"translating"}
 
-    IGA->>OC_T: ChatOnceAsync(qwen3.5:2b, fluxPromptEngineer, userPrompt, temp:0.3)
+    IGA->>OC_T: ChatOnceAsync(qwen3:latest, fluxPromptEngineer, userPrompt, temp:0.3)
     OC_T-->>IGA: "minimalist logo, AI startup, bold sans-serif, dark bg, neon blue, vector art"
 
     IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"generating", fluxPrompt}
@@ -1164,7 +1177,7 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3.5:2b)
+    participant OC_C as OllamaClient (qwen3:8b)
     participant MR as ModelRouterService
     participant GA as GeneralAgent
     participant CS as ChatService
@@ -1176,7 +1189,7 @@ sequenceDiagram
 
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
-    IR->>OC_C: ChatOnceAsync(qwen3.5:2b, classifyPrompt)
+    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt)
     OC_C-->>IR: "GENERAL"
     IR-->>AOF: IntentDecision{General, AgentProfile.General, ms:390}
 
@@ -1212,7 +1225,7 @@ sequenceDiagram
     participant AOF_V as AOF.ValidateManualOverride
     participant IR as IntentRouterService
     participant FP as FastPathCheck (regex)
-    participant OC as OllamaClient (qwen3.5:2b)
+    participant OC as OllamaClient (qwen3:8b)
     participant Log as ILogger
 
     AOF->>AOF_V: ValidateManualOverride(manualRouteOverride, intentRequest)
@@ -1237,7 +1250,7 @@ sequenceDiagram
             FP-->>IR: AgentKind.ImageGeneration
             IR->>Log: Log{fastPath:"imageGen", ms:0}
         else
-            IR->>OC: ChatOnceAsync(qwen3.5:2b, classifyPrompt, temp:0.0, maxTokens:10)
+            IR->>OC: ChatOnceAsync(qwen3:8b, classifyPrompt, temp:0.0, maxTokens:10)
             OC-->>IR: raw string e.g. "  CODING\n"
             IR->>IR: ParseIntentLabel → trim/strip → "CODING" → Coding
             IR->>Log: Log{rawLabel:"  CODING\n", parsed:Coding, ms:430}
@@ -1304,7 +1317,7 @@ flowchart TD
     HasImg -->|"No"| FastIG{"text matches\nimage gen keywords?"}
 
     FastV -->|"Yes"| KVision["Intent = Vision\nwasFastPath"]
-    FastV -->|"No"| LlmClassify["qwen3.5:2b classify\n~400ms"]
+    FastV -->|"No"| LlmClassify["qwen3:8b classify"]
 
     FastIG -->|"Yes"| KImgGen["Intent = ImageGeneration\nwasFastPath"]
     FastIG -->|"No"| LlmClassify
@@ -1517,7 +1530,7 @@ src/EminentAi.Infrastructure/
 │   └── OllamaModelProvider.cs         ← implements IModelProvider; IsLocal=true; cost=0
 │
 └── Routing/
-    ├── IntentRouterService.cs          ← fast-path, qwen3.5:2b, defensive parse, telemetry
+    ├── IntentRouterService.cs          ← fast-path, qwen3:8b, defensive parse, telemetry
     └── ModelRouterService.cs           ← multi-provider, FilterByPolicy (uses ModelDescriptor fields)
 ```
 
@@ -1804,10 +1817,9 @@ Run against `IntentRouterService` in unit tests. `ClassificationRecord.RawLabel`
 
 ### VRAM keep-alive strategy
 
-`keep_alive: "10m"` in `OllamaClient.BuildPayload` keeps the last chat model warm. `qwen3.5:2b` (classifier) coexists with other models on 16 GB. `flux2-klein` triggers a full model swap — the `image_gen_progress {stage:"generating"}` SSE event fires before the swap begins, so the UI shows a spinner. This is not optional UX; without it, the user has no feedback for 30–120 seconds.
+`keep_alive: "10m"` in `OllamaClient.BuildPayload` keeps the last chat model warm. `qwen3:8b` is the classifier and primary general/coding route. `flux2-klein` triggers a full model swap — the `image_gen_progress {stage:"generating"}` SSE event fires before the swap begins, so the UI shows a spinner. This is not optional UX; without it, the user has no feedback for 30–120 seconds.
 
 ---
 
 *Document version: 3.2 — 2026-06-21*
 *Supersedes v3.1. `ImageGenerationAgent` updated to reflect actual implementation: `qwen3:latest` as analyst, multi-image prompt expansion, VRAM snapshot/unload/restore pipeline via `ollama run` CLI, new SSE stages, `ImageGenProgressPanel` frontend component, and `x/z-image-turbo` model added to the model table.*
- 

@@ -78,7 +78,10 @@ builder.Services.AddSingleton<IndeedDirectBuffer>();
 builder.Services.AddSingleton<JobRunCache>();
 builder.Services.AddSingleton<JobSearchOrchestrator>();
 
-builder.Services.AddSingleton(new BuiltinToolOptions(builder.Configuration["EminentAi:WorkspaceRoot"]));
+builder.Services.AddSingleton(new BuiltinToolOptions(
+    builder.Configuration["EminentAi:WorkspaceRoot"],
+    builder.Configuration["EminentAi:OllamaApiKey"]
+        ?? Environment.GetEnvironmentVariable("OLLAMA_API_KEY")));
 builder.Services.AddSingleton<IBuiltinToolRunner, BuiltinToolRunner>();
 builder.Services.AddSingleton<IPiiRedactor, PiiRedactor>();
 builder.Services.AddSingleton<IPolicyEngine, PolicyEngine>();
@@ -992,7 +995,8 @@ app.MapPost("/api/agent/runs",
         request.Connectors is { Length: > 0 } ? request.Connectors : new[] { "filesystem", "shell" },
         string.IsNullOrWhiteSpace(request.Model) ? "qwen2.5-coder:7b" : request.Model,
         request.PlanJson,
-        request.StepBudget ?? 15);
+        request.StepBudget ?? 15,
+        WorkspaceRoot: request.WorkspaceRoot);
 
     try
     {
@@ -1662,7 +1666,13 @@ public record SendAttachmentRequest(string Name, string ContentType, string Data
 public record RegenerateRequest(string? Model, float? Temperature);
 public record ForkRequest(Guid MessageId);
 public record PlanRequest(string Goal, string Model = "qwen2.5-coder:7b");
-public record StartAgentRunRequest(string Goal, string[]? Connectors, string? Model, string? PlanJson, int? StepBudget);
+public record StartAgentRunRequest(
+    string Goal,
+    string[]? Connectors,
+    string? Model,
+    string? PlanJson,
+    int? StepBudget,
+    string? WorkspaceRoot);
 public record ApprovalRequest(string Decision, bool? Remember);
 public record ConnectorRequest(string Name, ConnectorTransport? Transport, string CommandOrUrl, PolicyProfile? PolicyProfile);
 public record PullModelRequest(string Name);

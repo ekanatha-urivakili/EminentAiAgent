@@ -16,8 +16,13 @@ public interface IBuiltinToolRunner
     /// <summary>True if the tool mutates state (write/delete/execute) and therefore needs gating.</summary>
     bool IsMutating(string connectorName, string toolName);
 
-    Task<JsonNode> CallAsync(string connectorName, string toolName, JsonNode? args, CancellationToken ct = default);
+    Task<JsonNode> CallAsync(
+        string connectorName,
+        string toolName,
+        JsonNode? args,
+        string? workspaceRoot = null,
+        CancellationToken ct = default);
 }
 
 /// <summary>Configuration for the built-in tool sandbox.</summary>
-public sealed record BuiltinToolOptions(string? WorkspaceRoot);
+public sealed record BuiltinToolOptions(string? WorkspaceRoot, string? OllamaApiKey = null);
