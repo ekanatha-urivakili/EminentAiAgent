@@ -1,5 +1,7 @@
 # EminentAi Hybrid Architecture: Cloud-Local Bridge
 
+> Status: optional future deployment design, not the default or fully verified runtime. The implemented product remains localhost-first. Exposing per-run local workspace access through a public tunnel materially expands risk; disable filesystem, shell, and command tools for remote clients unless a strong authenticated authorization boundary is added.
+
 This architecture enables hosting the **EminentAi Frontend** on **Railway** while keeping the **Backend (LLMs, Ollama, Whisper)** on a **Local Laptop**. This setup bypasses cloud compute limits and keeps sensitive data/heavy processing on local hardware.
 
 ## 1. System Overview

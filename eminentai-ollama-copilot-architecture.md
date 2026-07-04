@@ -1,6 +1,12 @@
 # EminentAi — Local Ollama Copilot Platform
 ### Architecture & Implementation Plan (HLD / LLD / Sequence Diagrams / VS Code Extension)
 
+> Implementation status, 2026-07-04: the current verified architecture is maintained in
+> [`docs/AIAGENT_ARCHITECTURE.md`](docs/AIAGENT_ARCHITECTURE.md), the agent-to-agent detail is in
+> [`docs/AGENT_2_AGENT_ARCHITECTURE.md`](docs/AGENT_2_AGENT_ARCHITECTURE.md), and the implemented
+> IDE permission/tool model is in [`VS_CODE_EXTENSION.md`](VS_CODE_EXTENSION.md). This document
+> retains the original roadmap and may describe planned capabilities beyond the current code.
+
 **Version:** 1.1 · **Date:** 2026-06-14 · **Status:** Implemented core + planned extensions (v3.1 docs aligned to current code)
 **Target hardware baseline:** Apple M2, 16 GB unified memory (constrains every model decision below)
 

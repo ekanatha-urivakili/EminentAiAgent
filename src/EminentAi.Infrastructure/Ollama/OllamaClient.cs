@@ -56,7 +56,7 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
             if (delta.Message?.ToolCalls is { Count: > 0 } calls)
             {
                 toolCalls = calls.ConvertAll(tc =>
-                    new ToolCall(tc.Function.Name, tc.Function.Arguments ?? new JsonObject()));
+                    new ToolCall(tc.Function.Name, tc.Function.Arguments ?? new JsonObject(), tc.Id));
             }
 
             yield return new ChatDelta(
@@ -156,7 +156,19 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
     private static object BuildPayload(ChatRequest req, bool stream) => new
     {
         model = req.Model,
-        messages = req.Messages.ConvertAll(m => new { role = m.Role, content = m.Content, images = m.Images }),
+        messages = req.Messages.ConvertAll(m => new
+        {
+            role = m.Role,
+            content = m.Content,
+            images = m.Images,
+            tool_calls = m.ToolCalls?.ConvertAll(tc => new
+            {
+                id = tc.Id,
+                type = "function",
+                function = new { name = tc.Name, arguments = tc.Arguments }
+            }),
+            tool_name = m.ToolName
+        }),
         tools = req.Tools?.ConvertAll(t => new
         {
             type = "function",
@@ -268,6 +280,7 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
 
     private sealed class OllamaToolCall
     {
+        [JsonPropertyName("id")] public string? Id { get; set; }
         [JsonPropertyName("function")] public OllamaFunction Function { get; set; } = null!;
     }
 

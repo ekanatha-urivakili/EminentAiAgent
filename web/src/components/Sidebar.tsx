@@ -19,8 +19,6 @@ export function Sidebar({ isOpen, toggle, onNavigate }: { isOpen: boolean; toggl
   const setAppView = useStore((s) => s.setAppView);
   const admin = useStore((s) => s.admin);
   const logoutAdmin = useStore((s) => s.logoutAdmin);
-  const setTheme = useStore((s) => s.setTheme);
-
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
 

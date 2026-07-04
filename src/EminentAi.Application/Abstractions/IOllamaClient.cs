@@ -11,7 +11,12 @@ public record ChatRequest(
     List<ToolSchema>? Tools = null
 );
 
-public record ChatMessage(string Role, string Content, List<string>? Images = null);
+public record ChatMessage(
+    string Role,
+    string Content,
+    List<string>? Images = null,
+    List<ToolCall>? ToolCalls = null,
+    string? ToolName = null);
 
 public record ChatDelta(
     string? Token = null,
@@ -21,7 +26,7 @@ public record ChatDelta(
     Guid? MessageId = null
 );
 
-public record ToolCall(string Name, JsonNode Arguments);
+public record ToolCall(string Name, JsonNode Arguments, string? Id = null);
 
 public record ToolSchema(
     string Name,

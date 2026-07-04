@@ -148,8 +148,16 @@ export const api = {
     connectors: string[],
     planJson: string | undefined,
     stepBudget: number,
+    workspaceRoot: string,
     signal: AbortSignal,
-  ) => streamSse('/api/agent/runs', { goal, model, connectors, planJson, stepBudget }, signal),
+  ) => streamSse('/api/agent/runs', {
+    goal,
+    model,
+    connectors,
+    planJson,
+    stepBudget,
+    workspaceRoot: workspaceRoot.trim() || undefined,
+  }, signal),
 
   approve: (runId: string, stepId: string, decision: 'approve' | 'reject', remember: boolean) =>
     request<{ resolved: boolean }>(`/api/agent/runs/${runId}/approvals/${stepId}`, {

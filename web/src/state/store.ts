@@ -74,6 +74,8 @@ interface AppState {
   /** Connector names the agent may use. Defaults to built-in ['filesystem','shell']. */
   agentConnectors: string[];
   setAgentConnectors: (cs: string[]) => void;
+  agentWorkspaceRoot: string;
+  setAgentWorkspaceRoot: (path: string) => void;
   startAgent: (goal: string, planJson?: string) => Promise<void>;
   approveStep: (stepId: string, decision: 'approve' | 'reject', remember: boolean) => Promise<void>;
   cancelAgent: () => Promise<void>;
@@ -143,8 +145,8 @@ const storedArchivedIds: string[] = (() => {
 const storedStepBudget = Number(localStorage.getItem('eminentai.stepBudget') ?? 15);
 const storedConnectors: string[] = (() => {
   try {
-    return JSON.parse(localStorage.getItem('eminentai.agentConnectors') ?? '["filesystem","shell"]');
-  } catch { return ['filesystem', 'shell']; }
+    return JSON.parse(localStorage.getItem('eminentai.agentConnectors') ?? '["filesystem","shell","web"]');
+  } catch { return ['filesystem', 'shell', 'web']; }
 })();
 
 export const useStore = create<AppState>((set, get) => ({
@@ -183,7 +185,7 @@ export const useStore = create<AppState>((set, get) => ({
         models,
         selectedModel: current && models.some((m) => m.name === current)
           ? current
-          : (chatModels[0]?.name ?? ''),
+          : (chatModels.find((m) => m.name === 'qwen3:8b')?.name ?? chatModels[0]?.name ?? ''),
       });
     } catch { /* surfaced via health pill */ }
   },
@@ -596,13 +598,19 @@ export const useStore = create<AppState>((set, get) => ({
     localStorage.setItem('eminentai.agentConnectors', JSON.stringify(cs));
     set({ agentConnectors: cs });
   },
+  agentWorkspaceRoot: localStorage.getItem('eminentai.agentWorkspaceRoot') ?? '',
+  setAgentWorkspaceRoot: (path) => {
+    localStorage.setItem('eminentai.agentWorkspaceRoot', path);
+    set({ agentWorkspaceRoot: path });
+  },
 
   resetAgent: () => set({ agent: { ...initialAgent } }),
 
   startAgent: async (goal, planJson) => {
     agentAbort?.abort();
     agentAbort = new AbortController();
-    const { agentStepBudget, agentConnectors } = get();
+    const { agentStepBudget, agentConnectors, agentWorkspaceRoot, models, selectedModel } = get();
+    const agentModel = models.some((model) => model.name === 'qwen3:8b') ? 'qwen3:8b' : selectedModel;
     set({ agent: { ...initialAgent, goal, status: 'running', stepBudget: agentStepBudget } });
 
     const push = (item: Omit<import('../lib/types').AgentTimelineItem, 'id'>) =>
@@ -610,7 +618,13 @@ export const useStore = create<AppState>((set, get) => ({
 
     try {
       for await (const ev of api.startAgentRun(
-        goal, get().selectedModel, agentConnectors, planJson, agentStepBudget, agentAbort.signal,
+        goal,
+        agentModel,
+        agentConnectors,
+        planJson,
+        agentStepBudget,
+        agentWorkspaceRoot,
+        agentAbort.signal,
       )) {
         const d = ev.data;
         switch (ev.event) {

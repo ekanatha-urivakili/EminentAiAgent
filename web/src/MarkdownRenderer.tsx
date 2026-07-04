@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -10,6 +10,32 @@ import 'katex/dist/katex.min.css';
 
 interface MarkdownRendererProps {
   content: string;
+}
+
+function MermaidDiagram({ source }: { source: string }) {
+  const id = useId().replaceAll(':', '');
+  const [svg, setSvg] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const mermaid = (await import('mermaid')).default;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'default',
+      });
+      const result = await mermaid.render(`eminentai-${id}`, source);
+      if (active) setSvg(result.svg);
+    })().catch((reason: unknown) => {
+        if (active) setError(reason instanceof Error ? reason.message : 'Invalid Mermaid diagram');
+      });
+    return () => { active = false; };
+  }, [id, source]);
+
+  if (error) return <pre className="overflow-x-auto rounded-lg border border-red-500/30 p-4 text-sm">{error}</pre>;
+  return <div className="my-4 overflow-x-auto rounded-lg border border-border bg-white p-4" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
 function GeneratedImageBlock({ src, alt }: { src: string; alt: string }) {
@@ -61,6 +87,9 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight]}
         components={{
+          a({ href, children }) {
+            return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+          },
           img({ src, alt }) {
             if (src?.startsWith('/api/generated-images/')) {
               return <GeneratedImageBlock src={src} alt={alt ?? ''} />;
@@ -70,13 +99,18 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
           code({ inline, className, children, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) {
             const match = /language-(\w+)/.exec(className || '');
             const language = match ? match[1] : '';
+            const source = String(children).replace(/\n$/, '');
+
+            if (!inline && language === 'mermaid') {
+              return <MermaidDiagram source={source} />;
+            }
             
             if (!inline && match) {
               return (
                 <div className="markdown-code-block relative group rounded-lg overflow-hidden border border-border my-4 bg-[#f3f4f6] dark:bg-[#07111f] navy:bg-[#0a1525]">
                   <div className="flex items-center justify-between px-4 py-2 bg-[#e5e7eb] dark:bg-[#0b1728] navy:bg-[#162236] text-muted-foreground text-xs font-sans border-b border-border">
                     <span>{language}</span>
-                    <button className="hover:text-foreground transition-colors" onClick={() => navigator.clipboard.writeText(String(children).replace(/\n$/, ''))}>
+                    <button className="hover:text-foreground transition-colors" onClick={() => navigator.clipboard.writeText(source)}>
                       Copy code
                     </button>
                   </div>
