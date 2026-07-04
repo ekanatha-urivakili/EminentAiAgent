@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { streamChat, listOllamaModels, validateOllamaUrl } from './llmClient';
+import { streamChat, listOllamaModels, validateOllamaUrl, providerFromModelId, rawModelName, OPENAI_MODELS, ANTHROPIC_MODELS, GOOGLE_MODELS } from './llmClient';
 import { SessionManager } from './sessionManager';
 import { ApprovalModeStore } from './approvalModeStore';
 import { buildSystemPrompt, effortToTemperature, buildMessages } from './ollamaClient';
-import type { WebviewMessage, ExtensionMessage } from './types';
+import type { WebviewMessage, ExtensionMessage, LLMModel } from './types';
 import { getWebviewContent } from './webviewContent';
-import { runWorkspaceAgent } from './workspaceAgent';
+import { resolveAutoModel, runWorkspaceAgent, getRunningModels, unloadModel, warmModel } from './workspaceAgent';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   public static readonly viewType = 'eminentai.chatView';
@@ -225,6 +225,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const msgId = `msg-${Date.now()}`;
     this._pendingMsgId = msgId;
     this._pendingContent = '';
+    const runFileChanges: { path: string; additions: number; deletions: number }[] = [];
     this.post({ type: 'stream_start', msgId });
 
     this._abortController = new AbortController();
@@ -244,12 +245,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         if (!this.fileChanges.has(change.path)) {
           this.fileChanges.set(change.path, { beforeContent: change.beforeContent });
         }
+        runFileChanges.push({ path: change.path, additions: change.additions, deletions: change.deletions });
         this.post({
           type: 'file_change' as const,
           path: change.path,
           additions: change.additions,
           deletions: change.deletions,
         });
+      },
+      onTasks: (tasks: import('./types').AgentTaskStep[]) => {
+        this.post({ type: 'agent_tasks' as const, msgId, tasks });
+      },
+      onModelActivity: (entry: import('./types').ModelActivityEntry) => {
+        this.post({ type: 'model_activity' as const, entry });
       },
       onDelta: (delta: string) => {
         this._pendingContent += delta;
@@ -280,8 +288,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     };
 
     if (mode === 'agent' && !model.startsWith('openai:') && !model.startsWith('anthropic:') && !model.startsWith('google:')) {
+      // Agent mode always drives local Ollama models through the auto-router: it picks the
+      // model, frees VRAM held by anything else running, and cools down + restores afterwards.
+      // A manually-picked local model (e.g. qwen3:8b left selected from a previous session)
+      // must never bypass this lifecycle, since that's what leaves a model resident and the
+      // fans spinning for the whole session.
+      const innerAgentOnDone = callbacks.onDone;
+      callbacks.onDone = (tokens: number, durationMs: number) => {
+        const summary = this._pendingContent.split('\n').find((line) => line.trim().length > 0)?.trim().slice(0, 200);
+        void this.appendChangelogEntry(runFileChanges, summary).finally(() => innerAgentOnDone(tokens, durationMs));
+      };
       void runWorkspaceAgent(
-        model,
+        'auto',
         messages,
         ollamaUrl,
         callbacks,
@@ -292,14 +310,59 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       return;
     }
 
-    streamChat(
-      model,
-      messages,
-      temperature,
-      { ollamaUrl },
-      callbacks,
-      this._abortController.signal,
-    );
+    try {
+      let resolvedModel = model;
+      let autoPurpose: string | undefined;
+      if (model === 'auto') {
+        const choice = await resolveAutoModel(model, messages, ollamaUrl, this._abortController.signal);
+        resolvedModel = `ollama:${choice.model}`;
+        autoPurpose = choice.purpose;
+      }
+
+      if (providerFromModelId(resolvedModel) === 'ollama') {
+        // Ask/Plan mode used to leave models resident indefinitely (relying on Ollama's
+        // default 5-minute keep_alive). Give it the same free-VRAM-before/cool-down-and-
+        // restore-after lifecycle that Agent mode already has.
+        const baseUrl = validateOllamaUrl(ollamaUrl);
+        const targetModel = rawModelName(resolvedModel);
+        const purpose = autoPurpose ?? `${mode} mode`;
+        const running = await getRunningModels(baseUrl, this._abortController.signal).catch(() => [] as string[]);
+        const previousModel = running.find((name) => name !== targetModel);
+        callbacks.onModelActivity({ ts: Date.now(), action: 'selected', model: targetModel, purpose });
+        if (running.length > 0) {
+          await Promise.all(running.map((name) => unloadModel(baseUrl, name).catch(() => undefined)));
+          for (const name of running) callbacks.onModelActivity({ ts: Date.now(), action: 'stopped', model: name });
+        }
+
+        const cooldown = async () => {
+          await unloadModel(baseUrl, targetModel).catch(() => undefined);
+          callbacks.onModelActivity({ ts: Date.now(), action: 'stopped', model: targetModel });
+          if (previousModel) {
+            await warmModel(baseUrl, previousModel).catch(() => undefined);
+            callbacks.onModelActivity({ ts: Date.now(), action: 'restored', model: previousModel });
+          }
+        };
+        const innerOnDone = callbacks.onDone;
+        const innerOnError = callbacks.onError;
+        callbacks.onDone = (tokens: number, durationMs: number) => {
+          void cooldown().finally(() => innerOnDone(tokens, durationMs));
+        };
+        callbacks.onError = (err: Error) => {
+          void cooldown().finally(() => innerOnError(err));
+        };
+      }
+
+      streamChat(
+        resolvedModel,
+        messages,
+        temperature,
+        { ollamaUrl },
+        callbacks,
+        this._abortController.signal,
+      );
+    } catch (error) {
+      callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   cancelStream(): void {
@@ -317,8 +380,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     try {
       const cfg = vscode.workspace.getConfiguration('eminentai');
       const url = validateOllamaUrl(cfg.get<string>('ollamaUrl', 'http://localhost:11434'));
-      const models = await listOllamaModels(url);
-      this.post({ type: 'models', models });
+      const ollamaModels = await listOllamaModels(url);
+      
+      // Merge Ollama models with static default models
+      const allModels: LLMModel[] = [
+        ...OPENAI_MODELS.map(m => ({ ...m, enabled: true, pinned: false })),
+        ...ANTHROPIC_MODELS.map(m => ({ ...m, enabled: true, pinned: false })),
+        ...GOOGLE_MODELS.map(m => ({ ...m, enabled: true, pinned: false })),
+        ...ollamaModels,
+      ];
+
+      this.post({ type: 'models', models: allModels });
     } catch {
       this.post({ type: 'error', message: 'Failed to load models — is Ollama running at localhost:11434?' });
     }
@@ -354,7 +426,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       type: 'config',
       ollamaUrl: cfg.get<string>('ollamaUrl', 'http://localhost:11434'),
       contextLines: cfg.get<number>('contextLines', 50),
-      defaultModel: cfg.get<string>('defaultModel', 'ollama:gemma4:e4b'),
+      defaultModel: cfg.get<string>('defaultModel', 'auto'),
     });
   }
 
@@ -484,6 +556,47 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
   }
 
+  /**
+   * Appends an entry to CHANGELOG.md in the workspace root whenever Agent mode edits files,
+   * so there's a persistent audit trail of what the assistant changed and when -- the same
+   * role Claude Code's and Copilot's own changelog/summary views play.
+   */
+  private async appendChangelogEntry(
+    changes: { path: string; additions: number; deletions: number }[],
+    summary: string | undefined,
+  ): Promise<void> {
+    if (changes.length === 0) return;
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) return;
+
+    const uri = vscode.Uri.joinPath(folder.uri, 'CHANGELOG.md');
+    const introHeader = '# Changelog\n\n_Automatically maintained by EminentAI -- a new entry is added here whenever Agent mode edits files in this workspace._\n';
+
+    let existing = '';
+    try {
+      existing = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+    } catch {
+      // File doesn't exist yet -- we'll create it below.
+    }
+    if (!existing.trim()) existing = introHeader;
+
+    const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+    const fileLines = changes
+      .map((c) => `- \`${c.path}\` (+${c.additions}/-${c.deletions})`)
+      .join('\n');
+    const entry = `\n## ${stamp}\n${summary ? `${summary}\n\n` : ''}${fileLines}\n`;
+
+    const insertAt = existing.indexOf('\n## ');
+    const updated = insertAt === -1
+      ? `${existing.trimEnd()}\n${entry}\n`
+      : `${existing.slice(0, insertAt)}${entry}${existing.slice(insertAt)}`;
+
+    try {
+      await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(updated));
+    } catch {
+      // Best-effort -- don't fail the chat response over a changelog write.
+    }
+  }
   private requestApproval(
     tool: string,
     summary: string,

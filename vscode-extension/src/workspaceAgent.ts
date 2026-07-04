@@ -5,7 +5,7 @@ import { promises as fs } from 'fs';
 import { validateOllamaUrl } from './llmClient';
 import { commandPermission, ALLOWED_EXECUTABLES } from './commandPolicy';
 import { shouldPromptForApproval, type ApprovalMode } from './approvalPolicy';
-import type { ChatMessage } from './types';
+import type { ChatMessage, AgentTaskStep, ModelActivityEntry } from './types';
 
 interface ToolCall {
   id?: string;
@@ -36,12 +36,20 @@ interface OllamaModelDetails {
   capabilities?: string[];
 }
 
+interface OllamaRunningModelList {
+  models?: Array<{ name: string }>;
+}
+
 export interface WorkspaceAgentCallbacks {
   onDelta: (text: string) => void;
   onStatus: (status: string) => void;
   onFileChange: (change: FileChange) => void;
   onDone: (tokens: number, durationMs: number) => void;
   onError: (error: Error) => void;
+  /** Live checklist of everything this run has done so far (tool calls, model swaps, cooldown). */
+  onTasks: (tasks: AgentTaskStep[]) => void;
+  /** One entry per local model being selected, stopped to free VRAM, or restored afterwards. */
+  onModelActivity: (entry: ModelActivityEntry) => void;
 }
 
 export interface FileChange {
@@ -110,26 +118,72 @@ export async function runWorkspaceAgent(
   }
 
   const started = Date.now();
-  const model = modelId.startsWith('ollama:') ? modelId.slice('ollama:'.length) : modelId;
   const messages: AgentMessage[] = history.map((message) => ({ ...message }));
   let tokens = 0;
   const sessionGrants = new Set<string>();
+  const baseUrl = validateOllamaUrl(ollamaUrl);
+  let model = '';
+  let previousModel: string | undefined;
+  let finalContent: string | undefined;
+  let failure: Error | undefined;
+
+  // Live checklist shown in the UI: every entry we push marks the previous one 'done'
+  // and appends a new 'active' one, so the whole run ends up as a full step-by-step log.
+  const tasks: AgentTaskStep[] = [];
+  const pushTask = (label: string) => {
+    if (tasks.length) tasks[tasks.length - 1].status = 'done';
+    tasks.push({ label, status: 'active' });
+    callbacks.onTasks([...tasks]);
+  };
+  const finishTasks = () => {
+    if (tasks.length) tasks[tasks.length - 1].status = 'done';
+    callbacks.onTasks([...tasks]);
+  };
 
   try {
-    callbacks.onStatus('Analysing your request');
+    callbacks.onStatus('Routing request');
+    pushTask('Routing request');
+    const choice = await resolveAutoModel(modelId, messages, baseUrl, signal);
+    model = choice.model;
+    callbacks.onStatus(`Selected ${model}`);
+    pushTask(`Selected ${model} (${choice.purpose})`);
+    callbacks.onModelActivity({ ts: Date.now(), action: 'selected', model, purpose: choice.purpose });
+
+    const runningModels = await getRunningModels(baseUrl, signal);
+    previousModel = runningModels.find((name) => name !== model);
+    if (runningModels.length > 0) {
+      callbacks.onStatus('Freeing model memory');
+      pushTask(`Freeing memory: stopping ${runningModels.join(', ')}`);
+      await Promise.all(runningModels.map((name) => unloadModel(baseUrl, name, signal)));
+      for (const name of runningModels) {
+        callbacks.onModelActivity({ ts: Date.now(), action: 'stopped', model: name });
+      }
+    }
+
+    callbacks.onStatus('Analysing attachments');
     await addVisionHandoff(messages, ollamaUrl, signal);
 
     if (isGitReviewRequest(messages)) {
       callbacks.onStatus('Inspecting Git changes');
+      pushTask('Inspecting Git changes');
       await preloadGitReviewContext(folder.uri, messages, approvalMode, requestApproval, sessionGrants, signal);
     }
 
     for (let step = 0; step < 15; step += 1) {
-      callbacks.onStatus(step === 0 ? 'Thinking' : 'Analysing tool results');
-      const response = await fetch(`${validateOllamaUrl(ollamaUrl)}/api/chat`, {
+      const thinkingLabel = step === 0 ? 'Thinking' : 'Analysing tool results';
+      callbacks.onStatus(thinkingLabel);
+      pushTask(thinkingLabel);
+      const response = await fetchOllama(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, tools: toolSchemas, stream: false, options: { num_ctx: 32768 } }),
+        body: JSON.stringify({
+          model,
+          messages,
+          tools: toolSchemas,
+          stream: false,
+          keep_alive: '90s',
+          options: { num_ctx: 16384 },
+        }),
         signal,
       });
       if (!response.ok) throw new Error(`Ollama ${response.status}: ${(await response.text()).slice(0, 300)}`);
@@ -139,13 +193,14 @@ export async function runWorkspaceAgent(
 
       const calls = turn.message.tool_calls ?? [];
       if (calls.length === 0) {
-        callbacks.onDelta(turn.message.content);
-        callbacks.onDone(tokens, Date.now() - started);
-        return;
+        finalContent = turn.message.content;
+        break;
       }
 
       for (const call of calls) {
-        callbacks.onStatus(toolStatus(call));
+        const label = toolStatus(call);
+        callbacks.onStatus(label);
+        pushTask(label);
         const result = await executeTool(
           folder.uri, call, approvalMode, requestApproval, sessionGrants, signal, callbacks.onFileChange);
         messages.push({
@@ -155,10 +210,117 @@ export async function runWorkspaceAgent(
         });
       }
     }
-    throw new Error('Agent step limit reached.');
+    if (finalContent === undefined) throw new Error('Agent step limit reached.');
   } catch (error) {
-    callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+    failure = friendlyOllamaError(error, baseUrl);
+  } finally {
+    if (model) {
+      callbacks.onStatus('Cooling down');
+      pushTask(`Cooling down: stopping ${model}`);
+      await unloadModel(baseUrl, model).catch(() => undefined);
+      callbacks.onModelActivity({ ts: Date.now(), action: 'stopped', model });
+    }
+    if (previousModel && !signal.aborted) {
+      callbacks.onStatus(`Restoring ${previousModel}`);
+      pushTask(`Restoring ${previousModel}`);
+      await warmModel(baseUrl, previousModel).catch(() => undefined);
+      callbacks.onModelActivity({ ts: Date.now(), action: 'restored', model: previousModel });
+    }
+    finishTasks();
   }
+
+  if (failure) {
+    callbacks.onError(failure);
+    return;
+  }
+  callbacks.onDelta(finalContent ?? '');
+  callbacks.onDone(tokens, Date.now() - started);
+}
+
+export interface AutoModelChoice {
+  model: string;
+  /** Human-readable reason the router picked this model, shown in the model activity log. */
+  purpose: string;
+}
+
+export async function resolveAutoModel(
+  modelId: string,
+  messages: Pick<AgentMessage, 'role' | 'content'>[],
+  ollamaUrl: string,
+  signal: AbortSignal,
+): Promise<AutoModelChoice> {
+  if (modelId !== 'auto') {
+    const model = modelId.startsWith('ollama:') ? modelId.slice('ollama:'.length) : modelId;
+    return { model, purpose: 'manually selected' };
+  }
+  const baseUrl = validateOllamaUrl(ollamaUrl);
+  const response = await fetchOllama(`${baseUrl}/api/tags`, { signal });
+  if (!response.ok) throw new Error(`Unable to list Ollama models (${response.status}).`);
+  const list = await response.json() as OllamaModelList;
+  const installed = new Set((list.models ?? []).map((candidate) => candidate.name));
+  const request = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+  const isCoding = /\b(code|file|git|test|build|fix|debug|implement|refactor|review)\b/i.test(request);
+  const isArchitecture = /\b(architecture|hld|lld|sequence|diagram|design)\b/i.test(request);
+  const purpose = isCoding ? 'coding' : isArchitecture ? 'architecture/planning' : 'general chat';
+  const preferences = isCoding
+    ? ['qwen3:8b', 'gemma4:e4b', 'qwen2.5-coder:1.5b', 'qwen3.5:2b']
+    : isArchitecture
+      ? ['gemma4:e4b', 'qwen3:8b', 'qwen3.5:2b']
+      : ['qwen3.5:2b', 'gemma4:e4b', 'qwen3:8b', 'qwen2.5:latest'];
+  const selected = preferences.find((candidate) => installed.has(candidate))
+    ?? [...installed].find((candidate) => !/embed|flux|image/i.test(candidate));
+  if (!selected) throw new Error('No compatible local Ollama model is installed.');
+  return { model: selected, purpose };
+}
+
+export async function getRunningModels(baseUrl: string, signal?: AbortSignal): Promise<string[]> {
+  const response = await fetchOllama(`${baseUrl}/api/ps`, { signal });
+  if (!response.ok) return [];
+  const list = await response.json() as OllamaRunningModelList;
+  return (list.models ?? []).map((model) => model.name);
+}
+
+export async function unloadModel(baseUrl: string, model: string, signal?: AbortSignal): Promise<void> {
+  const response = await fetchOllama(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, keep_alive: 0 }),
+    signal,
+  });
+  if (!response.ok) throw new Error(`Unable to unload ${model} (${response.status}).`);
+}
+
+export async function warmModel(baseUrl: string, model: string): Promise<void> {
+  const response = await fetchOllama(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, keep_alive: '5m' }),
+  });
+  if (!response.ok) throw new Error(`Unable to restore ${model} (${response.status}).`);
+}
+
+async function fetchOllama(url: string, init: RequestInit, attempts = 2): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      lastError = error;
+      if (init.signal?.aborted || attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+  }
+  throw lastError;
+}
+
+function friendlyOllamaError(error: unknown, baseUrl: string): Error {
+  if (error instanceof Error && (error.message.includes('aborted') || error.name === 'AbortError')) {
+    return new Error('Cancelled');
+  }
+  if (error instanceof TypeError && error.message === 'fetch failed') {
+    return new Error(`Cannot reach Ollama at ${baseUrl}. Start Ollama, then retry.`);
+  }
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function toolStatus(call: ToolCall): string {
@@ -197,7 +359,7 @@ async function addVisionHandoff(
 
   const images = imageMessages.flatMap((message) => message.images ?? []);
   const request = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
-  const response = await fetch(`${baseUrl}/api/chat`, {
+  const response = await fetchOllama(`${baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -213,6 +375,7 @@ async function addVisionHandoff(
         ].join('\n'),
         images,
       }],
+      keep_alive: 0,
       options: { temperature: 0.1, num_ctx: 16384 },
     }),
     signal,
@@ -239,7 +402,7 @@ async function addVisionHandoff(
 }
 
 async function findVisionModel(baseUrl: string, signal: AbortSignal): Promise<string | undefined> {
-  const response = await fetch(`${baseUrl}/api/tags`, { signal });
+  const response = await fetchOllama(`${baseUrl}/api/tags`, { signal });
   if (!response.ok) throw new Error(`Unable to list Ollama models (${response.status}).`);
   const list = await response.json() as OllamaModelList;
   const models = [...(list.models ?? [])].sort((a, b) => (a.size ?? Number.MAX_SAFE_INTEGER) - (b.size ?? Number.MAX_SAFE_INTEGER));
@@ -250,7 +413,7 @@ async function findVisionModel(baseUrl: string, signal: AbortSignal): Promise<st
   }
 
   for (const model of models) {
-    const detailsResponse = await fetch(`${baseUrl}/api/show`, {
+    const detailsResponse = await fetchOllama(`${baseUrl}/api/show`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: model.name }),

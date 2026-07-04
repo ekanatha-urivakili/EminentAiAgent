@@ -108,6 +108,21 @@ export interface ProviderConfig {
 
 // ── Extension → Webview messages ─────────────────────────────────────────────
 
+/** One step in an Agent-mode run's live checklist (tool call, model call, cooldown, etc). */
+export interface AgentTaskStep {
+  label: string;
+  status: 'active' | 'done';
+}
+
+/** One entry in the local-model orchestration log: a model being selected for a purpose,
+ * stopped to free VRAM, or restored after a run finished. */
+export interface ModelActivityEntry {
+  ts: number;
+  action: 'selected' | 'stopped' | 'restored';
+  model: string;
+  purpose?: string;
+}
+
 export type ExtensionMessage =
   | { type: 'models'; models: LLMModel[] }
   | { type: 'sessions'; sessions: Session[]; activeId: string | null }
@@ -115,6 +130,8 @@ export type ExtensionMessage =
   | { type: 'images_selected'; images: ImageAttachment[] }
   | { type: 'stream_start'; msgId: string }
   | { type: 'agent_status'; msgId: string; status: string }
+  | { type: 'agent_tasks'; msgId: string; tasks: AgentTaskStep[] }
+  | { type: 'model_activity'; entry: ModelActivityEntry }
   | { type: 'file_change'; path: string; additions: number; deletions: number }
   | { type: 'stream_delta'; msgId: string; delta: string }
   | { type: 'stream_end'; msgId: string; tokens: number; durationMs: number }
