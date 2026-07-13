@@ -19,10 +19,10 @@ public sealed class ModelRouterService(
         new Dictionary<AgentKind, string[]>
         {
             [AgentKind.Vision]          = ["qwen2.5vl", "vl", "vision", "llava", "moondream"],
-            [AgentKind.Coding]          = ["qwen3:8b", "qwen2.5-coder", "coder", "deepseek-coder"],
-            [AgentKind.Architecture]    = ["qwen3:8b", "qwen3", "gemma4", "qwen2.5:latest", "qwen2.5"],
+            [AgentKind.Coding]          = ["gemma4:12b-8k", "qwen3:8b", "qwen2.5-coder", "coder", "deepseek-coder"],
+            [AgentKind.Architecture]    = ["gemma4:12b-8k", "qwen3:8b", "qwen3", "gemma4", "qwen2.5:latest", "qwen2.5"],
             [AgentKind.ImageGeneration] = ["flux2-klein", "flux", "diffusion"],
-            [AgentKind.General]         = ["qwen3:8b", "qwen3", "qwen2.5:latest", "qwen2.5", "llama3"],
+            [AgentKind.General]         = ["gemma4:12b-8k", "qwen3:8b", "qwen3", "qwen2.5:latest", "qwen2.5", "llama3"],
         };
 
     public async Task<ModelRoute?> ResolveAsync(

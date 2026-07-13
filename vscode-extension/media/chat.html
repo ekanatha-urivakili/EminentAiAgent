@@ -383,7 +383,7 @@ const post = msg => vscode.postMessage(msg);
 const S = {
   sessions: [], activeId: null,
   models: [],
-  model: '', modelName: '', defaultModel: 'ollama:gemma4:e4b', mode: 'agent', effort: 'medium',
+  model: '', modelName: '', defaultModel: 'ollama:gemma4:12b-8k', mode: 'agent', effort: 'medium',
   approvalMode: 'ask',
   taskSearch: '', tasksExpanded: false,
   streaming: false, streamId: null, streamEl: null, streamBuf: '',
@@ -1018,7 +1018,7 @@ window.addEventListener('message',e=>{
         const configured=S.models.find(function(m){
           return m.enabled!==false&&(m.id===S.defaultModel||m.name===S.defaultModel||m.id==='ollama:'+S.defaultModel);
         });
-        const gemma=S.models.find(function(m){ return m.enabled!==false&&m.name==='gemma4:e4b'; });
+        const gemma=S.models.find(function(m){ return m.enabled!==false&&m.name==='gemma4:12b-8k'; });
         const firstPinned=S.models.find(function(m){ return m.pinned&&m.enabled!==false; });
         const firstEnabled=S.models.find(function(m){ return m.enabled!==false; });
         if(configured) setModel(configured.id);
@@ -1056,7 +1056,7 @@ window.addEventListener('message',e=>{
       renderCtxBar();
       break;
     case 'config':
-      S.defaultModel=msg.defaultModel||'ollama:gemma4:e4b';
+      S.defaultModel=msg.defaultModel||'ollama:gemma4:12b-8k';
       if(!S.model&&S.models.length){
         const configured=S.models.find(function(m){
           return m.enabled!==false&&(m.id===S.defaultModel||m.name===S.defaultModel||m.id==='ollama:'+S.defaultModel);

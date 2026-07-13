@@ -184,7 +184,7 @@ export const useStore = create<AppState>((set, get) => ({
         models,
         selectedModel: current && models.some((m) => m.name === current)
           ? current
-          : (chatModels.find((m) => m.name === 'qwen3:8b')?.name ?? chatModels[0]?.name ?? ''),
+          : (chatModels.find((m) => m.name === 'gemma4:12b-8k')?.name ?? chatModels[0]?.name ?? ''),
       });
     } catch { /* surfaced via health pill */ }
   },
@@ -607,7 +607,7 @@ export const useStore = create<AppState>((set, get) => ({
     agentAbort?.abort();
     agentAbort = new AbortController();
     const { agentStepBudget, agentConnectors, agentWorkspaceRoot, models, selectedModel } = get();
-    const agentModel = models.some((model) => model.name === 'qwen3:8b') ? 'qwen3:8b' : selectedModel;
+    const agentModel = models.some((model) => model.name === 'gemma4:12b-8k') ? 'gemma4:12b-8k' : selectedModel;
     set({ agent: { ...initialAgent, goal, status: 'running', stepBudget: agentStepBudget } });
 
     const push = (item: Omit<import('../lib/types').AgentTimelineItem, 'id'>) =>

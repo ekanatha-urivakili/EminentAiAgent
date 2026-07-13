@@ -9,14 +9,14 @@ namespace EminentAi.Infrastructure.Routing;
 
 /// <summary>
 /// Classifies user intent without any model or provider knowledge.
-/// Uses fast regex paths for obvious cases, falls back to qwen3:8b for higher-accuracy classification.
+/// Uses fast regex paths for obvious cases, falls back to gemma4:12b-8k for higher-accuracy classification.
 /// All unknown labels default to General — never throws on parse failure.
 /// </summary>
 public sealed class IntentRouterService(
     IOllamaClient ollama,
     ILogger<IntentRouterService> logger) : IIntentRouter
 {
-    private const string ClassifierModel = "qwen3:8b";
+    private const string ClassifierModel = "gemma4:12b-8k";
 
     // Fast-path: image attached + "read / extract / what / describe / tell me about / text in"
     private static readonly Regex VisionKeywords =

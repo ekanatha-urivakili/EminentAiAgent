@@ -255,10 +255,10 @@ export async function resolveAutoModel(
   const isArchitecture = /\b(architecture|hld|lld|sequence|diagram|design)\b/i.test(request);
   const purpose = isArchitecture ? 'architecture/planning' : isCoding ? 'coding' : 'general chat';
   const preferences = isArchitecture
-    ? ['gemma4:e4b', 'qwen3:8b', 'qwen3.5:2b']
+    ? ['gemma4:12b-8k', 'qwen3:8b', 'qwen3.5:2b']
     : isCoding
-      ? ['qwen3:8b', 'gemma4:e4b', 'qwen2.5-coder:1.5b', 'qwen3.5:2b']
-      : ['qwen3.5:2b', 'gemma4:e4b', 'qwen3:8b', 'qwen2.5:latest'];
+      ? ['gemma4:12b-8k', 'qwen3:8b', 'qwen2.5-coder:1.5b', 'qwen3.5:2b']
+      : ['gemma4:12b-8k', 'qwen3.5:2b', 'qwen3:8b', 'qwen2.5:latest'];
   const selected = preferences.find((candidate) => installed.has(candidate))
     ?? [...installed].find((candidate) => !/embed|flux|image/i.test(candidate));
   if (!selected) throw new Error('No compatible local Ollama model is installed.');

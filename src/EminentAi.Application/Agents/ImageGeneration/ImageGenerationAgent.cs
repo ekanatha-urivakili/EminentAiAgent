@@ -12,20 +12,20 @@ namespace EminentAi.Application.Agents.ImageGeneration;
 /// <summary>
 /// Agent-to-agent image generation pipeline:
 ///
-///   Agent 1 — qwen3:latest (prompt engineer)
+///   Agent 1 — gemma4:12b-8k (prompt engineer)
 ///     Analyses the user's free-text request, understands intent (multiple
 ///     variants, themes, formats, brand names) and expands it into one or
 ///     more optimised image prompts while the model is still warm in VRAM.
 ///
-///   Agent 2 — x/z-image-turbo (image generator, primary)
-///              x/flux2-klein:4b (image generator, fallback)
+///   Agent 2 — x/flux2-klein:4b (image generator, primary)
+///              x/z-image-turbo (image generator, fallback)
 ///     Receives each polished prompt and produces a PNG.
 ///
 /// Full pipeline sequence:
-///   1. qwen3:latest      → analyse request, expand to N prompts  [VRAM: other models still loaded]
+///   1. gemma4:12b-8k    → analyse request, expand to N prompts  [VRAM: other models still loaded]
 ///   2. Snapshot loaded models
 ///   3. Kill ALL loaded models to free VRAM for image gen
-///   4. x/z-image-turbo  → generate image for each prompt (falls back to x/flux2-klein:4b on failure)
+///   4. x/flux2-klein:4b → generate image for each prompt (falls back to x/z-image-turbo on failure)
 ///   5. Save each PNG to Generated_images/
 ///   6. Restore previously loaded models (fire-and-forget)
 /// </summary>
@@ -36,9 +36,9 @@ public sealed class ImageGenerationAgent(
     IPiiRedactor redactor,
     string outputDirectory) : ISpecializedAgent
 {
-    private const string PrimaryModel  = "x/z-image-turbo";
-    private const string FallbackModel = "x/flux2-klein:4b";
-    private const string AnalystModel  = "qwen3:latest";
+    private const string PrimaryModel  = "x/flux2-klein:4b";
+    private const string FallbackModel = "x/z-image-turbo";
+    private const string AnalystModel  = "gemma4:12b-8k";
 
     // Matches text wrapped in double-quotes, e.g. "A cute baby", "Bold text"
     private static readonly Regex QuotedPromptRegex =
@@ -84,7 +84,7 @@ public sealed class ImageGenerationAgent(
         ModelRoute route,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // ── Stage 1: qwen3 analyses the request and expands to Flux prompts ──
+        // ── Stage 1: Gemma analyses the request and expands to Flux prompts ─
         yield return new SmartChatEvent("image_gen_progress", new
         {
             stage        = "analyzing_request",
@@ -300,14 +300,14 @@ public sealed class ImageGenerationAgent(
         yield return new SmartChatEvent("done", new { messageId = assistantMessage.Id.ToString() });
     }
 
-    // ── Agent 1: qwen3 prompt analysis ───────────────────────────────────────
+    // ── Agent 1: Gemma prompt analysis ───────────────────────────────────────
 
     private async Task<AnalysisResult> AnalyzeAndExpandPromptsAsync(
         string userText, CancellationToken ct)
     {
-        // For quoted-prompt lists, tell qwen3 to enhance each one
+        // For quoted-prompt lists, tell Gemma to enhance each one
         var quotedPrompts = ExtractQuotedPrompts(userText);
-        var inputForQwen  = quotedPrompts.Count > 0
+        var analystInput = quotedPrompts.Count > 0
             ? $"Enhance these image prompts:\n" +
               string.Join("\n", quotedPrompts.Select((p, i) => $"{i + 1}. \"{p}\""))
             : userText;
@@ -317,7 +317,7 @@ public sealed class ImageGenerationAgent(
             new List<ChatMessage>
             {
                 new("system", AnalystSystemPrompt),
-                new("user",   inputForQwen)
+                new("user",   analystInput)
             },
             Temperature:   0.2f,
             ContextWindow: 4096,
@@ -327,7 +327,7 @@ public sealed class ImageGenerationAgent(
         try   { rawJson = await ollama.ChatOnceAsync(request, ct); }
         catch { return FallbackResult(quotedPrompts, userText); }
 
-        // Strip qwen3 <think>...</think> reasoning blocks
+        // Strip reasoning blocks before JSON parsing
         rawJson = ThinkBlockRegex.Replace(rawJson, "").Trim();
 
         // Extract first JSON object if extra text leaked through

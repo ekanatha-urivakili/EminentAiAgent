@@ -1,0 +1,4 @@
+interface:
+  display_name: "Principal Engineering Standards"
+  short_description: "Enterprise engineering, security, and architecture"
+  default_prompt: "Use $principal-engineering-standards to design or review this system against enterprise standards."
