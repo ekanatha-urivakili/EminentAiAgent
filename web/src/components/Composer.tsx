@@ -418,7 +418,7 @@ export function Composer() {
     setInput(''); setAttachments([]); setTextAttachments([]);
     if (mode === 'Chat') void (smartModeEnabled ? sendSmartMessage(text, attachments) : sendMessageWithAttachments(text, attachments));
     else if (mode === 'Plan') void createPlan(text);
-    else void startAgent(text);
+    else void startAgent(text, undefined, attachments);
   };
 
   const stop = () => { if (mode === 'Agent') void cancelAgent(); else stopStreaming(); };

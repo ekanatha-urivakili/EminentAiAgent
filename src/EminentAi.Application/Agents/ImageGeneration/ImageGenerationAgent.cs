@@ -36,8 +36,8 @@ public sealed class ImageGenerationAgent(
     IPiiRedactor redactor,
     string outputDirectory) : ISpecializedAgent
 {
-    private const string PrimaryModel  = "x/flux2-klein:4b";
-    private const string FallbackModel = "x/z-image-turbo";
+    private const string PrimaryModel  = FluxImageGenerator.PrimaryModel;
+    private const string FallbackModel = FluxImageGenerator.FallbackModel;
     private const string PrimaryAnalystModel  = "gemma4:e4b";
     private const string FallbackAnalystModel = "qwen3.5:9b";
 
@@ -85,6 +85,15 @@ public sealed class ImageGenerationAgent(
         ModelRoute route,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // ── Stage 0: describe any attached reference image (vision model) ────
+        var imageAttachments = context.Attachments
+            .Where(a => a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        string? referenceDescription = imageAttachments.Count > 0
+            ? await DescribeReferenceImagesAsync(imageAttachments, ct)
+            : null;
+
         // ── Stage 1: Gemma analyses the request and expands to Flux prompts ─
         yield return new SmartChatEvent("image_gen_progress", new
         {
@@ -92,7 +101,7 @@ public sealed class ImageGenerationAgent(
             analystModel = PrimaryAnalystModel
         });
 
-        var analysis = await AnalyzeAndExpandPromptsAsync(context.UserText, ct);
+        var analysis = await AnalyzeAndExpandPromptsAsync(context.UserText, referenceDescription, ct);
 
         yield return new SmartChatEvent("image_gen_progress", new
         {
@@ -148,7 +157,7 @@ public sealed class ImageGenerationAgent(
 
             try
             {
-                base64Png = await GenerateViaCliAsync(PrimaryModel, ep.FluxPrompt, ct);
+                base64Png = await FluxImageGenerator.GenerateViaCliAsync(PrimaryModel, ep.FluxPrompt, ct);
             }
             catch (Exception primaryEx)
             {
@@ -167,7 +176,7 @@ public sealed class ImageGenerationAgent(
                     total    = expandedPrompts.Count
                 });
 
-                try   { base64Png = await GenerateViaCliAsync(FallbackModel, ep.FluxPrompt, ct); }
+                try   { base64Png = await FluxImageGenerator.GenerateViaCliAsync(FallbackModel, ep.FluxPrompt, ct); }
                 catch (Exception ex) { genError = ex.Message; }
             }
 
@@ -302,17 +311,42 @@ public sealed class ImageGenerationAgent(
         yield return new SmartChatEvent("done", new { messageId = assistantMessage.Id.ToString() });
     }
 
+    // ── Agent 0: qwen3.5:9b describes any reference image the user attached ──
+
+    private async Task<string?> DescribeReferenceImagesAsync(
+        List<ChatAttachment> imageAttachments, CancellationToken ct)
+    {
+        var request = new ChatRequest(
+            FallbackAnalystModel, // qwen3.5:9b — the vision-capable route model
+            new List<ChatMessage>
+            {
+                new("user",
+                    "Describe this reference image in one or two sentences for an image-generation " +
+                    "prompt: subject, style, colours, composition. Be concise and objective.",
+                    imageAttachments.Select(a => a.DataBase64).ToList())
+            },
+            Temperature: 0.1f,
+            ContextWindow: 2048);
+
+        try { return (await ollama.ChatOnceAsync(request, ct)).Trim(); }
+        catch { return null; }
+    }
+
     // ── Agent 1: Gemma prompt analysis ───────────────────────────────────────
 
     private async Task<AnalysisResult> AnalyzeAndExpandPromptsAsync(
-        string userText, CancellationToken ct)
+        string userText, string? referenceDescription, CancellationToken ct)
     {
         // For quoted-prompt lists, tell Gemma to enhance each one
         var quotedPrompts = ExtractQuotedPrompts(userText);
-        var analystInput = quotedPrompts.Count > 0
+        var baseInput = quotedPrompts.Count > 0
             ? $"Enhance these image prompts:\n" +
               string.Join("\n", quotedPrompts.Select((p, i) => $"{i + 1}. \"{p}\""))
             : userText;
+
+        var analystInput = referenceDescription is null
+            ? baseInput
+            : $"Reference image: {referenceDescription}\n\nUser request: {baseInput}";
 
         var request = new ChatRequest(
             PrimaryAnalystModel,
@@ -386,72 +420,6 @@ public sealed class ImageGenerationAgent(
         return new AnalysisResult("(analyst models unavailable — using raw prompts)", prompts, "raw prompt fallback");
     }
 
-    // ── Agent 2: Flux CLI generation ─────────────────────────────────────────
-
-    private static async Task<string> GenerateViaCliAsync(
-        string model, string prompt, CancellationToken ct)
-    {
-        var ollamaBin = ResolveOllamaBinary();
-        var workDir   = Path.Combine(Path.GetTempPath(), $"eminentai_flux_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(workDir);
-
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName               = ollamaBin,
-                WorkingDirectory       = workDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError  = true,
-                UseShellExecute        = false,
-                CreateNoWindow         = true,
-            };
-            psi.ArgumentList.Add("run");
-            psi.ArgumentList.Add(model);
-            psi.ArgumentList.Add(prompt);
-
-            using var process = new Process { StartInfo = psi };
-            var stdout = new System.Text.StringBuilder();
-            var stderr = new System.Text.StringBuilder();
-
-            process.OutputDataReceived += (_, e) => { if (e.Data != null) stdout.AppendLine(e.Data); };
-            process.ErrorDataReceived  += (_, e) => { if (e.Data != null) stderr.AppendLine(e.Data); };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromMinutes(15));
-            await process.WaitForExitAsync(timeoutCts.Token);
-
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException(
-                    $"ollama run exited with code {process.ExitCode}. " +
-                    Truncate(stderr.ToString().Trim(), 300));
-
-            // Strategy A: PNG written to working directory
-            var pngFiles = Directory.GetFiles(workDir, "*.png");
-            if (pngFiles.Length > 0)
-            {
-                var bytes = await File.ReadAllBytesAsync(pngFiles[0], ct);
-                if (IsPng(bytes)) return Convert.ToBase64String(bytes);
-            }
-
-            // Strategy B: stdout contains base64-encoded image
-            var b64 = ExtractBase64FromOutput(stdout.ToString());
-            if (b64 is not null) return b64;
-
-            throw new InvalidOperationException(
-                "ollama run produced no recognisable image output. " +
-                $"stdout snippet: '{Truncate(stdout.ToString(), 100)}'");
-        }
-        finally
-        {
-            try { Directory.Delete(workDir, recursive: true); } catch { /* best-effort */ }
-        }
-    }
-
     // ── Image save ───────────────────────────────────────────────────────────
 
     private async Task<(string FullPath, string Filename)> SaveImageAsync(
@@ -475,7 +443,7 @@ public sealed class ImageGenerationAgent(
                 $"Invalid base64 (first 40 chars: '{base64[..Math.Min(40, base64.Length)]}'). {ex.Message}", ex);
         }
 
-        var ext = DetectImageFormat(bytes)
+        var ext = FluxImageGenerator.DetectImageFormat(bytes)
             ?? throw new InvalidOperationException(
                 $"Unrecognised image format " +
                 $"(magic: {string.Join(" ", bytes.Take(4).Select(b => b.ToString("X2")))}).");
@@ -492,50 +460,6 @@ public sealed class ImageGenerationAgent(
         return (fullPath, filename);
     }
 
-    // ── Format helpers ────────────────────────────────────────────────────────
-
-    private static bool IsPng(byte[] b) =>
-        b.Length > 8
-        && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47
-        && b[4] == 0x0D && b[5] == 0x0A && b[6] == 0x1A && b[7] == 0x0A;
-
-    private static bool IsJpeg(byte[] b) => b.Length > 2 && b[0] == 0xFF && b[1] == 0xD8;
-
-    private static bool IsWebP(byte[] b) =>
-        b.Length > 4
-        && b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46;
-
-    private static string? DetectImageFormat(byte[] b)
-    {
-        if (IsPng(b))  return "png";
-        if (IsJpeg(b)) return "jpg";
-        if (b.Length > 3 && b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46) return "gif";
-        if (IsWebP(b)) return "webp";
-        return null;
-    }
-
-    private static string? ExtractBase64FromOutput(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return null;
-        var stripped = Regex.Replace(raw, @"\x1B\[[0-9;]*[mK]", ""); // strip ANSI
-        foreach (Match m in Regex.Matches(stripped, @"[A-Za-z0-9+/]{40,}={0,2}")
-                                 .OrderByDescending(x => x.Length))
-        {
-            var candidate = m.Value;
-            var padded    = candidate.Length % 4 == 0
-                ? candidate
-                : candidate + new string('=', 4 - candidate.Length % 4);
-            try
-            {
-                var bytes = Convert.FromBase64String(padded);
-                if (IsPng(bytes) || IsJpeg(bytes) || IsWebP(bytes))
-                    return padded;
-            }
-            catch (FormatException) { }
-        }
-        return null;
-    }
-
     private static List<string> ExtractQuotedPrompts(string userText)
     {
         var results = new List<string>();
@@ -546,41 +470,6 @@ public sealed class ImageGenerationAgent(
         }
         return results;
     }
-
-    private static string ResolveOllamaBinary()
-    {
-        using var check = new Process();
-        check.StartInfo = new ProcessStartInfo
-        {
-            FileName               = OperatingSystem.IsWindows() ? "where" : "which",
-            Arguments              = "ollama",
-            RedirectStandardOutput = true,
-            UseShellExecute        = false,
-            CreateNoWindow         = true,
-        };
-        try
-        {
-            check.Start();
-            var result = check.StandardOutput.ReadLine()?.Trim();
-            check.WaitForExit();
-            if (!string.IsNullOrEmpty(result) && File.Exists(result)) return result;
-        }
-        catch { }
-
-        foreach (var p in new[]
-        {
-            "/Applications/Ollama.app/Contents/Resources/ollama",
-            "/usr/local/bin/ollama",
-            "/opt/homebrew/bin/ollama",
-            "/usr/bin/ollama",
-        })
-            if (File.Exists(p)) return p;
-
-        return "ollama";
-    }
-
-    private static string Truncate(string s, int max) =>
-        s.Length <= max ? s : s[..max] + "…";
 
     // ── Internal records ──────────────────────────────────────────────────────
 

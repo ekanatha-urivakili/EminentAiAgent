@@ -30,6 +30,8 @@ using EminentAi.Infrastructure.Tools;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
+LoadDotEnv();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ---------------------------------------------------------------------------
@@ -78,10 +80,12 @@ builder.Services.AddSingleton<IndeedDirectBuffer>();
 builder.Services.AddSingleton<JobRunCache>();
 builder.Services.AddSingleton<JobSearchOrchestrator>();
 
+var configuredOllamaApiKey = builder.Configuration["EminentAi:OllamaApiKey"];
 builder.Services.AddSingleton(new BuiltinToolOptions(
     builder.Configuration["EminentAi:WorkspaceRoot"],
-    builder.Configuration["EminentAi:OllamaApiKey"]
-        ?? Environment.GetEnvironmentVariable("OLLAMA_API_KEY")));
+    !string.IsNullOrWhiteSpace(configuredOllamaApiKey)
+        ? configuredOllamaApiKey
+        : Environment.GetEnvironmentVariable("OLLAMA_API_KEY")));
 builder.Services.AddSingleton<IBuiltinToolRunner, BuiltinToolRunner>();
 builder.Services.AddSingleton<IPiiRedactor, PiiRedactor>();
 builder.Services.AddSingleton<IPolicyEngine, PolicyEngine>();
@@ -988,6 +992,20 @@ app.MapPost("/api/agent/runs",
         await WriteSseAsync(context.Response, "error", new { message = "goal is required" }, CancellationToken.None);
         return;
     }
+    if ((request.Attachments?.Count ?? 0) > 10)
+    {
+        await WriteSseAsync(context.Response, "error", new { message = "too many attachments (max 10)" }, CancellationToken.None);
+        return;
+    }
+    if (request.Attachments?.Any(a => (a.DataBase64?.Length ?? 0) > 10_000_000) == true)
+    {
+        await WriteSseAsync(context.Response, "error", new { message = "attachment exceeds 10 MB limit" }, CancellationToken.None);
+        return;
+    }
+
+    var attachments = request.Attachments?
+        .Select(a => new ChatAttachment(a.Name, a.ContentType, StripDataUrlPrefix(a.DataBase64)))
+        .ToList();
 
     var runId = Guid.NewGuid();
     var opts = new AgentRunOptions(
@@ -996,7 +1014,8 @@ app.MapPost("/api/agent/runs",
         string.IsNullOrWhiteSpace(request.Model) ? "gemma4:e4b" : request.Model,
         request.PlanJson,
         request.StepBudget ?? 15,
-        WorkspaceRoot: request.WorkspaceRoot);
+        WorkspaceRoot: request.WorkspaceRoot,
+        Attachments: attachments);
 
     try
     {
@@ -1647,6 +1666,38 @@ app.MapGet("/api/generated-images/{filename}", async (
 
 app.Run();
 
+// Loads KEY=VALUE pairs from a .env file next to the project (if present) into the
+// process environment, without overriding variables already set by the shell/host.
+static void LoadDotEnv()
+{
+    for (var dir = AppContext.BaseDirectory; dir is not null; dir = Directory.GetParent(dir)?.FullName)
+    {
+        var path = Path.Combine(dir, ".env");
+        if (File.Exists(path))
+        {
+            foreach (var line in File.ReadAllLines(path))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+                    continue;
+
+                var separatorIndex = trimmed.IndexOf('=');
+                if (separatorIndex <= 0)
+                    continue;
+
+                var key = trimmed[..separatorIndex].Trim();
+                var value = trimmed[(separatorIndex + 1)..].Trim().Trim('"');
+                if (Environment.GetEnvironmentVariable(key) is null)
+                    Environment.SetEnvironmentVariable(key, value);
+            }
+            return;
+        }
+
+        if (Directory.Exists(Path.Combine(dir, ".git")))
+            return; // reached the repo root without finding a .env file
+    }
+}
+
 internal static class SseJson
 {
     public static readonly JsonSerializerOptions Options = new()
@@ -1672,7 +1723,8 @@ public record StartAgentRunRequest(
     string? Model,
     string? PlanJson,
     int? StepBudget,
-    string? WorkspaceRoot);
+    string? WorkspaceRoot,
+    List<SendAttachmentRequest>? Attachments);
 public record ApprovalRequest(string Decision, bool? Remember);
 public record ConnectorRequest(string Name, ConnectorTransport? Transport, string CommandOrUrl, PolicyProfile? PolicyProfile);
 public record PullModelRequest(string Name);

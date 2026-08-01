@@ -144,6 +144,7 @@ export const api = {
     planJson: string | undefined,
     stepBudget: number,
     workspaceRoot: string,
+    attachments: import('./types').ChatAttachment[] | undefined,
     signal: AbortSignal,
   ) => streamSse('/api/agent/runs', {
     goal,
@@ -152,6 +153,11 @@ export const api = {
     planJson,
     stepBudget,
     workspaceRoot: workspaceRoot.trim() || undefined,
+    attachments: attachments?.map((a) => ({
+      name: a.name,
+      contentType: a.contentType,
+      dataBase64: a.dataBase64 ?? a.dataUrl,
+    })),
   }, signal),
 
   approve: (runId: string, stepId: string, decision: 'approve' | 'reject', remember: boolean) =>

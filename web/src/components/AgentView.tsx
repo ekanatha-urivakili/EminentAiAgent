@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Bot, ShieldAlert, Check, X, Wrench, CheckCircle2, XCircle, Ban,
   Lightbulb, Flag, AlertTriangle, Loader2, SlidersHorizontal, Plug,
+  ChevronRight, ChevronDown,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '../lib/utils';
@@ -82,10 +83,34 @@ const itemIcon: Record<AgentTimelineItem['kind'], { icon: typeof Wrench; cls: st
   info: { icon: Bot, cls: 'bg-muted text-muted-foreground' },
 };
 
+// Best-effort one-line preview of a tool call's arguments, e.g. { prompt: "a red fox" } → "a red fox"
+function summarizeArgs(args: unknown): string {
+  if (args && typeof args === 'object') {
+    for (const key of ['prompt', 'path', 'command', 'query', 'url', 'source']) {
+      const value = (args as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.length > 0) return value;
+    }
+  }
+  return JSON.stringify(args ?? {});
+}
+
+function truncate(text: string, max = 90): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
 function TimelineItem({ item }: { item: AgentTimelineItem }) {
   if (item.pendingApproval) return <ApprovalCard item={item} />;
   const meta = itemIcon[item.kind];
   const Icon = meta.icon;
+
+  const collapsible = item.kind === 'tool_call' || item.kind === 'tool_result' || item.kind === 'tool_failed';
+  const [expanded, setExpanded] = useState(!collapsible);
+  const summary = item.kind === 'tool_call'
+    ? summarizeArgs(item.args)
+    : (item.kind === 'tool_result' || item.kind === 'tool_failed')
+      ? (item.text ?? '')
+      : '';
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex gap-4">
@@ -93,22 +118,35 @@ function TimelineItem({ item }: { item: AgentTimelineItem }) {
         <Icon size={17} />
       </div>
       <div className="flex-1 min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm">
-        {item.tool && (
-          <div className="text-xs font-mono font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-            {item.tool}
-          </div>
-        )}
-        {item.kind === 'tool_call' && (
-          <pre className="text-sm font-mono bg-muted/60 p-2.5 rounded-md whitespace-pre-wrap break-all overflow-x-auto">
+        <div
+          className={cn('flex items-center gap-2', collapsible && 'cursor-pointer select-none')}
+          onClick={collapsible ? () => setExpanded((v) => !v) : undefined}
+        >
+          {item.tool && (
+            <span className="text-xs font-mono font-semibold text-muted-foreground uppercase tracking-wide">
+              {item.tool}
+            </span>
+          )}
+          {collapsible && !expanded && (
+            <span className="text-sm text-muted-foreground truncate flex-1 min-w-0">{truncate(summary)}</span>
+          )}
+          {collapsible && (
+            expanded
+              ? <ChevronDown size={14} className="text-muted-foreground flex-shrink-0 ml-auto" />
+              : <ChevronRight size={14} className="text-muted-foreground flex-shrink-0 ml-auto" />
+          )}
+        </div>
+        {item.kind === 'tool_call' && expanded && (
+          <pre className="mt-1.5 text-sm font-mono bg-muted/60 p-2.5 rounded-md whitespace-pre-wrap break-all overflow-x-auto">
             {JSON.stringify(item.args, null, 2)}
           </pre>
         )}
         {item.kind === 'thought' && (
           <p className="text-base text-blue-600/90 dark:text-blue-400/90 leading-relaxed">{item.text}</p>
         )}
-        {(item.kind === 'tool_result' || item.kind === 'tool_failed') && (
+        {(item.kind === 'tool_result' || item.kind === 'tool_failed') && expanded && (
           <pre className={cn(
-            'text-sm font-mono p-2.5 rounded-md whitespace-pre-wrap break-all overflow-x-auto max-h-56 overflow-y-auto custom-scrollbar',
+            'mt-1.5 text-sm font-mono p-2.5 rounded-md whitespace-pre-wrap break-all overflow-x-auto max-h-56 overflow-y-auto custom-scrollbar',
             item.kind === 'tool_failed' ? 'bg-red-500/5 text-red-600 dark:text-red-400' : 'bg-muted/60',
           )}>
             {item.text}
@@ -123,7 +161,7 @@ function TimelineItem({ item }: { item: AgentTimelineItem }) {
 }
 
 // ── Idle config panel ─────────────────────────────────────────────────────────
-const BUILTIN_CONNECTORS = ['filesystem', 'shell', 'web'];
+const BUILTIN_CONNECTORS = ['filesystem', 'shell', 'web', 'image'];
 
 function AgentIdleConfig() {
   const agentStepBudget = useStore((s) => s.agentStepBudget);

@@ -76,7 +76,7 @@ interface AppState {
   setAgentConnectors: (cs: string[]) => void;
   agentWorkspaceRoot: string;
   setAgentWorkspaceRoot: (path: string) => void;
-  startAgent: (goal: string, planJson?: string) => Promise<void>;
+  startAgent: (goal: string, planJson?: string, attachments?: import('../lib/types').ChatAttachment[]) => Promise<void>;
   approveStep: (stepId: string, decision: 'approve' | 'reject', remember: boolean) => Promise<void>;
   cancelAgent: () => Promise<void>;
   resetAgent: () => void;
@@ -144,8 +144,8 @@ const storedArchivedIds: string[] = (() => {
 const storedStepBudget = Number(localStorage.getItem('eminentai.stepBudget') ?? 15);
 const storedConnectors: string[] = (() => {
   try {
-    return JSON.parse(localStorage.getItem('eminentai.agentConnectors') ?? '["filesystem","shell","web"]');
-  } catch { return ['filesystem', 'shell', 'web']; }
+    return JSON.parse(localStorage.getItem('eminentai.agentConnectors') ?? '["filesystem","shell","web","image"]');
+  } catch { return ['filesystem', 'shell', 'web', 'image']; }
 })();
 
 export const useStore = create<AppState>((set, get) => ({
@@ -372,10 +372,6 @@ export const useStore = create<AppState>((set, get) => ({
       void get().loadConversations();
     }
 
-    const imageAttachments = attachments.filter(a =>
-      a.contentType?.startsWith('image/') ?? false
-    );
-
     const userMsg: ChatMsg = { id: `u_${Date.now()}`, role: 'user', content, attachments };
     const assistantMsg: ChatMsg = {
       id: `a_${Date.now()}`,
@@ -391,7 +387,7 @@ export const useStore = create<AppState>((set, get) => ({
         activeBranchId,
         content,
         attachments,
-        imageAttachments.length > 0 ? 'vision' : undefined,
+        undefined,
         (event, data) => {
           set((s) => ({
             messages: s.messages.map((m) => {
@@ -605,15 +601,19 @@ export const useStore = create<AppState>((set, get) => ({
 
   resetAgent: () => set({ agent: { ...initialAgent } }),
 
-  startAgent: async (goal, planJson) => {
+  startAgent: async (goal, planJson, attachments) => {
     agentAbort?.abort();
     agentAbort = new AbortController();
     const { agentStepBudget, agentConnectors, agentWorkspaceRoot, models, selectedModel } = get();
-    const agentModel = models.some((model) => model.name === 'gemma4:e4b')
-      ? 'gemma4:e4b'
-      : models.some((model) => model.name === 'qwen3.5:9b')
-        ? 'qwen3.5:9b'
-        : selectedModel;
+    const hasImageAttachment = (attachments ?? []).some(a => a.contentType?.startsWith('image/') ?? false);
+    // Prefer the vision-capable route model when an image is attached so the agent can actually see it.
+    const agentModel = hasImageAttachment && models.some((model) => model.name === 'qwen3.5:9b')
+      ? 'qwen3.5:9b'
+      : models.some((model) => model.name === 'gemma4:e4b')
+        ? 'gemma4:e4b'
+        : models.some((model) => model.name === 'qwen3.5:9b')
+          ? 'qwen3.5:9b'
+          : selectedModel;
     set({ agent: { ...initialAgent, goal, status: 'running', stepBudget: agentStepBudget } });
 
     const push = (item: Omit<import('../lib/types').AgentTimelineItem, 'id'>) =>
@@ -627,6 +627,7 @@ export const useStore = create<AppState>((set, get) => ({
         planJson,
         agentStepBudget,
         agentWorkspaceRoot,
+        attachments,
         agentAbort.signal,
       )) {
         const d = ev.data;

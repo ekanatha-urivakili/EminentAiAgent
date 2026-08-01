@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using EminentAi.Application.Abstractions;
+using EminentAi.Application.Agents.ImageGeneration;
 
 namespace EminentAi.Infrastructure.Tools;
 
@@ -45,10 +46,12 @@ public sealed partial class BuiltinToolRunner : IBuiltinToolRunner
     public bool Handles(string connectorName) =>
         connectorName.Equals("filesystem", StringComparison.OrdinalIgnoreCase) ||
         connectorName.Equals("shell", StringComparison.OrdinalIgnoreCase) ||
-        connectorName.Equals("web", StringComparison.OrdinalIgnoreCase);
+        connectorName.Equals("web", StringComparison.OrdinalIgnoreCase) ||
+        connectorName.Equals("image", StringComparison.OrdinalIgnoreCase);
 
     public bool IsMutating(string connectorName, string toolName) =>
         connectorName.Equals("shell", StringComparison.OrdinalIgnoreCase) || // shell ALWAYS asks
+        connectorName.Equals("image", StringComparison.OrdinalIgnoreCase) || // writes a file
         toolName is "write_file" or "replace_in_file" or "delete_path" or
             "move_path" or "create_directory" or "create_zip";
 
@@ -70,6 +73,18 @@ public sealed partial class BuiltinToolRunner : IBuiltinToolRunner
                     ("query", "string", "Search query")),
                 Tool("web.fetch", "Fetch readable content from one public HTTP or HTTPS URL.",
                     ("url", "string", "Public page URL from search results"))
+            };
+        }
+        if (connectorName.Equals("image", StringComparison.OrdinalIgnoreCase))
+        {
+            return new[]
+            {
+                Tool("image.generate",
+                    "Generate an image from a text prompt with a local diffusion model and save it into " +
+                    "the workspace. Takes 30-180 seconds. If the user attached a reference image, describe " +
+                    "what it shows in the prompt (subject, style, colours, composition).",
+                    ("prompt", "string", "Detailed visual description: subject, style, colours, composition"),
+                    ("filename", "string", "Workspace-relative output path, e.g. 'generated/logo.png'"))
             };
         }
 
@@ -119,6 +134,8 @@ public sealed partial class BuiltinToolRunner : IBuiltinToolRunner
             "shell" when toolName == "run" => await RunShellAsync(GetArg(obj, "command"), root, ct),
             "web" when toolName == "search" => await SearchWebAsync(GetArg(obj, "query"), ct),
             "web" when toolName == "fetch" => await FetchWebAsync(GetArg(obj, "url"), ct),
+            "image" when toolName == "generate" =>
+                await GenerateImageAsync(GetArg(obj, "prompt"), GetArg(obj, "filename"), root, ct),
             "filesystem" => toolName switch
             {
                 "read_file" => ReadFile(GetArg(obj, "path"), root),
@@ -144,6 +161,9 @@ public sealed partial class BuiltinToolRunner : IBuiltinToolRunner
     private string ResolveSafe(string relativePath, string root)
     {
         if (string.IsNullOrWhiteSpace(relativePath)) relativePath = ".";
+        // Models often prefix paths with a leading slash meaning "workspace root"
+        // (e.g. "/generated/logo.png"); treat that as relative rather than rejecting it.
+        relativePath = relativePath.TrimStart('/', '\\');
         if (Path.IsPathFullyQualified(relativePath))
             throw new UnauthorizedAccessException("Use a workspace-relative path.");
         var combined = Path.GetFullPath(Path.Combine(root, relativePath));
@@ -325,6 +345,35 @@ public sealed partial class BuiltinToolRunner : IBuiltinToolRunner
         }
         else throw new FileNotFoundException($"Path not found: {source}");
         return new JsonObject { ["source"] = source, ["output"] = output, ["bytes"] = new FileInfo(outputFull).Length };
+    }
+
+    // ---- image ----
+
+    private async Task<JsonNode> GenerateImageAsync(string prompt, string filename, string root, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(prompt)) throw new ArgumentException("prompt is required");
+
+        var sw = Stopwatch.StartNew();
+        var (base64Png, modelUsed) = await FluxImageGenerator.GenerateWithFallbackAsync(
+            FluxImageGenerator.PrimaryModel, FluxImageGenerator.FallbackModel, prompt, ct);
+        sw.Stop();
+
+        var bytes = Convert.FromBase64String(base64Png);
+        var ext = FluxImageGenerator.DetectImageFormat(bytes)
+            ?? throw new InvalidOperationException("Model produced an unrecognised image format.");
+
+        var relativePath = Path.ChangeExtension(filename, ext);
+        var full = ResolveSafe(relativePath, root);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        await File.WriteAllBytesAsync(full, bytes, ct);
+
+        return new JsonObject
+        {
+            ["path"] = relativePath,
+            ["model"] = modelUsed,
+            ["bytesWritten"] = bytes.Length,
+            ["generationMs"] = sw.ElapsedMilliseconds
+        };
     }
 
     // ---- shell ----
