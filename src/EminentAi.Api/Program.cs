@@ -148,7 +148,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 // CORS: explicit allowlist for the Vite dev server — never AllowAnyOrigin.
 var allowedOrigins = builder.Configuration.GetSection("EminentAi:AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173", "https://*.railway.app" };
+    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173" };
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     policy.WithOrigins(allowedOrigins)
           .SetIsOriginAllowedToAllowWildcardSubdomains()
