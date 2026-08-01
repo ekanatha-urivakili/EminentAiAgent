@@ -12,7 +12,7 @@ namespace EminentAi.Application.Agents.ImageGeneration;
 /// <summary>
 /// Agent-to-agent image generation pipeline:
 ///
-///   Agent 1 — gemma4:12b-8k (prompt engineer)
+///   Agent 1 — gemma4:e4b (prompt engineer), qwen3.5:9b fallback
 ///     Analyses the user's free-text request, understands intent (multiple
 ///     variants, themes, formats, brand names) and expands it into one or
 ///     more optimised image prompts while the model is still warm in VRAM.
@@ -22,7 +22,7 @@ namespace EminentAi.Application.Agents.ImageGeneration;
 ///     Receives each polished prompt and produces a PNG.
 ///
 /// Full pipeline sequence:
-///   1. gemma4:12b-8k    → analyse request, expand to N prompts  [VRAM: other models still loaded]
+///   1. gemma4:e4b       → analyse request, expand to N prompts  [VRAM: other models still loaded]
 ///   2. Snapshot loaded models
 ///   3. Kill ALL loaded models to free VRAM for image gen
 ///   4. x/flux2-klein:4b → generate image for each prompt (falls back to x/z-image-turbo on failure)
@@ -38,7 +38,8 @@ public sealed class ImageGenerationAgent(
 {
     private const string PrimaryModel  = "x/flux2-klein:4b";
     private const string FallbackModel = "x/z-image-turbo";
-    private const string AnalystModel  = "gemma4:12b-8k";
+    private const string PrimaryAnalystModel  = "gemma4:e4b";
+    private const string FallbackAnalystModel = "qwen3.5:9b";
 
     // Matches text wrapped in double-quotes, e.g. "A cute baby", "Bold text"
     private static readonly Regex QuotedPromptRegex =
@@ -88,7 +89,7 @@ public sealed class ImageGenerationAgent(
         yield return new SmartChatEvent("image_gen_progress", new
         {
             stage        = "analyzing_request",
-            analystModel = AnalystModel
+            analystModel = PrimaryAnalystModel
         });
 
         var analysis = await AnalyzeAndExpandPromptsAsync(context.UserText, ct);
@@ -97,6 +98,7 @@ public sealed class ImageGenerationAgent(
         {
             stage         = "analysis_done",
             understanding = analysis.Understanding,
+            analystModel   = analysis.AnalystModel,
             total         = analysis.Prompts.Count,
             prompts       = analysis.Prompts.Select(p => new { p.Description, p.FluxPrompt })
         });
@@ -276,7 +278,7 @@ public sealed class ImageGenerationAgent(
         await conversationRepo.SaveChangesAsync(ct);
 
         // Build assistant message: understanding summary + all images
-        var header     = $"> **{AnalystModel} understood:** {analysis.Understanding}\n\n";
+        var header     = $"> **{analysis.AnalystModel} understood:** {analysis.Understanding}\n\n";
         var imageLines = generatedResults.Select((r, idx) =>
             $"**{r.Description}**\n\n![{r.Description}]({r.Url})\n\n" +
             $"*Prompt: {r.FluxPrompt}*");
@@ -313,7 +315,7 @@ public sealed class ImageGenerationAgent(
             : userText;
 
         var request = new ChatRequest(
-            AnalystModel,
+            PrimaryAnalystModel,
             new List<ChatMessage>
             {
                 new("system", AnalystSystemPrompt),
@@ -323,9 +325,24 @@ public sealed class ImageGenerationAgent(
             ContextWindow: 4096,
             ForceJson:     true);
 
+        var analystModel = PrimaryAnalystModel;
         string rawJson;
-        try   { rawJson = await ollama.ChatOnceAsync(request, ct); }
-        catch { return FallbackResult(quotedPrompts, userText); }
+        try
+        {
+            rawJson = await ollama.ChatOnceAsync(request, ct);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            analystModel = FallbackAnalystModel;
+            try
+            {
+                rawJson = await ollama.ChatOnceAsync(request with { Model = analystModel }, ct);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                return FallbackResult(quotedPrompts, userText);
+            }
+        }
 
         // Strip reasoning blocks before JSON parsing
         rawJson = ThinkBlockRegex.Replace(rawJson, "").Trim();
@@ -353,7 +370,7 @@ public sealed class ImageGenerationAgent(
             }
 
             if (expandedPrompts.Count > 0)
-                return new AnalysisResult(understanding, expandedPrompts);
+                return new AnalysisResult(understanding, expandedPrompts, analystModel);
         }
         catch { /* fall through to fallback */ }
 
@@ -366,7 +383,7 @@ public sealed class ImageGenerationAgent(
             ? quoted.Select(p => new ExpandedPrompt("Image", p)).ToList()
             : new List<ExpandedPrompt> { new("Image", userText.Trim()) };
 
-        return new AnalysisResult("(qwen3 unavailable — using raw prompts)", prompts);
+        return new AnalysisResult("(analyst models unavailable — using raw prompts)", prompts, "raw prompt fallback");
     }
 
     // ── Agent 2: Flux CLI generation ─────────────────────────────────────────
@@ -571,7 +588,8 @@ public sealed class ImageGenerationAgent(
 
     private sealed record AnalysisResult(
         string Understanding,
-        List<ExpandedPrompt> Prompts);
+        List<ExpandedPrompt> Prompts,
+        string AnalystModel);
 
     private sealed record GeneratedImageEntry(
         Guid   ImageId,

@@ -55,7 +55,7 @@ export function ModelSelector({ compact = false }: { compact?: boolean }) {
           >
             {chatModels.length === 0 && (
               <div className="px-4 py-3 text-sm text-muted-foreground">
-                No models found. Run <code className="font-mono text-xs">ollama pull qwen2.5-coder:7b</code>
+                No models found. Run <code className="font-mono text-xs">ollama pull gemma4:e4b</code>
               </div>
             )}
             {tiers.map((tier) => {

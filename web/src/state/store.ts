@@ -184,7 +184,10 @@ export const useStore = create<AppState>((set, get) => ({
         models,
         selectedModel: current && models.some((m) => m.name === current)
           ? current
-          : (chatModels.find((m) => m.name === 'gemma4:12b-8k')?.name ?? chatModels[0]?.name ?? ''),
+          : (chatModels.find((m) => m.name === 'gemma4:e4b')?.name
+            ?? chatModels.find((m) => m.name === 'qwen3.5:9b')?.name
+            ?? chatModels[0]?.name
+            ?? ''),
       });
     } catch { /* surfaced via health pill */ }
   },
@@ -433,8 +436,7 @@ export const useStore = create<AppState>((set, get) => ({
                   ...(stage === 'generating' && data.prompt
                     ? { imageGenCurrentPrompt: data.prompt as string }
                     : {}),
-                  // qwen3 analysis result
-                  ...(stage === 'analyzing_request' && data.analystModel
+                  ...(data.analystModel
                     ? { imageGenAnalystModel: data.analystModel as string }
                     : {}),
                   ...(stage === 'analysis_done' && data.understanding
@@ -607,7 +609,11 @@ export const useStore = create<AppState>((set, get) => ({
     agentAbort?.abort();
     agentAbort = new AbortController();
     const { agentStepBudget, agentConnectors, agentWorkspaceRoot, models, selectedModel } = get();
-    const agentModel = models.some((model) => model.name === 'gemma4:12b-8k') ? 'gemma4:12b-8k' : selectedModel;
+    const agentModel = models.some((model) => model.name === 'gemma4:e4b')
+      ? 'gemma4:e4b'
+      : models.some((model) => model.name === 'qwen3.5:9b')
+        ? 'qwen3.5:9b'
+        : selectedModel;
     set({ agent: { ...initialAgent, goal, status: 'running', stepBudget: agentStepBudget } });
 
     const push = (item: Omit<import('../lib/types').AgentTimelineItem, 'id'>) =>

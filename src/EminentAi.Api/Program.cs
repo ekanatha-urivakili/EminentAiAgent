@@ -993,7 +993,7 @@ app.MapPost("/api/agent/runs",
     var opts = new AgentRunOptions(
         request.Goal,
         request.Connectors is { Length: > 0 } ? request.Connectors : new[] { "filesystem", "shell" },
-        string.IsNullOrWhiteSpace(request.Model) ? "qwen2.5-coder:7b" : request.Model,
+        string.IsNullOrWhiteSpace(request.Model) ? "gemma4:e4b" : request.Model,
         request.PlanJson,
         request.StepBudget ?? 15,
         WorkspaceRoot: request.WorkspaceRoot);
@@ -1665,7 +1665,7 @@ public record SendMessageRequest(string Content, string? ModelOverride, List<Sen
 public record SendAttachmentRequest(string Name, string ContentType, string DataBase64);
 public record RegenerateRequest(string? Model, float? Temperature);
 public record ForkRequest(Guid MessageId);
-public record PlanRequest(string Goal, string Model = "qwen2.5-coder:7b");
+public record PlanRequest(string Goal, string Model = "gemma4:e4b");
 public record StartAgentRunRequest(
     string Goal,
     string[]? Connectors,

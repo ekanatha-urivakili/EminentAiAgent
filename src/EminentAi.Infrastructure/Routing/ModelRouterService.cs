@@ -18,11 +18,11 @@ public sealed class ModelRouterService(
     private static readonly IReadOnlyDictionary<AgentKind, string[]> NamePriorities =
         new Dictionary<AgentKind, string[]>
         {
-            [AgentKind.Vision]          = ["qwen2.5vl", "vl", "vision", "llava", "moondream"],
-            [AgentKind.Coding]          = ["gemma4:12b-8k", "qwen3:8b", "qwen2.5-coder", "coder", "deepseek-coder"],
-            [AgentKind.Architecture]    = ["gemma4:12b-8k", "qwen3:8b", "qwen3", "gemma4", "qwen2.5:latest", "qwen2.5"],
-            [AgentKind.ImageGeneration] = ["flux2-klein", "flux", "diffusion"],
-            [AgentKind.General]         = ["gemma4:12b-8k", "qwen3:8b", "qwen3", "qwen2.5:latest", "qwen2.5", "llama3"],
+            [AgentKind.Vision]          = ["qwen3.5:9b", "qwen3.5", "qwen2.5vl", "vl", "vision", "llava", "moondream"],
+            [AgentKind.Coding]          = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "qwen2.5-coder", "coder", "deepseek-coder"],
+            [AgentKind.Architecture]    = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "gemma4", "qwen2.5:latest", "qwen2.5"],
+            [AgentKind.ImageGeneration] = ["x/flux2-klein:4b", "flux2-klein", "flux", "diffusion"],
+            [AgentKind.General]         = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "qwen2.5:latest", "qwen2.5", "llama3"],
         };
 
     public async Task<ModelRoute?> ResolveAsync(

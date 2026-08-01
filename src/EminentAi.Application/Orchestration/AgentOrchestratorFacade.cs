@@ -129,7 +129,7 @@ public sealed class AgentOrchestratorFacade(
 
     private static string? RecommendedPullCommand(AgentKind intent) => intent switch
     {
-        AgentKind.Vision         => "ollama pull qwen2.5vl:latest",
+        AgentKind.Vision         => "ollama pull qwen3.5:9b",
         AgentKind.ImageGeneration => "ollama pull x/flux2-klein:4b",
         _                        => null
     };

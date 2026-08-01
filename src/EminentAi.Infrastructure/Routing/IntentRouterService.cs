@@ -9,14 +9,15 @@ namespace EminentAi.Infrastructure.Routing;
 
 /// <summary>
 /// Classifies user intent without any model or provider knowledge.
-/// Uses fast regex paths for obvious cases, falls back to gemma4:12b-8k for higher-accuracy classification.
+/// Uses fast regex paths for obvious cases, then gemma4:e4b with qwen3.5:9b as fallback.
 /// All unknown labels default to General — never throws on parse failure.
 /// </summary>
 public sealed class IntentRouterService(
     IOllamaClient ollama,
     ILogger<IntentRouterService> logger) : IIntentRouter
 {
-    private const string ClassifierModel = "gemma4:12b-8k";
+    private const string PrimaryClassifierModel = "gemma4:e4b";
+    private const string FallbackClassifierModel = "qwen3.5:9b";
 
     // Fast-path: image attached + "read / extract / what / describe / tell me about / text in"
     private static readonly Regex VisionKeywords =
@@ -70,7 +71,8 @@ public sealed class IntentRouterService(
 
         // --- LLM classification ---
         var prompt = $"{ClassifyPrompt}\n\nHasImageAttachment: {request.HasImageAttachment.ToString().ToLower()}\nUserMessage: {request.UserText}";
-        var chatRequest = new ChatRequest(ClassifierModel,
+        var classifierModel = PrimaryClassifierModel;
+        var chatRequest = new ChatRequest(classifierModel,
             new List<ChatMessage> { new("user", prompt) },
             Temperature: 0.0f,
             ContextWindow: 512);
@@ -80,10 +82,21 @@ public sealed class IntentRouterService(
         {
             rawLabel = await ollama.ChatOnceAsync(chatRequest, ct);
         }
-        catch (Exception ex)
+        catch (Exception primaryEx) when (!ct.IsCancellationRequested)
         {
-            logger.LogWarning(ex, "Classifier LLM call failed, defaulting to General");
-            rawLabel = "GENERAL";
+            logger.LogWarning(primaryEx,
+                "Primary classifier {Model} failed; trying {FallbackModel}",
+                PrimaryClassifierModel, FallbackClassifierModel);
+            classifierModel = FallbackClassifierModel;
+            try
+            {
+                rawLabel = await ollama.ChatOnceAsync(chatRequest with { Model = classifierModel }, ct);
+            }
+            catch (Exception fallbackEx) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(fallbackEx, "Fallback classifier LLM call failed, defaulting to General");
+                rawLabel = "GENERAL";
+            }
         }
 
         sw.Stop();
@@ -95,7 +108,7 @@ public sealed class IntentRouterService(
         return new IntentDecision(
             Intent: intent,
             Profile: agentProfile,
-            ClassifierModel: ClassifierModel,
+            ClassifierModel: classifierModel,
             ClassificationMs: sw.ElapsedMilliseconds,
             Telemetry: new ClassificationRecord(
                 RawLabel: rawLabel,

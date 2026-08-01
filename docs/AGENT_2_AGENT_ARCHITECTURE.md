@@ -1,12 +1,20 @@
 # Agent-to-Agent Orchestration Architecture
 
 > **EminentAi — Multi-Agent Routing System**
-> Version 3.1 — revised after async/security performance review. Current implementation keeps facade-level intent/model routing sequential, while MCP discovery and model-provider checks are parallelized internally.
+> Version 3.4 — local model order: Gemma 4 default, Qwen 3.5 fallback, Flux for image generation. Current implementation keeps facade-level intent/model routing sequential, while MCP discovery and model-provider checks are parallelized internally.
 > Provider-agnostic: Ollama local models today, Claude / ChatGPT / Copilot extensible by design.
 
 ---
 
 ## Revision Notes
+
+### v3.3 → v3.4 (Local Model Priority)
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Routing referenced local models that are no longer installed | High | Text routes now prefer `gemma4:e4b`, then `qwen3.5:9b` |
+| Classifier and image analyst had no local-model fallback | Medium | Both use `gemma4:e4b` first and retry with `qwen3.5:9b` |
+| Image routing must not leak into text selection | High | `x/flux2-klein:4b` remains capability-gated to `ImageGeneration` |
 
 ### v3.2 → v3.3 (Workspace Tools, Web Research, and IDE Agent)
 
@@ -140,15 +148,9 @@ POST /api/chat/smart
 ```
 NAME                       SIZE     TIER           ROLE
 ────────────────────────────────────────────────────────────────────────
-qwen3:8b                   5.2 GB   balanced       Intent classifier + tool orchestrator + architecture
-qwen2.5-coder:1.5b         986 MB   fast           Code Agent + VS Code FIM completions
-qwen2.5:latest             4.7 GB   balanced       General Agent / Architecture fallback
-qwen3:latest               5.2 GB   balanced       Alias retained for image prompt engineering
-gemma4:e4b                 9.6 GB   balanced       Architecture Agent — fallback
-qwen2.5vl:latest           6.0 GB   vision         Vision Agent — only multimodal model
+gemma4:e4b                 9.6 GB   balanced       Default text model + classifier + image prompt analyst
+qwen3.5:9b                 6.6 GB   balanced       Text, classifier, and image prompt analyst fallback
 x/flux2-klein:4b           5.7 GB   image_gen      Image generation — Flux2 diffusion
-x/z-image-turbo            12 GB    image_gen      Image generation — high quality
-nomic-embed-text:latest    274 MB   embedding      Reserved: RAG / semantic search
 ```
 
 **VRAM management:** `ImageGenerationAgent` takes an active approach — it snapshots all currently loaded models via `/api/ps`, unloads each with `keep_alive=0`, runs the Flux model, then fire-and-forgets `WarmUpModelAsync` for each previously loaded model. This prevents OOM on 16 GB systems when Flux needs the full VRAM budget. Progress is streamed via `image_gen_progress` SSE events so the UI is never silent during the 30–180 s generation window.
@@ -640,7 +642,7 @@ classDiagram
 | `HasImageAttachment && text matches \b(read\|extract\|what\|describe\|tell me about\|text in)\b` | `Vision` | `fastPath:vision` |
 | `text matches ^(generate\|draw\|create a (logo\|image\|picture\|banner)\|design an? image\|make an? logo)` | `ImageGeneration` | `fastPath:imageGen` |
 
-**Classification prompt** (sent to `qwen3:8b`, temperature 0.0, max 10 tokens):
+**Classification prompt** (sent to `gemma4:e4b`, then retried with `qwen3.5:9b` on failure; temperature 0.0, max 10 tokens):
 
 ```
 You are a one-word classifier. Reply with EXACTLY ONE label — no punctuation, no explanation.
@@ -741,11 +743,11 @@ private IReadOnlyList<ModelDescriptor> FilterByCapabilities(
 private static readonly IReadOnlyDictionary<AgentKind, string[]> NamePriorities =
     new Dictionary<AgentKind, string[]>
     {
-        [AgentKind.Vision]          = ["qwen2.5vl", "vl", "vision", "llava", "moondream"],
-        [AgentKind.Coding]          = ["qwen2.5-coder:1.5b", "qwen2.5-coder", "coder", "deepseek-coder"],
-        [AgentKind.Architecture]    = ["qwen3:latest", "qwen3", "gemma4", "qwen2.5:latest", "qwen2.5"],
-        [AgentKind.ImageGeneration] = ["flux2-klein", "flux", "diffusion"],
-        [AgentKind.General]         = ["qwen2.5:latest", "qwen2.5", "qwen3.5", "llama3"],
+        [AgentKind.Vision]          = ["qwen3.5:9b", "qwen3.5", "qwen2.5vl", "vl", "vision", "llava", "moondream"],
+        [AgentKind.Coding]          = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "qwen2.5-coder", "coder"],
+        [AgentKind.Architecture]    = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "gemma4", "qwen2.5"],
+        [AgentKind.ImageGeneration] = ["x/flux2-klein:4b", "flux2-klein", "flux", "diffusion"],
+        [AgentKind.General]         = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "qwen2.5", "llama3"],
     };
 ```
 
@@ -860,7 +862,8 @@ classDiagram
         -IPiiRedactor _redactor
         -string _outputDirectory
         -const string FluxModel = "x/flux2-klein:4b"
-        -const string AnalystModel = "qwen3:latest"
+        -const string PrimaryAnalystModel = "gemma4:e4b"
+        -const string FallbackAnalystModel = "qwen3.5:9b"
         +Kind: AgentKind = ImageGeneration
         +ExecuteAsync(SmartChatContext, ModelRoute, CancellationToken) IAsyncEnumerable~SmartChatEvent~
         -AnalyzeAndExpandPromptsAsync(userText, ct) Task~AnalysisResult~
@@ -878,7 +881,7 @@ classDiagram
 
 ```mermaid
 flowchart LR
-    A["User prompt"] --> B["Agent 1: qwen3:latest\nAnalyse + expand to N Flux prompts\nJSON: understanding + prompts[]"]
+    A["User prompt"] --> B["Agent 1: gemma4:e4b\nFallback: qwen3.5:9b\nAnalyse + expand to N Flux prompts"]
     B --> C["Snapshot loaded models\nvia /api/ps"]
     C --> D["Unload all models\nkeep_alive=0 · 500ms settle"]
     D --> E["For each expanded prompt:\nollama run flux2-klein prompt\n15-min timeout"]
@@ -889,7 +892,7 @@ flowchart LR
     I --> J["WarmUp previously\nloaded models\nfire-and-forget"]
 ```
 
-**Analyst system prompt** (sent to `qwen3:latest`, temp 0.2, force JSON):
+**Analyst system prompt** (sent to `gemma4:e4b`, then `qwen3.5:9b` on failure; temp 0.2, force JSON):
 
 The analyst is instructed to return:
 ```json
@@ -919,7 +922,7 @@ Task WarmUpModelAsync(string modelName, CancellationToken ct);               // 
 
 | Stage | Meaning |
 |---|---|
-| `analyzing_request` | qwen3:latest is processing the request |
+| `analyzing_request` | `gemma4:e4b` is processing the request |
 | `analysis_done` | Expansion complete; `understanding` and `total` counts emitted |
 | `freeing_vram` | Unloading models; `killingModels[]` list emitted |
 | `generating` | Flux is running for prompt N of M; `prompt`, `description` emitted |
@@ -968,16 +971,16 @@ sequenceDiagram
     MR->>OProv: ListModelsAsync() [cached]
     OProv-->>MR: [ModelDescriptor list]
     MR->>MR: FilterByPolicy → all pass (IsLocal, cost=0)
-    MR->>MR: FilterByCapabilities({Vision}) → qwen2.5vl passes
-    MR->>MR: FindByNamePriority("qwen2.5vl") → qwen2.5vl:latest
-    MR-->>AOF: ModelRoute{qwen2.5vl:latest, "ollama", exactMatch:true}
+    MR->>MR: FilterByCapabilities({Vision}) → qwen3.5:9b passes
+    MR->>MR: FindByNamePriority("qwen3.5:9b") → qwen3.5:9b
+    MR-->>AOF: ModelRoute{qwen3.5:9b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"vision", model:"qwen2.5vl:latest", provider:"ollama", wasFastPath:true}
+    API-->>Web: SSE: routing_decision {intent:"vision", model:"qwen3.5:9b", provider:"ollama", wasFastPath:true}
 
     AOF->>VA: ExecuteAsync(context, route, ct)
-    VA->>CS: SendMessageAsync(branchId, text, "qwen2.5vl:latest", attachments, AgentProfile.Vision)
-    CS->>OC: ChatStreamAsync(qwen2.5vl, [system:vision, history, user+images])
+    VA->>CS: SendMessageAsync(branchId, text, "qwen3.5:9b", attachments, AgentProfile.Vision)
+    CS->>OC: ChatStreamAsync(qwen3.5:9b, [system:vision, history, user+images])
     loop streaming tokens
         OC-->>CS: ChatDelta{token}
         CS-->>VA: ChatDelta{token}
@@ -1006,11 +1009,11 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3:8b)
+    participant OC_C as OllamaClient (gemma4:e4b)
     participant MR as ModelRouterService
     participant CA as CodeAgent
     participant CS as ChatService
-    participant OC_M as OllamaClient (qwen2.5-coder:1.5b)
+    participant OC_M as OllamaClient (gemma4:e4b)
     participant DB as SQLite
 
     User->>Web: "Show me a real-world Saga pattern in C# with compensating transactions"
@@ -1019,20 +1022,20 @@ sequenceDiagram
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
     IR->>IR: No fast-path match
-    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt, temp:0.0)
+    IR->>OC_C: ChatOnceAsync(gemma4:e4b, classifyPrompt, temp:0.0)
     OC_C-->>IR: "CODING"
     IR->>IR: ParseIntentLabel("CODING") → Coding
     IR-->>AOF: IntentDecision{Coding, AgentProfile.Coding, rawLabel:"CODING", ms:430}
 
     AOF->>MR: ResolveAsync(AgentProfile.Coding, costPolicy, residencyPolicy)
-    MR-->>AOF: ModelRoute{qwen2.5-coder:1.5b, "ollama", exactMatch:true}
+    MR-->>AOF: ModelRoute{gemma4:e4b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"coding", model:"qwen2.5-coder:1.5b", provider:"ollama"}
+    API-->>Web: SSE: routing_decision {intent:"coding", model:"gemma4:e4b", provider:"ollama"}
 
     AOF->>CA: ExecuteAsync(context, route, ct)
-    CA->>CS: SendMessageAsync(branchId, text, "qwen2.5-coder:1.5b", [], AgentProfile.Coding)
-    CS->>OC_M: ChatStreamAsync(qwen2.5-coder, [system:coding, history, user])
+    CA->>CS: SendMessageAsync(branchId, text, "gemma4:e4b", [], AgentProfile.Coding)
+    CS->>OC_M: ChatStreamAsync(gemma4:e4b, [system:coding, history, user])
     loop streaming
         OC_M-->>CA: ChatDelta{token}
         CA-->>AOF: SmartChatEvent{token}
@@ -1057,11 +1060,11 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3:8b)
+    participant OC_C as OllamaClient (gemma4:e4b)
     participant MR as ModelRouterService
     participant AA as ArchitectureAgent
     participant CS as ChatService
-    participant OC_M as OllamaClient (qwen3:latest)
+    participant OC_M as OllamaClient (gemma4:e4b)
     participant DB as SQLite
 
     User->>Web: "Design a microservices e-commerce platform with React, .NET 10, Redis, PostgreSQL"
@@ -1069,19 +1072,19 @@ sequenceDiagram
 
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
-    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt)
+    IR->>OC_C: ChatOnceAsync(gemma4:e4b, classifyPrompt)
     OC_C-->>IR: "ARCHITECTURE"
     IR-->>AOF: IntentDecision{Architecture, AgentProfile.Architecture, ms:450}
 
     AOF->>MR: ResolveAsync(AgentProfile.Architecture, ...)
-    MR-->>AOF: ModelRoute{qwen3:latest, "ollama", exactMatch:true}
+    MR-->>AOF: ModelRoute{gemma4:e4b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"architecture", model:"qwen3:latest", provider:"ollama"}
+    API-->>Web: SSE: routing_decision {intent:"architecture", model:"gemma4:e4b", provider:"ollama"}
 
     AOF->>AA: ExecuteAsync(context, route, ct)
-    AA->>CS: SendMessageAsync(branchId, text, "qwen3:latest", [], AgentProfile.Architecture)
-    CS->>OC_M: ChatStreamAsync(qwen3:latest, [system:arch, history, user])
+    AA->>CS: SendMessageAsync(branchId, text, "gemma4:e4b", [], AgentProfile.Architecture)
+    CS->>OC_M: ChatStreamAsync(gemma4:e4b, [system:arch, history, user])
     loop streaming HLD + LLD + sequence + flowchart
         OC_M-->>AA: ChatDelta{token}
         AA-->>AOF: SmartChatEvent{token}
@@ -1110,7 +1113,7 @@ sequenceDiagram
     participant IR as IntentRouterService
     participant MR as ModelRouterService
     participant IGA as ImageGenerationAgent
-    participant OC_T as OllamaClient (qwen3:latest — prompt analyst)
+    participant OC_T as OllamaClient (gemma4:e4b — prompt analyst)
     participant OC_F as OllamaClient (flux2-klein — generator)
     participant FS as Local Filesystem
     participant DB as SQLite
@@ -1135,7 +1138,7 @@ sequenceDiagram
     IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"translating"}
     API-->>Web: SSE: image_gen_progress {stage:"translating"}
 
-    IGA->>OC_T: ChatOnceAsync(qwen3:latest, fluxPromptEngineer, userPrompt, temp:0.3)
+    IGA->>OC_T: ChatOnceAsync(gemma4:e4b, fluxPromptEngineer, userPrompt, temp:0.2)
     OC_T-->>IGA: "minimalist logo, AI startup, bold sans-serif, dark bg, neon blue, vector art"
 
     IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"generating", fluxPrompt}
@@ -1177,11 +1180,11 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3:8b)
+    participant OC_C as OllamaClient (gemma4:e4b)
     participant MR as ModelRouterService
     participant GA as GeneralAgent
     participant CS as ChatService
-    participant OC_M as OllamaClient (qwen2.5:latest)
+    participant OC_M as OllamaClient (gemma4:e4b)
     participant DB as SQLite
 
     User->>Web: "What is the difference between REST and GraphQL?"
@@ -1189,19 +1192,19 @@ sequenceDiagram
 
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
-    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt)
+    IR->>OC_C: ChatOnceAsync(gemma4:e4b, classifyPrompt)
     OC_C-->>IR: "GENERAL"
     IR-->>AOF: IntentDecision{General, AgentProfile.General, ms:390}
 
     AOF->>MR: ResolveAsync(AgentProfile.General, ...)
-    MR-->>AOF: ModelRoute{qwen2.5:latest, "ollama", exactMatch:true}
+    MR-->>AOF: ModelRoute{gemma4:e4b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"general", model:"qwen2.5:latest", provider:"ollama"}
+    API-->>Web: SSE: routing_decision {intent:"general", model:"gemma4:e4b", provider:"ollama"}
 
     AOF->>GA: ExecuteAsync(context, route, ct)
-    GA->>CS: SendMessageAsync(branchId, text, "qwen2.5:latest", [], AgentProfile.General)
-    CS->>OC_M: ChatStreamAsync(qwen2.5:latest, [system, history, user])
+    GA->>CS: SendMessageAsync(branchId, text, "gemma4:e4b", [], AgentProfile.General)
+    CS->>OC_M: ChatStreamAsync(gemma4:e4b, [system, history, user])
     loop tokens
         OC_M-->>GA: ChatDelta{token}
         GA-->>AOF: SmartChatEvent{token}
@@ -1225,7 +1228,7 @@ sequenceDiagram
     participant AOF_V as AOF.ValidateManualOverride
     participant IR as IntentRouterService
     participant FP as FastPathCheck (regex)
-    participant OC as OllamaClient (qwen3:8b)
+    participant OC as OllamaClient (gemma4:e4b)
     participant Log as ILogger
 
     AOF->>AOF_V: ValidateManualOverride(manualRouteOverride, intentRequest)
@@ -1250,7 +1253,7 @@ sequenceDiagram
             FP-->>IR: AgentKind.ImageGeneration
             IR->>Log: Log{fastPath:"imageGen", ms:0}
         else
-            IR->>OC: ChatOnceAsync(qwen3:8b, classifyPrompt, temp:0.0, maxTokens:10)
+            IR->>OC: ChatOnceAsync(gemma4:e4b, classifyPrompt, temp:0.0, maxTokens:10)
             OC-->>IR: raw string e.g. "  CODING\n"
             IR->>IR: ParseIntentLabel → trim/strip → "CODING" → Coding
             IR->>Log: Log{rawLabel:"  CODING\n", parsed:Coding, ms:430}
@@ -1281,16 +1284,15 @@ sequenceDiagram
     OProv-->>MR: {healthy:true}
 
     MR->>OProv: ListModelsAsync()
-    OProv-->>MR: [ModelDescriptor list — qwen3 not installed in this example]
+    OProv-->>MR: [ModelDescriptor list — gemma4:e4b not installed in this example]
 
     MR->>MR: FilterByPolicy — all local models pass LocalOnly check
     MR->>MR: FilterByCapabilities({}) — no required caps, all pass
-    MR->>MR: FindByNamePriority(["qwen3:latest","qwen3","gemma4","qwen2.5:latest","qwen2.5"])
-    MR->>MR: "qwen3:latest" not found → "qwen3" not found → "gemma4" not found
-    MR->>MR: "qwen2.5:latest" found
-    MR->>Log: Log{intent:Architecture, preferred:"qwen3:latest", selected:"qwen2.5:latest", reason:"name fallback 4"}
+    MR->>MR: FindByNamePriority(["gemma4:e4b","qwen3.5:9b","qwen3.5","gemma4","qwen2.5"])
+    MR->>MR: "gemma4:e4b" not found → "qwen3.5:9b" found
+    MR->>Log: Log{intent:Architecture, preferred:"gemma4:e4b", selected:"qwen3.5:9b", reason:"name fallback 2"}
 
-    MR-->>AOF: ModelRoute{qwen2.5:latest, "ollama", isExactMatch:false, reason:"qwen3 not installed — fallback to qwen2.5:latest"}
+    MR-->>AOF: ModelRoute{qwen3.5:9b, "ollama", isExactMatch:false, reason:"gemma4:e4b not installed — fallback to qwen3.5:9b"}
 
     Note over MR,CProv: ClaudeModelProvider is NOT queried because\nDataResidencyPolicy.LocalOnly = true.\nIf LocalOnly were false, Claude would be evaluated\nbefore the Ollama name-priority fallback completes.
 ```
@@ -1317,7 +1319,7 @@ flowchart TD
     HasImg -->|"No"| FastIG{"text matches\nimage gen keywords?"}
 
     FastV -->|"Yes"| KVision["Intent = Vision\nwasFastPath"]
-    FastV -->|"No"| LlmClassify["qwen3:8b classify"]
+    FastV -->|"No"| LlmClassify["gemma4:e4b classify\nqwen3.5:9b fallback"]
 
     FastIG -->|"Yes"| KImgGen["Intent = ImageGeneration\nwasFastPath"]
     FastIG -->|"No"| LlmClassify
@@ -1383,7 +1385,7 @@ Content-Type: application/json
 event: routing_decision
 data: {
   "intent": "vision",
-  "model": "qwen2.5vl:latest",
+  "model": "qwen3.5:9b",
   "provider": "ollama",
   "reason": "fast-path: image attached + text contains 'what'",
   "classificationMs": 1,
@@ -1530,7 +1532,7 @@ src/EminentAi.Infrastructure/
 │   └── OllamaModelProvider.cs         ← implements IModelProvider; IsLocal=true; cost=0
 │
 └── Routing/
-    ├── IntentRouterService.cs          ← fast-path, qwen3:8b, defensive parse, telemetry
+    ├── IntentRouterService.cs          ← fast-path, Gemma/Qwen fallback, defensive parse, telemetry
     └── ModelRouterService.cs           ← multi-provider, FilterByPolicy (uses ModelDescriptor fields)
 ```
 
@@ -1592,12 +1594,12 @@ interface ImageGenProgressProps {
   restoringModels?: string[];
   currentPrompt?: string;
   completedCount?: number;
-  understanding?: string;   // qwen3's one-line understanding
-  analystModel?: string;    // e.g. "qwen3:latest"
+  understanding?: string;   // analyst's one-line understanding
+  analystModel?: string;    // e.g. "gemma4:e4b"
 }
 ```
 
-The panel collapses to a headline + progress bar by default. Expanding reveals the full 5-step pipeline with per-step icons (spinner while active, checkmark when done, dimmed circle when pending), an A2A badge showing `qwen3:latest → flux2-klein:4b`, and model chips for the VRAM unload step.
+The panel collapses to a headline + progress bar by default. Expanding reveals the full 5-step pipeline with per-step icons (spinner while active, checkmark when done, dimmed circle when pending), an A2A badge showing `gemma4:e4b → flux2-klein:4b`, and model chips for the VRAM unload step.
 
 ### Frontend modified files
 
@@ -1629,11 +1631,11 @@ web/src/components/Composer.tsx
 
 ```
 ┌──────────────────────────────────────┐
-│  👁 Vision  •  qwen2.5vl  • ollama  │  purple
-│  </> Code   •  qwen2.5-coder        │  blue
-│  🗺 Arch    •  qwen3:latest         │  green
+│  👁 Vision  •  qwen3.5:9b • ollama  │  purple
+│  </> Code   •  gemma4:e4b           │  blue
+│  🗺 Arch    •  gemma4:e4b           │  green
 │  🎨 Image   •  flux2-klein:4b       │  orange
-│  💬 General •  qwen2.5:latest       │  grey
+│  💬 General •  gemma4:e4b           │  grey
 └──────────────────────────────────────┘
 Provider shown only when non-ollama.
 Appears below user message, above assistant reply. 200ms fade-in.
@@ -1730,11 +1732,11 @@ gantt
 
 | Intent | Preferred | Fallback 1 | Fallback 2 | No model found |
 |---|---|---|---|---|
-| Vision | `qwen2.5vl:latest` | Any `*vl*` name match | Any `ModelCapability.Vision` model | `routing_error` + `ollama pull qwen2.5vl` |
-| Coding | `qwen2.5-coder:1.5b` | Any `*coder*` name | Any `fast` tier | Any `balanced` tier |
-| Architecture | `qwen3:latest` | `gemma4:e4b` | `qwen2.5:latest` | Largest `balanced` tier |
+| Vision | `qwen3.5:9b` | Any `qwen3.5` name match | Any `ModelCapability.Vision` model | `routing_error` |
+| Coding | `gemma4:e4b` | `qwen3.5:9b` | Any `*coder*` name | Any text model |
+| Architecture | `gemma4:e4b` | `qwen3.5:9b` | Any `gemma4` / `qwen3.5` name match | Largest `balanced` tier |
 | ImageGeneration | `x/flux2-klein:4b` | Any `*flux*` name | Any `ModelCapability.ImageGeneration` | `routing_error` + `ollama pull x/flux2-klein:4b` |
-| General | `qwen2.5:latest` | Any `balanced` tier | Any `fast` tier | Any installed model |
+| General | `gemma4:e4b` | `qwen3.5:9b` | Any `balanced` tier | Any installed model |
 
 When `DataResidencyPolicy.LocalOnly = true`, only `IsLocal = true` models reach the priority list. Cloud providers are filtered out before any name match runs.
  
@@ -1817,9 +1819,9 @@ Run against `IntentRouterService` in unit tests. `ClassificationRecord.RawLabel`
 
 ### VRAM keep-alive strategy
 
-`keep_alive: "10m"` in `OllamaClient.BuildPayload` keeps the last chat model warm. `qwen3:8b` is the classifier and primary general/coding route. `flux2-klein` triggers a full model swap — the `image_gen_progress {stage:"generating"}` SSE event fires before the swap begins, so the UI shows a spinner. This is not optional UX; without it, the user has no feedback for 30–120 seconds.
+`keep_alive: "10m"` in `OllamaClient.BuildPayload` keeps the last chat model warm. `gemma4:e4b` is the classifier and primary general/coding route; `qwen3.5:9b` is the fallback. `flux2-klein` triggers a full model swap — the `image_gen_progress {stage:"generating"}` SSE event fires before the swap begins, so the UI shows a spinner. This is not optional UX; without it, the user has no feedback for 30–120 seconds.
 
 ---
 
-*Document version: 3.2 — 2026-06-21*
-*Supersedes v3.1. `ImageGenerationAgent` updated to reflect actual implementation: `qwen3:latest` as analyst, multi-image prompt expansion, VRAM snapshot/unload/restore pipeline via `ollama run` CLI, new SSE stages, `ImageGenProgressPanel` frontend component, and `x/z-image-turbo` model added to the model table.*
+*Document version: 3.4 — 2026-07-26*
+*Supersedes v3.3. `gemma4:e4b` is the default local text model, `qwen3.5:9b` is its fallback, and `x/flux2-klein:4b` remains the image-generation model.*

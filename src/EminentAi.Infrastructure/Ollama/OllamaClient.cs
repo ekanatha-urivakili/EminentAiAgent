@@ -126,7 +126,8 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
     {
         var n = name.ToLowerInvariant();
         if (n.Contains("embed") || n.Contains("nomic") || n.Contains("bge")) return "embedding";
-        if (n.Contains("vl") || n.Contains("vision") || n.Contains("llava") || n.Contains("moondream")) return "vision";
+        if (n.StartsWith("qwen3.5", StringComparison.Ordinal)
+            || n.Contains("vl") || n.Contains("vision") || n.Contains("llava") || n.Contains("moondream")) return "vision";
         if (n.Contains("flux") || n.Contains("diffusion") || n.Contains("stable-diff")) return "image_gen";
         if (n.Contains("r1") || n.Contains("reason") || n.Contains("think") || n.Contains("qwq")) return "reasoning";
 

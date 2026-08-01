@@ -98,7 +98,7 @@
         },
         "eminentai.chatModel": {
           "type": "string",
-          "default": "qwen2.5-coder:7b"
+          "default": "gemma4:e4b"
         },
         "eminentai.fimModel": {
           "type": "string",
