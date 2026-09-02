@@ -6,6 +6,10 @@ EminentAi is a localhost-only AI copilot with streaming chat, Plan mode, Agent m
 
 Full architecture: `docs/AIAGENT_ARCHITECTURE.md`
 
+Original roadmap & architecture concepts: [`eminentai-ollama-copilot-architecture.md`](eminentai-ollama-copilot-architecture.md)
+
+Agent-to-agent (Smart Chat) orchestration — HLD, LLD, sequence diagrams, ERD, and implementation plan: [`docs/AGENT_2_AGENT_ARCHITECTURE.md`](docs/AGENT_2_AGENT_ARCHITECTURE.md)
+
 VS Code extension details: `VS_CODE_EXTENSION.md`
 
 ## Database Recommendation
@@ -44,9 +48,11 @@ src/EminentAi.Infrastructure  OllamaClient, ToolCallingIntentResolver, ModelRout
                               PiiRedactor, BuiltinToolRunner, EF Core SQLite persistence
 src/EminentAi.Api             ASP.NET Core Minimal API + SSE endpoints on 127.0.0.1:5210
 Generated_images/             AI-generated PNGs — gitignored, served via /api/generated-images/
-web/                          React 19 + Vite + Tailwind UI
+web/                          React 19 + Vite + Tailwind UI (installable as a PWA — see manifest.webmanifest/sw.js)
 vscode-extension/             VS Code extension: chat, workspace tools, Git/tool commands,
-                              web search, approvals, persistent EminentAI.md instructions
+                              web search, approvals, inline FIM completions,
+                              persistent EminentAI.md instructions
+desktop/                      Tauri 2 desktop shell around web/ + the API sidecar (scaffold; see desktop/README.md)
 ```
 
 ## Install Ollama
@@ -71,15 +77,17 @@ winget install Ollama.Ollama
 
 Or download the installer directly from [ollama.com/download](https://ollama.com/download) and run it.
 
-## Installed Ollama Models
+## Configured Ollama Model Matrix
+
+These are the default model names in `src/EminentAi.Api/appsettings.json`; they are not a claim about what is currently installed on a particular machine. The router only selects models reported by the local Ollama daemon.
 
 | Model | Size | Tier | Role |
 | --- | --- | --- | --- |
 | `gemma4:e4b` | 9.6 GB | balanced | Default text model, primary classifier, and image prompt analyst |
 | `ornith-1.5:9b` | 5.6 GB | reasoning | Text, coding, architecture, and classifier fallback |
 | `qwen3-vl:latest` | 6.1 GB | vision | Dedicated vision-language model for image analysis & reference descriptions |
-| `qwen3.5:4b` | 2.8 GB | balanced | Fast local fallback model |
-| `x/flux2-klein:4b` | 5.7 GB | image_gen | Capability-gated educational infographic generation (Flux2 diffusion) |
+| `qwen3.5:9b` | — | vision/text fallback | Vision fallback and a name-priority fallback for text routes |
+| `x/flux2-klein:latest` | 5.7 GB | image_gen | Capability-gated educational infographic generation (Flux2 diffusion) |
 | `x/z-image-turbo` | 12 GB | image_gen | Image generation fallback |
 
 Flux models are capability-gated and never selected for text chat. Smart routing uses Gemma and Ornith for reasoning, Qwen for vision, and invokes Flux only for image generation requests.
@@ -91,8 +99,9 @@ ollama serve                          # start the daemon (macOS: brew services s
 ollama pull gemma4:e4b                # default chat, classifier, and local tool agent
 ollama pull qwen3-vl:latest           # dedicated vision model
 ollama pull ornith-1.5:9b             # coding, architecture, and reasoning
-ollama pull qwen3.5:4b                # fast local fallback
-ollama pull x/flux2-klein:4b          # image generation (Flux2)
+ollama pull qwen3.5:9b                # vision and text-route fallback
+ollama pull x/flux2-klein:latest          # image generation (Flux2)
+ollama pull x/z-image-turbo           # image-generation fallback
 npm install --prefix web
 npm install --prefix vscode-extension
 ```
@@ -138,7 +147,7 @@ The backend uses `src/EminentAi.Api/appsettings.json`. Important settings:
 
 - **Chat**: streaming conversation persisted to SQLite. Regenerate creates a sibling message; fork creates a new branch.
 - **Plan**: read-only planning mode that returns validated JSON with repair retries.
-- **Agent**: autonomous execution with `gemma4:e4b` by default and `qwen3.5:4b`/`ornith-1.5:9b` as fallback, plus repository inspection, targeted file replacement, ZIP creation, step/token/time budgets, policy checks, and human approval for mutations.
+- **Agent**: autonomous execution that prefers `gemma4:e4b`, uses `qwen3.5:9b` for image attachments when available, and otherwise falls back to the selected model; it includes repository inspection, targeted file replacement, ZIP creation, step/token/time budgets, policy checks, and human approval for mutations.
 - **Smart Chat** (`POST /api/chat/smart`): agent-to-agent routing with GPU work lease concurrency serialization. Intent is resolved through UI mode affordances (Code, Architecture, Infographic, Vision image attachment) or via tool-calling on the resident model (`gemma4:e4b` with `ornith-1.5:9b` fallback). Specialist models are selected dynamically, and turns are dispatched to the appropriate agent (Vision, Code, Architecture, ImageGeneration, General). A `routing_decision` SSE event is emitted before the first token detailing the route, model, provider, source, and timing.
 
 ## Current Architecture
@@ -212,7 +221,7 @@ Smart Chat routes image requests through an agent-to-agent educational infograph
 1. **Stage 0 (Vision reference)**: `qwen3-vl:latest` describes any attached reference images before content planning.
 2. **Stage 1 (Content Architect)**: `gemma4:e4b` (`ornith-1.5:9b` fallback) converts the topic into structured cards, diagrams, bullets, and best practices.
 3. **Stage 2-3 (VRAM Management)**: loaded models are snapshotted and unloaded to dedicate full GPU VRAM to diffusion.
-4. **Stage 4-5 (Diffusion Generation)**: `x/flux2-klein:4b` (`x/z-image-turbo` fallback) generates a high-resolution PNG for each infographic prompt.
+4. **Stage 4-5 (Diffusion Generation)**: `x/flux2-klein:latest` (`x/z-image-turbo` fallback) generates a high-resolution PNG for each infographic prompt.
 5. **Stage 6 (Model Restoration)**: previously active models are asynchronously warmed up in memory.
 
 Generated PNGs are saved to `Generated_images/` and served with session-token ownership validation through `/api/generated-images/{filename}`.
@@ -262,7 +271,7 @@ External stdio MCP connectors can be registered through `/api/connectors`.
 
 | Event | When | Key fields |
 | --- | --- | --- |
-| `routing_decision` | After intent and model resolved, before first token | `intent`, `model`, `provider`, `reason`, `classificationMs`, `wasFastPath`, `manualOverrideApplied`, `overrideRejectedReason` |
+| `routing_decision` | After intent and model resolved, before first token | `intent`, `model`, `provider`, `reason`, `classificationMs`, `wasFastPath`, `manualOverrideApplied`, `overrideRejectedReason`, `source` |
 | `token` | Per token during text generation | `text` |
 | `image_gen_progress` | Pipeline stage transitions | `stage` (`analyzing_request`, `analysis_done`, `freeing_vram`, `generating`, `saving`, `restoring_models`, `primary_model_failed`) |
 | `image_generated` | After each PNG is saved and persisted | `url`, `filename`, `fluxPrompt`, `description`, `index`, `total`, `generationMs` |

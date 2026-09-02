@@ -1,30 +1,37 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using EminentAi.Application.Abstractions;
 
 namespace EminentAi.Application.Agents.ImageGeneration;
 
 /// <summary>
-/// Shared low-level Flux/Ollama CLI image generation, used by both the smart-chat
+/// Shared low-level Flux/Ollama image generation, used by both the smart-chat
 /// ImageGenerationAgent and the Agent-mode "image.generate" builtin tool.
 /// </summary>
 public static class FluxImageGenerator
 {
-    public const string PrimaryModel = "x/flux2-klein:4b";
+    public const string PrimaryModel = "x/flux2-klein:latest";
     public const string FallbackModel = "x/z-image-turbo";
 
     /// <summary>Generates via <paramref name="primaryModel"/>, falling back to <paramref name="fallbackModel"/> on failure.</summary>
+    /// <param name="ollama">
+    /// When supplied together with <paramref name="useHttpGenerate"/>, each model attempt tries
+    /// `/api/generate` first (§15 item 2) before falling back to the `ollama run` CLI subprocess.
+    /// Omitting it preserves the original CLI-only behavior unchanged.
+    /// </param>
     public static async Task<(string Base64Png, string ModelUsed)> GenerateWithFallbackAsync(
-        string primaryModel, string fallbackModel, string prompt, CancellationToken ct)
+        string primaryModel, string fallbackModel, string prompt, CancellationToken ct,
+        IOllamaClient? ollama = null, bool useHttpGenerate = false)
     {
         try
         {
-            return (await GenerateViaCliAsync(primaryModel, prompt, ct), primaryModel);
+            return (await GenerateAsync(primaryModel, prompt, ct, ollama, useHttpGenerate), primaryModel);
         }
         catch (Exception primaryEx)
         {
             try
             {
-                return (await GenerateViaCliAsync(fallbackModel, prompt, ct), fallbackModel);
+                return (await GenerateAsync(fallbackModel, prompt, ct, ollama, useHttpGenerate), fallbackModel);
             }
             catch (Exception fallbackEx)
             {
@@ -33,6 +40,35 @@ public static class FluxImageGenerator
                     $"Primary: {primaryEx.Message}. Fallback: {fallbackEx.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// §15 item 2: tries `/api/generate` first when <paramref name="useHttpGenerate"/> and
+    /// <paramref name="ollama"/> are both supplied, falling back to the proven `ollama run` CLI
+    /// subprocess on ANY failure — including an unrecognized response shape. This exact migration
+    /// was attempted once before and reverted because the HTTP response shape for image-output
+    /// models couldn't be verified without a live instance; keeping the CLI path as an automatic
+    /// fallback means a shape mismatch degrades gracefully instead of breaking generation. Verify
+    /// the HTTP path actually returns real images on your own installed models before relying on it
+    /// — enable <c>EminentAi:ModelMatrix:UseHttpGenerateForImages</c> and check logs/output.
+    /// </summary>
+    public static async Task<string> GenerateAsync(
+        string model, string prompt, CancellationToken ct,
+        IOllamaClient? ollama = null, bool useHttpGenerate = false)
+    {
+        if (useHttpGenerate && ollama is not null)
+        {
+            try
+            {
+                return await ollama.GenerateImageAsync(model, prompt, ct);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                // Unrecognized/unavailable HTTP response shape — fall through to the CLI path.
+            }
+        }
+
+        return await GenerateViaCliAsync(model, prompt, ct);
     }
 
     public static async Task<string> GenerateViaCliAsync(

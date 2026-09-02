@@ -345,6 +345,68 @@ export async function listOllamaModels(baseUrl: string): Promise<LLMModel[]> {
   });
 }
 
+/**
+ * Fill-in-the-middle completion for ghost-text inline suggestions, via a validated local Ollama
+ * `/api/generate` call. Ported from vscode-ext/src/fim.ts (§15 item 5 of
+ * AGENT_2_AGENT_ARCHITECTURE.md: vscode-ext's inline-completion feature had no equivalent here).
+ * Returns "" on any failure — callers treat a blank result as "no suggestion", never an error.
+ */
+export function generateFim(
+  baseUrl: string,
+  prefix: string,
+  suffix: string,
+  model: string,
+  signal: AbortSignal
+): Promise<string> {
+  return new Promise((resolve) => {
+    let validatedUrl: string;
+    try { validatedUrl = validateOllamaUrl(baseUrl); }
+    catch { resolve(''); return; }
+
+    const url = new URL(`${validatedUrl}/api/generate`);
+    const isHttps = url.protocol === 'https:';
+    const transport = isHttps ? https : http;
+    const body = JSON.stringify({
+      model,
+      raw: true,
+      stream: false,
+      prompt: `<|fim_prefix|>${prefix}<|fim_suffix|>${suffix}<|fim_middle|>`,
+      options: {
+        num_predict: 128,
+        temperature: 0.2,
+        stop: ['<|fim_pad|>', '<|endoftext|>', '\n\n\n'],
+      },
+    });
+
+    const req = transport.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        timeout: 10_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (c: Buffer) => { data += c.toString(); });
+        res.on('end', () => {
+          try { resolve((JSON.parse(data) as { response?: string }).response ?? ''); }
+          catch { resolve(''); }
+        });
+        res.on('error', () => resolve(''));
+      }
+    );
+    req.on('error', () => resolve(''));
+    req.on('timeout', () => { req.destroy(); resolve(''); });
+    if (signal) {
+      signal.addEventListener('abort', () => req.destroy(), { once: true });
+    }
+    req.write(body);
+    req.end();
+  });
+}
+
 // ── Main router ───────────────────────────────────────────────────────────────
 
 export interface LLMClientConfig {

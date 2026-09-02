@@ -92,6 +92,16 @@
           "default": "",
           "description": "Installed Ollama vision model used to analyze image attachments before handing off to the selected coding model. Leave blank to auto-select the smallest installed vision-capable model."
         },
+        "eminentai.inlineCompletions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show ghost-text inline code completions as you type, using a local fill-in-the-middle model"
+        },
+        "eminentai.fimModel": {
+          "type": "string",
+          "default": "",
+          "description": "Installed Ollama fill-in-the-middle model for inline completions (e.g. qwen2.5-coder:1.5b-base). Leave blank to disable inline completions."
+        },
         "eminentai.pinnedModels": {
           "type": "array",
           "items": {

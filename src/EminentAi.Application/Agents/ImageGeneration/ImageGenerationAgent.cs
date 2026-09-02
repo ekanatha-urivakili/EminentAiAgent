@@ -21,7 +21,7 @@ namespace EminentAi.Application.Agents.ImageGeneration;
 ///     (title, subtitle, up to <see cref="InfographicPromptBuilder.MaxCards"/> cards,
 ///     best practices) as JSON. It never touches visual style — that is fixed.
 ///
-///   Agent 2 — x/flux2-klein:4b (image generator, primary)
+///   Agent 2 — x/flux2-klein:latest (image generator, primary)
 ///              x/z-image-turbo (image generator, fallback)
 ///     Receives the fixed design merged with the generated content and produces a PNG.
 ///
@@ -29,7 +29,7 @@ namespace EminentAi.Application.Agents.ImageGeneration;
 ///   1. gemma4:e4b       → analyse topic, expand to N infographic content blocks [VRAM: other models still loaded]
 ///   2. Snapshot loaded models
 ///   3. Kill ALL loaded models to free VRAM for image gen
-///   4. x/flux2-klein:4b → generate image for each infographic (falls back to x/z-image-turbo on failure)
+///   4. x/flux2-klein:latest → generate image for each infographic (falls back to x/z-image-turbo on failure)
 ///   5. Save each PNG to Generated_images/
 ///   6. Restore previously loaded models (fire-and-forget)
 /// </summary>
@@ -50,6 +50,7 @@ public sealed class ImageGenerationAgent(
     private readonly string FallbackAnalystModel = modelMatrix.ImageAnalystFallback;
     private readonly string PrimaryVisionModel   = modelMatrix.ImageVisionPrimary;
     private readonly string FallbackVisionModel  = modelMatrix.ImageVisionFallback;
+    private readonly bool UseHttpGenerate        = modelMatrix.UseHttpGenerateForImages;
 
     // Strips qwen3 <think>…</think> reasoning blocks before JSON parsing
     private static readonly Regex ThinkBlockRegex =
@@ -214,7 +215,11 @@ public sealed class ImageGenerationAgent(
 
             try
             {
-                base64Png = await FluxImageGenerator.GenerateViaCliAsync(PrimaryModel, ep.FluxPrompt, ct);
+                base64Png = await FluxImageGenerator.GenerateAsync(PrimaryModel, ep.FluxPrompt, ct, ollama, UseHttpGenerate);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception primaryEx)
             {
@@ -233,7 +238,8 @@ public sealed class ImageGenerationAgent(
                     total    = expandedPrompts.Count
                 });
 
-                try   { base64Png = await FluxImageGenerator.GenerateViaCliAsync(FallbackModel, ep.FluxPrompt, ct); }
+                try   { base64Png = await FluxImageGenerator.GenerateAsync(FallbackModel, ep.FluxPrompt, ct, ollama, UseHttpGenerate); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
                 catch (Exception ex) { genError = ex.Message; }
             }
 

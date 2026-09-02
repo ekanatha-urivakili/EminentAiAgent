@@ -10,7 +10,7 @@ namespace EminentAi.Application.Agents.ImageGeneration;
 public static class InfographicPromptBuilder
 {
     /// <summary>
-    /// Ollama's own guidance for x/flux2-klein:4b: more than ~8 cards per image
+    /// Ollama's own guidance for x/flux2-klein:latest: more than ~8 cards per image
     /// causes inaccurate/distorted text. Enforced server-side, independent of
     /// whatever the content model returns.
     /// </summary>

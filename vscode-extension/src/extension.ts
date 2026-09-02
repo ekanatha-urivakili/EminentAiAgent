@@ -2,11 +2,17 @@ import * as vscode from 'vscode';
 import { ChatViewProvider } from './chatViewProvider';
 import { SessionManager } from './sessionManager';
 import { ApprovalModeStore } from './approvalModeStore';
+import { FimProvider } from './fimProvider';
 
 export function activate(context: vscode.ExtensionContext): void {
   const sessionManager = new SessionManager(context.globalState);
   const approvalModeStore = new ApprovalModeStore(context.globalState);
   const provider = new ChatViewProvider(context.extensionUri, sessionManager, approvalModeStore);
+
+  // §15 item 5: ghost-text inline completion, ported from vscode-ext (now retired).
+  context.subscriptions.push(
+    vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, new FimProvider())
+  );
 
   // Register WebviewView
   context.subscriptions.push(provider);
