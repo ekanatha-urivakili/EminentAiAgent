@@ -23,9 +23,11 @@ CVs/
 
 # Generated images
 *.png
+Generated_images/
 
 # macOS
 .DS_Store
+Library/
 
 # JetBrains / VS Code local settings
 .idea/

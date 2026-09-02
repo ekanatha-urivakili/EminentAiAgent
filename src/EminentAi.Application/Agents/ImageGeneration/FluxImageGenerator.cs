@@ -70,7 +70,19 @@ public static class FluxImageGenerator
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromMinutes(15));
-            await process.WaitForExitAsync(timeoutCts.Token);
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // §18.2 item 2 / §18.7 Phase 4: WaitForExitAsync being cancelled does NOT stop the
+                // underlying OS process — without this, a client disconnect or the 15-minute timeout
+                // left `ollama run` running in the background indefinitely, still holding VRAM.
+                // entireProcessTree also catches any child process `ollama run` itself spawns.
+                TryKillProcessTree(process);
+                throw;
+            }
 
             if (process.ExitCode != 0)
                 throw new InvalidOperationException(
@@ -96,6 +108,20 @@ public static class FluxImageGenerator
         finally
         {
             try { Directory.Delete(workDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    private static void TryKillProcessTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // Best-effort: the process may have exited between the check and the kill, or the OS
+            // may deny the signal — either way there is nothing further we can safely do here.
         }
     }
 

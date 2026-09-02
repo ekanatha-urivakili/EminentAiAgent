@@ -26,7 +26,7 @@ export function ModelSelector({ compact = false }: { compact?: boolean }) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const chatModels = models.filter((m) => m.tier !== 'embedding');
+  const chatModels = models.filter((m) => m.tier !== 'embedding' && m.tier !== 'image_gen');
   const tiers = ['fast', 'balanced', 'reasoning', 'vision'].filter((t) =>
     chatModels.some((m) => m.tier === t),
   );

@@ -564,24 +564,30 @@ function PageModels({ onRefresh }: { onRefresh: () => void }) {
             <div className="text-sm text-muted-foreground py-6 text-center">No models available. Make sure Ollama is running.</div>
           ) : (
             <div className="space-y-1.5">
-              {models.map((m) => (
-                <button
-                  key={m.name}
-                  onClick={() => setSelectedModel(m.name)}
-                  className={cn(
-                    'w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm transition-colors border',
-                    selectedModel === m.name ? 'bg-primary/10 border-primary/30 text-foreground' : 'hover:bg-muted border-transparent text-foreground',
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-border/60 bg-muted text-muted-foreground uppercase tracking-wide">
-                      {m.tier ?? 'chat'}
-                    </span>
-                    <span className="font-medium">{m.name}</span>
-                  </div>
-                  {selectedModel === m.name && <Check size={15} className="text-primary" />}
-                </button>
-              ))}
+              {models.map((m) => {
+                const selectable = m.tier !== 'embedding' && m.tier !== 'image_gen';
+                return (
+                  <button
+                    key={m.name}
+                    onClick={() => setSelectedModel(m.name)}
+                    disabled={!selectable}
+                    title={selectable ? undefined : `${m.name} is routed automatically by capability`}
+                    className={cn(
+                      'w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm transition-colors border',
+                      selectedModel === m.name ? 'bg-primary/10 border-primary/30 text-foreground' : 'hover:bg-muted border-transparent text-foreground',
+                      !selectable && 'cursor-not-allowed opacity-60 hover:bg-transparent',
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-border/60 bg-muted text-muted-foreground uppercase tracking-wide">
+                        {m.tier ?? 'chat'}
+                      </span>
+                      <span className="font-medium">{m.name}</span>
+                    </div>
+                    {selectedModel === m.name && <Check size={15} className="text-primary" />}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

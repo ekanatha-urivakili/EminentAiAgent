@@ -102,7 +102,7 @@ public sealed class OllamaModelProvider(
         "vision"    => new HashSet<ModelCapability> { ModelCapability.Vision, ModelCapability.TextGeneration },
         "fast"      => new HashSet<ModelCapability> { ModelCapability.TextGeneration, ModelCapability.CodeGeneration },
         "balanced"  => new HashSet<ModelCapability> { ModelCapability.TextGeneration, ModelCapability.CodeGeneration, ModelCapability.FunctionCalling },
-        "reasoning" => new HashSet<ModelCapability> { ModelCapability.TextGeneration, ModelCapability.Reasoning },
+        "reasoning" => new HashSet<ModelCapability> { ModelCapability.TextGeneration, ModelCapability.Reasoning, ModelCapability.CodeGeneration },
         "embedding" => new HashSet<ModelCapability> { ModelCapability.Embedding },
         "image_gen" => new HashSet<ModelCapability> { ModelCapability.ImageGeneration },
         _           => new HashSet<ModelCapability> { ModelCapability.TextGeneration }

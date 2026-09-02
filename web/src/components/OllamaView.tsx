@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ExternalLink, Play, RefreshCw, Square, Cpu, Eye, Zap, Scale, BrainCircuit, Check, Copy, ChevronDown, Terminal, Download, Package, Search, CloudDownload, X } from 'lucide-react';
+import { ExternalLink, Play, RefreshCw, Square, Cpu, Eye, Image as ImageIcon, Zap, Scale, BrainCircuit, Check, Copy, ChevronDown, Terminal, Download, Package, Search, CloudDownload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatBytes } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -7,10 +7,10 @@ import type { ModelInfo, OllamaRegistryModel } from '../lib/types';
 import { cn } from '../lib/utils';
 
 const tierIcon: Record<ModelInfo['tier'], typeof Cpu> = {
-  fast: Zap, balanced: Scale, reasoning: BrainCircuit, vision: Eye, embedding: Cpu,
+  fast: Zap, balanced: Scale, reasoning: BrainCircuit, vision: Eye, embedding: Cpu, image_gen: ImageIcon,
 };
 const tierLabel: Record<ModelInfo['tier'], string> = {
-  fast: 'Fast', balanced: 'Balanced', reasoning: 'Reasoning', vision: 'Vision', embedding: 'Embedding',
+  fast: 'Fast', balanced: 'Balanced', reasoning: 'Reasoning', vision: 'Vision', embedding: 'Embedding', image_gen: 'Image generation',
 };
 
 function modelBase(name: string) { return name.split(':')[0]; }
@@ -22,6 +22,7 @@ function describeModel(model: ModelInfo) {
   if (base.startsWith('llama3')) return 'Llama 3 is a compact multilingual instruction-tuned family designed for local dialogue, retrieval, and summarization.';
   if (base.includes('llava') || model.tier === 'vision') return 'Vision-capable model for prompts that include images as well as text.';
   if (base.includes('embed') || model.tier === 'embedding') return 'Embedding model for search, retrieval, clustering, and similarity workflows.';
+  if (model.tier === 'image_gen') return 'Image-generation model used only by the capability-gated image pipeline.';
   if (base.includes('coder') || base.includes('code')) return 'Code-focused local model for programming help, refactoring, and technical explanations.';
   if (model.tier === 'reasoning') return 'Reasoning-oriented model for multi-step questions, analysis, and planning.';
   return 'General local Ollama model for chat, drafting, summarization, and everyday assistant tasks.';

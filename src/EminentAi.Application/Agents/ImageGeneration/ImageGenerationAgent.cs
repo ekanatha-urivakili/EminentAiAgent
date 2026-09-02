@@ -4,28 +4,32 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using EminentAi.Application.Abstractions;
 using EminentAi.Application.Chat;
+using EminentAi.Application.Configuration;
 using EminentAi.Application.Routing;
 using EminentAi.Domain;
 
 namespace EminentAi.Application.Agents.ImageGeneration;
 
 /// <summary>
-/// Agent-to-agent image generation pipeline:
+/// Agent-to-agent educational-infographic generation pipeline. Every image produced
+/// here uses the SAME fixed visual design (<see cref="InfographicPromptBuilder"/>) —
+/// only the topic content (title, subtitle, cards, best practices) varies per request,
+/// so the whole series looks consistent.
 ///
-///   Agent 1 — gemma4:e4b (prompt engineer), qwen3.5:9b fallback
-///     Analyses the user's free-text request, understands intent (multiple
-///     variants, themes, formats, brand names) and expands it into one or
-///     more optimised image prompts while the model is still warm in VRAM.
+///   Agent 1 — gemma4:e4b (content architect), qwen3.5:9b fallback
+///     Reads the user's topic request and produces the CONTENT for the infographic
+///     (title, subtitle, up to <see cref="InfographicPromptBuilder.MaxCards"/> cards,
+///     best practices) as JSON. It never touches visual style — that is fixed.
 ///
 ///   Agent 2 — x/flux2-klein:4b (image generator, primary)
 ///              x/z-image-turbo (image generator, fallback)
-///     Receives each polished prompt and produces a PNG.
+///     Receives the fixed design merged with the generated content and produces a PNG.
 ///
 /// Full pipeline sequence:
-///   1. gemma4:e4b       → analyse request, expand to N prompts  [VRAM: other models still loaded]
+///   1. gemma4:e4b       → analyse topic, expand to N infographic content blocks [VRAM: other models still loaded]
 ///   2. Snapshot loaded models
 ///   3. Kill ALL loaded models to free VRAM for image gen
-///   4. x/flux2-klein:4b → generate image for each prompt (falls back to x/z-image-turbo on failure)
+///   4. x/flux2-klein:4b → generate image for each infographic (falls back to x/z-image-turbo on failure)
 ///   5. Save each PNG to Generated_images/
 ///   6. Restore previously loaded models (fire-and-forget)
 /// </summary>
@@ -34,46 +38,59 @@ public sealed class ImageGenerationAgent(
     IGeneratedImageRepository imageRepo,
     IConversationRepository conversationRepo,
     IPiiRedactor redactor,
+    ModelMatrixOptions modelMatrix,
     string outputDirectory) : ISpecializedAgent
 {
-    private const string PrimaryModel  = FluxImageGenerator.PrimaryModel;
-    private const string FallbackModel = FluxImageGenerator.FallbackModel;
-    private const string PrimaryAnalystModel  = "gemma4:e4b";
-    private const string FallbackAnalystModel = "qwen3.5:9b";
-
-    // Matches text wrapped in double-quotes, e.g. "A cute baby", "Bold text"
-    private static readonly Regex QuotedPromptRegex =
-        new(@"""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
+    // §18.2 item 4: model names are config-driven (ModelMatrixOptions) rather than hardcoded
+    // constants — defaults below match what was previously hardcoded, so behaviour is unchanged
+    // unless appsettings.json overrides EminentAi:ModelMatrix.
+    private readonly string PrimaryModel  = modelMatrix.ImageGenPrimary;
+    private readonly string FallbackModel = modelMatrix.ImageGenFallback;
+    private readonly string PrimaryAnalystModel  = modelMatrix.ImageAnalystPrimary;
+    private readonly string FallbackAnalystModel = modelMatrix.ImageAnalystFallback;
+    private readonly string PrimaryVisionModel   = modelMatrix.ImageVisionPrimary;
+    private readonly string FallbackVisionModel  = modelMatrix.ImageVisionFallback;
 
     // Strips qwen3 <think>…</think> reasoning blocks before JSON parsing
     private static readonly Regex ThinkBlockRegex =
         new(@"<think>[\s\S]*?</think>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private static readonly string AnalystSystemPrompt = """
-        You are an expert diffusion-model prompt engineer working inside an agent pipeline.
-        Your ONLY job is to convert the user's image request into one or more highly optimised
-        image generation prompts, then return them as JSON.
+    private static readonly string AnalystSystemPrompt = $$"""
+        You are an expert content architect working inside an agent pipeline that renders
+        software-engineering educational infographics using a FIXED visual design template.
+        Your ONLY job is to convert the user's topic request into the CONTENT for that
+        infographic (title, subtitle, cards, best practices) and return it as JSON.
+        Do NOT describe visual style, colours or layout — the design is fixed elsewhere.
+        Focus purely on accurate, concise educational content.
 
         RULES
         ─────
-        1. Read the full request carefully: identify brand names, themes, formats, and variants.
-        2. If the user asks for MULTIPLE variants (dark / light theme, different sizes, favicon vs
-           PWA icon, multiple colour schemes), create a SEPARATE prompt object for EACH variant.
-        3. Each "prompt" value must be a comma-separated list of visual descriptors only:
-           subject, style, colours, mood, composition, medium, quality boosters.
-        4. Include the brand or app name (if any) verbatim in every prompt.
-        5. Quality boosters to add when relevant:
-           logos → "transparent background, vector art, scalable, professional logo design, crisp edges"
-           dark themes → "dark background, #0a0a0a backdrop, vibrant accent colours, high contrast"
-           light themes → "white background, clean minimal design, subtle shadows"
-           PWA/app icons → "app icon, centred composition, bold icon, rounded corners, 512x512"
-           favicons → "favicon, 32x32, simple geometric icon, bold shape"
-        6. NEVER use negative phrasing ("no blur") — positives only.
-        7. Output ONLY valid JSON — no markdown, no explanation, no prose:
+        1. Identify the core topic (e.g. "SOLID principles", "caching strategies").
+        2. Break the topic into individual concepts, one per card.
+        3. Use AT MOST {{InfographicPromptBuilder.MaxCards}} cards. If the topic naturally has
+           more concepts than that, choose the {{InfographicPromptBuilder.MaxCards}} most
+           important ones — never invent filler cards to pad the count.
+        4. Each card needs:
+           - a short (2-4 word) UPPERCASE title
+           - a one-line description of a simple technical diagram illustrating it
+             (e.g. "Producer → Event Bus → multiple Consumers")
+           - EXACTLY three bullet points, each under five words
+        5. Provide 4-6 short "best practices" labels (1-3 words each) relevant to the topic.
+        6. If the user asks for multiple distinct topics in one request, create a SEPARATE
+           infographic object for EACH topic.
+        7. Keep all text short, technically accurate, correctly spelled and jargon-free.
+        8. Output ONLY valid JSON — no markdown, no explanation, no prose:
         {
-          "understanding": "One sentence: what you understood the user wants",
-          "prompts": [
-            { "description": "short human-readable label", "prompt": "the Flux2 prompt" }
+          "understanding": "One sentence: what topic(s) you are covering",
+          "infographics": [
+            {
+              "title": "SHORT TITLE",
+              "subtitle": "SHORT SUBTITLE",
+              "cards": [
+                { "title": "CARD TITLE", "diagram": "A -> B -> C", "bullets": ["...", "...", "..."] }
+              ],
+              "bestPractices": ["...", "..."]
+            }
           ]
         }
         """;
@@ -85,11 +102,36 @@ public sealed class ImageGenerationAgent(
         ModelRoute route,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // ── Stage 0: describe any attached reference image (vision model) ────
+        // ── Persist the user message immediately, before the slow pipeline runs,
+        //    so it survives even if the client disconnects mid-generation ──────
+        var redactedUserText = redactor.Redact(context.UserText);
+
+        var userMessage = new Message
+        {
+            BranchId = context.BranchId,
+            Role     = MessageRole.User,
+            Content  = redactedUserText
+        };
+
         var imageAttachments = context.Attachments
             .Where(a => a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
+        foreach (var attachment in imageAttachments)
+        {
+            userMessage.Attachments.Add(new MessageAttachment
+            {
+                MessageId   = userMessage.Id,
+                Name        = attachment.Name,
+                ContentType = attachment.ContentType,
+                DataBase64  = attachment.DataBase64
+            });
+        }
+
+        await conversationRepo.AddMessageAsync(userMessage, ct);
+        await conversationRepo.SaveChangesAsync(ct);
+
+        // ── Stage 0: describe any attached reference image (vision model) ────
         string? referenceDescription = imageAttachments.Count > 0
             ? await DescribeReferenceImagesAsync(imageAttachments, ct)
             : null;
@@ -101,7 +143,23 @@ public sealed class ImageGenerationAgent(
             analystModel = PrimaryAnalystModel
         });
 
-        var analysis = await AnalyzeAndExpandPromptsAsync(context.UserText, referenceDescription, ct);
+        var rawAnalysis = await AnalyzeAndExpandPromptsAsync(context.UserText, referenceDescription, ct);
+
+        // §18.2 item 7: redact model-echoed text here, once, before it is ever emitted in SSE or
+        // persisted — previously only UserText and the per-image FluxPrompt (at generation time)
+        // were redacted, leaving Understanding/Description able to resurface PII the analyst model
+        // echoed back from its (unredacted) input.
+        var analysis = rawAnalysis with
+        {
+            Understanding = redactor.Redact(rawAnalysis.Understanding),
+            Prompts = rawAnalysis.Prompts
+                .Select(p => p with
+                {
+                    Description = redactor.Redact(p.Description),
+                    FluxPrompt  = redactor.Redact(p.FluxPrompt)
+                })
+                .ToList()
+        };
 
         yield return new SmartChatEvent("image_gen_progress", new
         {
@@ -138,15 +196,14 @@ public sealed class ImageGenerationAgent(
 
         for (var i = 0; i < expandedPrompts.Count; i++)
         {
-            var ep             = expandedPrompts[i];
-            var redactedPrompt = redactor.Redact(ep.FluxPrompt);
+            var ep = expandedPrompts[i]; // Description/FluxPrompt already redacted above
 
             yield return new SmartChatEvent("image_gen_progress", new
             {
                 stage       = "generating",
                 current     = i + 1,
                 total       = expandedPrompts.Count,
-                prompt      = redactedPrompt,
+                prompt      = ep.FluxPrompt,
                 description = ep.Description
             });
 
@@ -222,14 +279,14 @@ public sealed class ImageGenerationAgent(
             var imageUrl = $"/api/generated-images/{filename}";
 
             generatedResults.Add(new GeneratedImageEntry(
-                imageId, imageUrl, filename, redactedPrompt,
+                imageId, imageUrl, filename, ep.FluxPrompt,
                 ep.Description, sw.ElapsedMilliseconds));
 
             yield return new SmartChatEvent("image_generated", new
             {
                 url          = imageUrl,
                 filename,
-                fluxPrompt   = redactedPrompt,
+                fluxPrompt   = ep.FluxPrompt,
                 description  = ep.Description,
                 index        = i + 1,
                 total        = expandedPrompts.Count,
@@ -261,32 +318,8 @@ public sealed class ImageGenerationAgent(
             yield break;
         }
 
-        // ── Persist user + assistant messages ─────────────────────────────────
-        var redactedUserText = redactor.Redact(context.UserText);
-
-        var userMessage = new Message
-        {
-            BranchId = context.BranchId,
-            Role     = MessageRole.User,
-            Content  = redactedUserText
-        };
-
-        foreach (var attachment in context.Attachments.Where(a =>
-            a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)))
-        {
-            userMessage.Attachments.Add(new MessageAttachment
-            {
-                MessageId   = userMessage.Id,
-                Name        = attachment.Name,
-                ContentType = attachment.ContentType,
-                DataBase64  = attachment.DataBase64
-            });
-        }
-
-        await conversationRepo.AddMessageAsync(userMessage, ct);
-        await conversationRepo.SaveChangesAsync(ct);
-
-        // Build assistant message: understanding summary + all images
+        // ── Persist assistant message using CancellationToken.None: images were
+        //    already generated, so a client disconnect here must not lose them ──
         var header     = $"> **{analysis.AnalystModel} understood:** {analysis.Understanding}\n\n";
         var imageLines = generatedResults.Select((r, idx) =>
             $"**{r.Description}**\n\n![{r.Description}]({r.Url})\n\n" +
@@ -303,21 +336,21 @@ public sealed class ImageGenerationAgent(
         };
 
         foreach (var r in generatedResults)
-            await imageRepo.AddAsync(r.ImageId, context.BranchId, context.RequestTokenHash, ct);
+            await imageRepo.AddAsync(r.ImageId, context.BranchId, context.RequestTokenHash, CancellationToken.None);
 
-        await conversationRepo.AddMessageAsync(assistantMessage, ct);
-        await conversationRepo.SaveChangesAsync(ct);
+        await conversationRepo.AddMessageAsync(assistantMessage, CancellationToken.None);
+        await conversationRepo.SaveChangesAsync(CancellationToken.None);
 
         yield return new SmartChatEvent("done", new { messageId = assistantMessage.Id.ToString() });
     }
 
-    // ── Agent 0: qwen3.5:9b describes any reference image the user attached ──
+    // ── Agent 0: qwen3-vl describes any reference image the user attached ────
 
     private async Task<string?> DescribeReferenceImagesAsync(
         List<ChatAttachment> imageAttachments, CancellationToken ct)
     {
         var request = new ChatRequest(
-            FallbackAnalystModel, // qwen3.5:9b — the vision-capable route model
+            PrimaryVisionModel,
             new List<ChatMessage>
             {
                 new("user",
@@ -328,25 +361,31 @@ public sealed class ImageGenerationAgent(
             Temperature: 0.1f,
             ContextWindow: 2048);
 
-        try { return (await ollama.ChatOnceAsync(request, ct)).Trim(); }
-        catch { return null; }
+        try
+        {
+            return (await ollama.ChatOnceAsync(request, ct)).Trim();
+        }
+        catch
+        {
+            try
+            {
+                return (await ollama.ChatOnceAsync(request with { Model = FallbackVisionModel }, ct)).Trim();
+            }
+            catch
+            {
+                return null;
+            }
+        }
     }
 
-    // ── Agent 1: Gemma prompt analysis ───────────────────────────────────────
+    // ── Agent 1: Gemma content analysis ──────────────────────────────────────
 
     private async Task<AnalysisResult> AnalyzeAndExpandPromptsAsync(
         string userText, string? referenceDescription, CancellationToken ct)
     {
-        // For quoted-prompt lists, tell Gemma to enhance each one
-        var quotedPrompts = ExtractQuotedPrompts(userText);
-        var baseInput = quotedPrompts.Count > 0
-            ? $"Enhance these image prompts:\n" +
-              string.Join("\n", quotedPrompts.Select((p, i) => $"{i + 1}. \"{p}\""))
-            : userText;
-
         var analystInput = referenceDescription is null
-            ? baseInput
-            : $"Reference image: {referenceDescription}\n\nUser request: {baseInput}";
+            ? userText
+            : $"Reference image: {referenceDescription}\n\nUser request: {userText}";
 
         var request = new ChatRequest(
             PrimaryAnalystModel,
@@ -374,7 +413,7 @@ public sealed class ImageGenerationAgent(
             }
             catch (Exception) when (!ct.IsCancellationRequested)
             {
-                return FallbackResult(quotedPrompts, userText);
+                return FallbackResult(userText);
             }
         }
 
@@ -389,18 +428,43 @@ public sealed class ImageGenerationAgent(
 
         try
         {
-            using var doc        = JsonDocument.Parse(rawJson);
-            var root             = doc.RootElement;
-            var understanding    = root.TryGetProperty("understanding", out var u) ? u.GetString() ?? "" : "";
-            var promptsElement   = root.GetProperty("prompts");
-            var expandedPrompts  = new List<ExpandedPrompt>();
+            using var doc          = JsonDocument.Parse(rawJson);
+            var root               = doc.RootElement;
+            var understanding      = root.TryGetProperty("understanding", out var u) ? u.GetString() ?? "" : "";
+            var infographicsElement = root.GetProperty("infographics");
+            var expandedPrompts    = new List<ExpandedPrompt>();
 
-            foreach (var p in promptsElement.EnumerateArray())
+            foreach (var ig in infographicsElement.EnumerateArray())
             {
-                var desc  = p.TryGetProperty("description", out var d) ? d.GetString() ?? "Image" : "Image";
-                var flux  = p.TryGetProperty("prompt",      out var f) ? f.GetString() ?? ""      : "";
-                if (!string.IsNullOrWhiteSpace(flux))
-                    expandedPrompts.Add(new ExpandedPrompt(desc, flux));
+                var title    = ig.TryGetProperty("title",    out var t) ? t.GetString() ?? "" : "";
+                var subtitle = ig.TryGetProperty("subtitle", out var s) ? s.GetString() ?? "" : "";
+
+                var cards = new List<InfographicCard>();
+                if (ig.TryGetProperty("cards", out var cardsElement))
+                {
+                    foreach (var c in cardsElement.EnumerateArray())
+                    {
+                        var cardTitle = c.TryGetProperty("title",   out var ct2) ? ct2.GetString() ?? "" : "";
+                        var diagram   = c.TryGetProperty("diagram", out var dg)  ? dg.GetString()  ?? "" : "";
+                        var bullets   = c.TryGetProperty("bullets", out var bl)
+                            ? bl.EnumerateArray().Select(b => b.GetString() ?? "").Where(b => b.Length > 0).ToList()
+                            : new List<string>();
+
+                        if (cardTitle.Length > 0 && bullets.Count > 0)
+                            cards.Add(new InfographicCard(cardTitle, diagram, bullets));
+                    }
+                }
+
+                var bestPractices = ig.TryGetProperty("bestPractices", out var bp)
+                    ? bp.EnumerateArray().Select(p => p.GetString() ?? "").Where(p => p.Length > 0).ToList()
+                    : new List<string>();
+
+                if (title.Length == 0 || cards.Count == 0) continue;
+
+                var spec = new InfographicSpec(title, subtitle, cards, bestPractices);
+                expandedPrompts.Add(new ExpandedPrompt(
+                    subtitle.Length > 0 ? $"{title} — {subtitle}" : title,
+                    InfographicPromptBuilder.BuildPrompt(spec)));
             }
 
             if (expandedPrompts.Count > 0)
@@ -408,16 +472,22 @@ public sealed class ImageGenerationAgent(
         }
         catch { /* fall through to fallback */ }
 
-        return FallbackResult(quotedPrompts, userText);
+        return FallbackResult(userText);
     }
 
-    private static AnalysisResult FallbackResult(List<string> quoted, string userText)
+    private static AnalysisResult FallbackResult(string userText)
     {
-        var prompts = quoted.Count > 0
-            ? quoted.Select(p => new ExpandedPrompt("Image", p)).ToList()
-            : new List<ExpandedPrompt> { new("Image", userText.Trim()) };
+        var spec = new InfographicSpec(
+            Title: "OVERVIEW",
+            Subtitle: "",
+            Cards: new List<InfographicCard>
+            {
+                new("SUMMARY", "N/A", new List<string> { userText.Trim() })
+            },
+            BestPractices: new List<string>());
 
-        return new AnalysisResult("(analyst models unavailable — using raw prompts)", prompts, "raw prompt fallback");
+        var prompts = new List<ExpandedPrompt> { new("Image", InfographicPromptBuilder.BuildPrompt(spec)) };
+        return new AnalysisResult("(analyst models unavailable — using raw topic text)", prompts, "raw prompt fallback");
     }
 
     // ── Image save ───────────────────────────────────────────────────────────
@@ -458,17 +528,6 @@ public sealed class ImageGenerationAgent(
 
         await File.WriteAllBytesAsync(fullPath, bytes, ct);
         return (fullPath, filename);
-    }
-
-    private static List<string> ExtractQuotedPrompts(string userText)
-    {
-        var results = new List<string>();
-        foreach (Match m in QuotedPromptRegex.Matches(userText))
-        {
-            var value = m.Groups[1].Value.Trim();
-            if (!string.IsNullOrWhiteSpace(value)) results.Add(value);
-        }
-        return results;
     }
 
     // ── Internal records ──────────────────────────────────────────────────────

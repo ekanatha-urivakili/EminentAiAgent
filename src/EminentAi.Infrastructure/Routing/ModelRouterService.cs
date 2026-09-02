@@ -1,4 +1,5 @@
 using EminentAi.Application.Agents;
+using EminentAi.Application.Configuration;
 using EminentAi.Application.Providers;
 using EminentAi.Application.Routing;
 using Microsoft.Extensions.Logging;
@@ -12,18 +13,18 @@ namespace EminentAi.Infrastructure.Routing;
 /// </summary>
 public sealed class ModelRouterService(
     IEnumerable<IModelProvider> providers,
+    ModelMatrixOptions modelMatrix,
     ILogger<ModelRouterService> logger) : IModelRouter
 {
-    // Name-priority patterns per agent kind. Earlier entries win.
-    private static readonly IReadOnlyDictionary<AgentKind, string[]> NamePriorities =
-        new Dictionary<AgentKind, string[]>
-        {
-            [AgentKind.Vision]          = ["qwen3.5:9b", "qwen3.5", "qwen2.5vl", "vl", "vision", "llava", "moondream"],
-            [AgentKind.Coding]          = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "qwen2.5-coder", "coder", "deepseek-coder"],
-            [AgentKind.Architecture]    = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "gemma4", "qwen2.5:latest", "qwen2.5"],
-            [AgentKind.ImageGeneration] = ["x/flux2-klein:4b", "flux2-klein", "flux", "diffusion"],
-            [AgentKind.General]         = ["gemma4:e4b", "qwen3.5:9b", "qwen3.5", "qwen2.5:latest", "qwen2.5", "llama3"],
-        };
+    // Name-priority patterns per agent kind, sourced from config (§18.2 item 4). Earlier entries
+    // in each array win. Unknown/unparseable keys in configuration are skipped, not thrown on,
+    // so a typo in appsettings.json degrades to tier fallback rather than crashing the router.
+    private readonly IReadOnlyDictionary<AgentKind, string[]> _namePriorities =
+        modelMatrix.NamePriorities
+            .Where(kv => Enum.TryParse<AgentKind>(kv.Key, ignoreCase: true, out _))
+            .ToDictionary(
+                kv => Enum.Parse<AgentKind>(kv.Key, ignoreCase: true),
+                kv => kv.Value);
 
     public async Task<ModelRoute?> ResolveAsync(
         AgentProfile profile,
@@ -68,7 +69,7 @@ public sealed class ModelRouterService(
         }
 
         // 5. Name-priority matching
-        if (NamePriorities.TryGetValue(profile.Kind, out var patterns))
+        if (_namePriorities.TryGetValue(profile.Kind, out var patterns))
         {
             for (var i = 0; i < patterns.Length; i++)
             {

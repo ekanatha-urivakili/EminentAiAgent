@@ -8,7 +8,10 @@ public record ChatRequest(
     float? Temperature = null,
     int? ContextWindow = null,
     bool ForceJson = false,
-    List<ToolSchema>? Tools = null
+    List<ToolSchema>? Tools = null,
+    // Maps to Ollama's num_predict. Bounds a call's output — e.g. a tool-calling classification
+    // request that should never generate a full free-text answer.
+    int? MaxOutputTokens = null
 );
 
 public record ChatMessage(
@@ -62,13 +65,6 @@ public interface IOllamaClient
     Task<bool> IsHealthyAsync(CancellationToken ct = default);
 
     IAsyncEnumerable<PullDelta> PullModelAsync(string name, CancellationToken ct = default);
-
-    /// <summary>
-    /// Generates an image via POST /api/generate (non-chat endpoint used by Flux2 diffusion models).
-    /// Returns the base64-encoded PNG string from the response body.
-    /// Call this only after the Flux spike confirms response shape is { "response": "base64..." }.
-    /// </summary>
-    Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default);
 
     /// <summary>
     /// Forcibly unloads a model from VRAM by sending a keep_alive=0 generate request.

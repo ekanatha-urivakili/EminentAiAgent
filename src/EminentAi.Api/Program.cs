@@ -13,9 +13,12 @@ using EminentAi.Application.Abstractions;
 using EminentAi.Application.Agent;
 using EminentAi.Application.Agents;
 using EminentAi.Application.Agents.ImageGeneration;
+using EminentAi.Application.Configuration;
+using EminentAi.Application.Hardware;
 using EminentAi.Application.Orchestration;
 using EminentAi.Application.Providers;
 using EminentAi.Application.Routing;
+using EminentAi.Infrastructure.Hardware;
 using EminentAi.Infrastructure.Providers;
 using EminentAi.Infrastructure.Routing;
 using EminentAi.Infrastructure.Persistence;
@@ -99,9 +102,18 @@ builder.Services.AddScoped<PlannerService>();
 builder.Services.AddScoped<AgentOrchestrator>();
 
 // ── Smart chat: A2A orchestration layer ──────────────────────────────────
-builder.Services.AddSingleton<IIntentRouter, IntentRouterService>();
+// Config-driven model matrix (§18.2 item 4): bound once from EminentAi:ModelMatrix in
+// appsettings.json, with defaults equal to what was previously hardcoded. Registered as a plain
+// singleton instance (same pattern as CostPolicy/DataResidencyPolicy below) rather than IOptions<T>,
+// since no other component in this codebase uses the Options pattern.
+var modelMatrix = builder.Configuration.GetSection(ModelMatrixOptions.SectionName).Get<ModelMatrixOptions>()
+    ?? new ModelMatrixOptions();
+builder.Services.AddSingleton(modelMatrix);
+
+builder.Services.AddSingleton<IIntentRouter, ToolCallingIntentResolver>();
 builder.Services.AddSingleton<IModelRouter, ModelRouterService>();
 builder.Services.AddSingleton<IModelProvider, OllamaModelProvider>();
+builder.Services.AddSingleton<IGpuWorkCoordinator, GpuWorkCoordinator>();
 builder.Services.AddSingleton(CostPolicy.DefaultLocal);
 builder.Services.AddSingleton(DataResidencyPolicy.DefaultLocal);
 builder.Services.AddScoped<IGeneratedImageRepository, GeneratedImageRepository>();
@@ -139,6 +151,7 @@ builder.Services.AddScoped<ISpecializedAgent>(sp => new ImageGenerationAgent(
     sp.GetRequiredService<IGeneratedImageRepository>(),
     sp.GetRequiredService<IConversationRepository>(),
     sp.GetRequiredService<IPiiRedactor>(),
+    sp.GetRequiredService<ModelMatrixOptions>(),
     generatedImagesDir));
 builder.Services.AddScoped<AgentOrchestratorFacade>();
 builder.Services.AddScoped<ObservabilityService>();

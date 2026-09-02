@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import type {
   AgentRunState, ChatMsg, ConnectorInfo, CreateConnectorRequest,
   ConversationDetail, ConversationSummary, Mode, ModelInfo, Plan, Theme, AppView,
-  AdminProfile, ChatAttachment,
+  AdminProfile, ChatAttachment, AgentKind,
   JobSearchCriteria, JobSearchRunResult, SourceHealthInfo, IndeedJobInput,
 } from '../lib/types';
 
@@ -50,7 +50,9 @@ interface AppState {
   // Smart chat (A2A routing)
   smartModeEnabled: boolean;
   toggleSmartMode: () => void;
-  sendSmartMessage: (content: string, attachments: ChatAttachment[]) => Promise<void>;
+  // manualRouteOverride: an explicit Composer mode (§18.5.4) — the primary routing path.
+  // Omitted (undefined) only for plain chat, which server-side resolves via tool-calling.
+  sendSmartMessage: (content: string, attachments: ChatAttachment[], manualRouteOverride?: AgentKind) => Promise<void>;
   regenerate: (messageId: string) => Promise<void>;
   stopStreaming: () => void;
   /** Switch to a different branch within the active conversation. */
@@ -178,14 +180,16 @@ export const useStore = create<AppState>((set, get) => ({
   loadModels: async () => {
     try {
       const models = await api.models();
-      const chatModels = models.filter((m) => m.tier !== 'embedding');
+      const chatModels = models.filter((m) => m.tier !== 'embedding' && m.tier !== 'image_gen');
       const current = get().selectedModel;
       set({
         models,
-        selectedModel: current && models.some((m) => m.name === current)
+        selectedModel: current && chatModels.some((m) => m.name === current)
           ? current
           : (chatModels.find((m) => m.name === 'gemma4:e4b')?.name
+            ?? chatModels.find((m) => m.name === 'ornith-1.5:9b')?.name
             ?? chatModels.find((m) => m.name === 'qwen3.5:9b')?.name
+            ?? chatModels.find((m) => m.name === 'qwen3.5:4b')?.name
             ?? chatModels[0]?.name
             ?? ''),
       });
@@ -361,7 +365,7 @@ export const useStore = create<AppState>((set, get) => ({
     return { smartModeEnabled: next };
   }),
 
-  sendSmartMessage: async (content, attachments) => {
+  sendSmartMessage: async (content, attachments, manualRouteOverride) => {
     let { activeBranchId } = get();
     const { selectedModel } = get();
 
@@ -387,13 +391,23 @@ export const useStore = create<AppState>((set, get) => ({
         activeBranchId,
         content,
         attachments,
-        undefined,
+        manualRouteOverride,
         (event, data) => {
           set((s) => ({
             messages: s.messages.map((m) => {
               if (m.id !== assistantMsg.id && m.id !== (data.messageId as string | undefined)) return m;
 
               if (event === 'routing_decision') {
+                const manualOverrideApplied = data.manualOverrideApplied as boolean;
+                const wasFastPath = data.wasFastPath as boolean;
+                // §18.5.4: derive the badge's "why" from the same fields the server already sends —
+                // an explicit Composer mode, the legacy zero-cost regex fast-path, or the resident
+                // model's own tool-call decision (the only case left that costs a round-trip).
+                const source: import('../lib/types').RoutingSource = manualOverrideApplied
+                  ? 'ui-affordance'
+                  : wasFastPath
+                  ? 'fast-path'
+                  : 'tool-call';
                 return {
                   ...m,
                   routingDecision: {
@@ -402,8 +416,10 @@ export const useStore = create<AppState>((set, get) => ({
                     provider: data.provider as string,
                     reason: data.reason as string,
                     classificationMs: data.classificationMs as number,
-                    wasFastPath: data.wasFastPath as boolean,
-                    manualOverrideApplied: data.manualOverrideApplied as boolean,
+                    wasFastPath,
+                    manualOverrideApplied,
+                    overrideRejectedReason: data.overrideRejectedReason as string | undefined,
+                    source,
                   },
                 };
               }

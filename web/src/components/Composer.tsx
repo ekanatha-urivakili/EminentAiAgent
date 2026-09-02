@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Bot, LayoutList, MessageCircle, ArrowUp, Square, X, Mic, MicOff, Plus, ImageIcon, FileText, Clock, Volume2, VolumeX, Loader2, ExternalLink, Check, Copy, ChevronDown as ChevronDownIcon, Zap } from 'lucide-react';
+import { ChevronDown, Bot, LayoutList, MessageCircle, ArrowUp, Square, X, Mic, MicOff, Plus, ImageIcon, FileText, Clock, Volume2, VolumeX, Loader2, ExternalLink, Check, Copy, ChevronDown as ChevronDownIcon, Zap, Code2, Network, LayoutTemplate } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '../lib/utils';
 import { useStore } from '../state/store';
 import { api } from '../lib/api';
-import type { ChatAttachment, Mode } from '../lib/types';
+import type { AgentKind, ChatAttachment, Mode } from '../lib/types';
 import { ModelSelector } from './ModelSelector';
+
+// §18.5.4: explicit Composer affordances for the three specialist routes that make sense to pick
+// up front (Vision is implied by attaching an image instead — see submit()). Selecting one of
+// these sends manualRouteOverride with the next message, which the backend treats as the primary
+// routing signal (§18.5.4) rather than a fallback the model has to guess from free text.
+const routeOverrides: { kind: Extract<AgentKind, 'coding' | 'architecture' | 'imageGeneration'>; label: string; icon: typeof Code2 }[] = [
+  { kind: 'coding', label: 'Code', icon: Code2 },
+  { kind: 'architecture', label: 'Architecture', icon: Network },
+  { kind: 'imageGeneration', label: 'Infographic', icon: LayoutTemplate },
+];
 
 const modeMeta: Record<Mode, { icon: typeof Bot; color: string; hint: string }> = {
   Chat: { icon: MessageCircle, color: 'text-blue-500', hint: 'General discussion' },
@@ -197,6 +207,9 @@ export function Composer() {
   const [textAttachments, setTextAttachments] = useState<{ name: string; content: string }[]>([]);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  // §18.5.4: the explicitly-selected route for the NEXT message only — one-shot, like a
+  // slash-command, not a persistent mode. undefined = plain chat, resolved server-side via tool-calling.
+  const [pendingOverride, setPendingOverride] = useState<AgentKind | undefined>(undefined);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle');
   const [showWhisperGuide, setShowWhisperGuide] = useState(false);
   const [startingWhisper, setStartingWhisper] = useState(false);
@@ -415,10 +428,21 @@ export function Composer() {
     
     // Stop TTS on new user message
     window.speechSynthesis?.cancel();
-    setInput(''); setAttachments([]); setTextAttachments([]);
-    if (mode === 'Chat') void (smartModeEnabled ? sendSmartMessage(text, attachments) : sendMessageWithAttachments(text, attachments));
+    const sentAttachments = attachments;
+    // §18.5.4: an attached image implies Vision — the same "route by UI affordance, not by
+    // classifying free text" reasoning as the explicit mode buttons — unless a mode button was
+    // already picked (a mode button always wins over the attachment-implies-Vision default).
+    const override = pendingOverride ?? (sentAttachments.length > 0 ? 'vision' : undefined);
+    setInput(''); setAttachments([]); setTextAttachments([]); setPendingOverride(undefined);
+    if (mode === 'Chat') {
+      // A route override only means anything through the smart-chat endpoint, so picking one
+      // (or attaching an image) uses it even when the Auto toggle itself is off.
+      void ((smartModeEnabled || override)
+        ? sendSmartMessage(text, sentAttachments, override)
+        : sendMessageWithAttachments(text, sentAttachments));
+    }
     else if (mode === 'Plan') void createPlan(text);
-    else void startAgent(text, undefined, attachments);
+    else void startAgent(text, undefined, sentAttachments);
   };
 
   const stop = () => { if (mode === 'Agent') void cancelAgent(); else stopStreaming(); };
@@ -535,6 +559,29 @@ export function Composer() {
               <Zap size={14} className={smartModeEnabled ? 'text-orange-500' : ''} />
               <span className="hidden sm:inline">Auto</span>
             </button>
+
+            {/* §18.5.4: explicit route buttons — the primary way to signal intent for a message,
+                cheaper and more reliable than asking the model to infer it from free text. One-shot:
+                selecting a route applies to the next send only (see pendingOverride). */}
+            {mode === 'Chat' && routeOverrides.map(({ kind, label, icon: Icon }) => {
+              const active = pendingOverride === kind;
+              return (
+                <button
+                  key={kind}
+                  onClick={() => setPendingOverride((prev) => (prev === kind ? undefined : kind))}
+                  title={active ? `${label} mode selected — click to cancel` : `Answer as ${label}`}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-medium transition-colors border',
+                    active
+                      ? 'bg-primary/10 text-primary border-primary/40 hover:bg-primary/20'
+                      : 'bg-background/60 text-muted-foreground border-border hover:bg-muted',
+                  )}
+                >
+                  <Icon size={14} />
+                  <span className="hidden md:inline">{label}</span>
+                </button>
+              );
+            })}
 
             {/* Mode selector */}
             <div ref={modeMenuRef} className="relative">

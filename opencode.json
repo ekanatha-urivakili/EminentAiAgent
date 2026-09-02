@@ -9,10 +9,16 @@
       },
       "models": {
         "Gemma4-e4b": {
-          "name": "Gemma4-e4b"
+          "name": "gemma4:e4b"
         },
-        "qwen3.5:9b-64k": {
-          "name": "qwen3.5:9b-64k"
+        "ornith-1.5:9b": {
+          "name": "ornith-1.5:9b"
+        },
+        "qwen3-vl:latest": {
+          "name": "qwen3-vl:latest"
+        },
+        "qwen3.5:4b": {
+          "name": "qwen3.5:4b"
         }
       }
     }

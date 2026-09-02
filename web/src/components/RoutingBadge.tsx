@@ -1,14 +1,23 @@
 import { cn } from '../lib/utils';
 import { intentMeta } from '../lib/intentMeta';
-import type { RoutingDecision } from '../lib/types';
+import type { RoutingDecision, RoutingSource } from '../lib/types';
 
 interface RoutingBadgeProps {
   routing: RoutingDecision;
   className?: string;
 }
 
+// §18.5.4 / §18.8: the badge names *why* this route was chosen, not just what was chosen —
+// "you selected" (Composer mode button) vs "model decided" (tool-call on free-text chat) vs the
+// legacy zero-cost regex fast-path.
+const sourceLabel: Record<RoutingSource, string> = {
+  'ui-affordance': 'you selected',
+  'tool-call': 'model decided',
+  'fast-path': 'fast-path',
+};
+
 /**
- * Displays intent label + model name + provider (when non-ollama).
+ * Displays intent label + why it was chosen + model name + provider (when non-ollama).
  * Fades in 200ms after mount. Appears below the user message, above the assistant reply.
  */
 export function RoutingBadge({ routing, className }: RoutingBadgeProps) {
@@ -16,6 +25,14 @@ export function RoutingBadge({ routing, className }: RoutingBadgeProps) {
   if (!meta) return null;
 
   const showProvider = routing.provider !== 'ollama';
+  // A source may be absent on older/cached events; fall back to the boolean flags it replaced.
+  const source: RoutingSource = routing.source ?? (routing.manualOverrideApplied ? 'ui-affordance' : routing.wasFastPath ? 'fast-path' : 'tool-call');
+
+  const title = [
+    `Route: ${routing.reason}`,
+    `${routing.classificationMs}ms`,
+    routing.overrideRejectedReason ? `requested mode rejected: ${routing.overrideRejectedReason}` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <div
@@ -25,10 +42,12 @@ export function RoutingBadge({ routing, className }: RoutingBadgeProps) {
         meta.badgeColor,
         className,
       )}
-      title={`Route: ${routing.reason} · ${routing.classificationMs}ms${routing.wasFastPath ? ' (fast-path)' : ''}`}
+      title={title}
     >
       <span>{meta.icon}</span>
       <span>{meta.label}</span>
+      <span className="opacity-50">·</span>
+      <span className="opacity-70">{sourceLabel[source]}</span>
       <span className="opacity-50">·</span>
       <span className="font-mono text-[0.7rem]">{routing.model}</span>
       {showProvider && (
