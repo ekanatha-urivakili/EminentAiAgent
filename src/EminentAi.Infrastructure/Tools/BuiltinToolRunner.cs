@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using EminentAi.Application.Abstractions;
 using EminentAi.Application.Agents.ImageGeneration;
+using EminentAi.Application.Configuration;
 
 namespace EminentAi.Infrastructure.Tools;
 
@@ -34,12 +35,17 @@ public sealed partial class BuiltinToolRunner : IBuiltinToolRunner
     [GeneratedRegex(@"(rm\s+(-[a-z]*[rf][a-z]*\s+)+|sudo\b|mkfs|dd\s+if=|:\(\)\s*\{|chmod\s+777\s+/|curl[^|]*\|\s*(ba)?sh|wget[^|]*\|\s*(ba)?sh|>\s*/dev/sd|shutdown\b|reboot\b|launchctl\b|killall\b)", RegexOptions.IgnoreCase)]
     private static partial Regex DangerousCommand();
 
-    public BuiltinToolRunner(BuiltinToolOptions options)
+    private readonly IOllamaClient _ollama;
+    private readonly bool _useHttpGenerate;
+
+    public BuiltinToolRunner(BuiltinToolOptions options, IOllamaClient ollama, ModelMatrixOptions modelMatrix)
     {
         _workspaceRoot = NormalizeExistingRoot(string.IsNullOrWhiteSpace(options.WorkspaceRoot)
             ? FindWorkspaceRoot()
             : options.WorkspaceRoot);
         _ollamaApiKey = options.OllamaApiKey;
+        _ollama = ollama;
+        _useHttpGenerate = modelMatrix.UseHttpGenerateForImages;
         Directory.CreateDirectory(_workspaceRoot);
     }
 
@@ -355,7 +361,8 @@ public sealed partial class BuiltinToolRunner : IBuiltinToolRunner
 
         var sw = Stopwatch.StartNew();
         var (base64Png, modelUsed) = await FluxImageGenerator.GenerateWithFallbackAsync(
-            FluxImageGenerator.PrimaryModel, FluxImageGenerator.FallbackModel, prompt, ct);
+            FluxImageGenerator.PrimaryModel, FluxImageGenerator.FallbackModel, prompt, ct,
+            _ollama, _useHttpGenerate);
         sw.Stop();
 
         var bytes = Convert.FromBase64String(base64Png);

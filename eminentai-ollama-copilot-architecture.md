@@ -6,6 +6,12 @@
 > [`docs/AGENT_2_AGENT_ARCHITECTURE.md`](docs/AGENT_2_AGENT_ARCHITECTURE.md), and the implemented
 > IDE permission/tool model is in [`VS_CODE_EXTENSION.md`](VS_CODE_EXTENSION.md). This document
 > retains the original roadmap and may describe planned capabilities beyond the current code.
+>
+> **Historical roadmap warning:** model names, component diagrams, and implementation checklists in
+> the remaining sections are design-era examples. They are not the active runtime configuration.
+> The source of truth for current Smart Chat routing and local models is
+> [`docs/AGENT_2_AGENT_ARCHITECTURE.md`](docs/AGENT_2_AGENT_ARCHITECTURE.md) plus
+> `src/EminentAi.Api/appsettings.json`.
 
 **Version:** 1.1 · **Date:** 2026-06-14 · **Status:** Implemented core + planned extensions (v3.1 docs aligned to current code)
 **Target hardware baseline:** Apple M2, 16 GB unified memory (constrains every model decision below)
@@ -28,7 +34,7 @@ Recommended model lineup (16 GB M2):
 | General chat | `qwen2.5:latest` | ~4.7 GB | Best all-rounder at this size |
 | Coding agent | `qwen2.5-coder:1.5b` | ~1 GB | Fast, efficient coding assistance |
 | Vision agent | `qwen2.5vl:latest` | ~6.0 GB | Multimodal support |
-| Image Gen | `x/flux2-klein:4b` | ~5.7 GB | Local diffusion |
+| Image Gen | `x/flux2-klein:latest` | ~5.7 GB | Local diffusion |
 
 ---
 
@@ -215,7 +221,7 @@ eminentai/
 │  │   ├─ Security/ PiiRedactor.cs          # Regex-based masking of secrets
 │  └─ EminentAi.Api/               # Minimal API + SSE endpoints
 ├─ web/                             # React 18 + Vite + TS + Tailwind + shadcn
-└─ vscode-ext/                      # TypeScript extension (Section 8)
+└─ vscode-extension/                # TypeScript extension (Section 8)
 ```
 
 ### 3.2 Core data model (SQLite)

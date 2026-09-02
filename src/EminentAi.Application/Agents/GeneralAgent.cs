@@ -23,13 +23,30 @@ public sealed class GeneralAgent(ChatService chatService) : ISpecializedAgent
         Guid? messageId = null;
         int tokensIn = 0, tokensOut = 0;
 
-        await foreach (var delta in chatService.SendMessageAsync(
-            context.BranchId,
-            context.UserText,
-            modelOverride: route.Model.Name,
-            attachments: attachments,
-            profile: context.Intent.Profile,
-            ct: ct))
+        // §15 item 1: the intent classifier already generated a full answer in the same call that
+        // decided this was General — reuse it instead of a second inference, but only when the
+        // resolved route landed on the exact model that generated it.
+        var canReusePrehydrated = context.Intent.PrehydratedResponse is not null
+            && context.Intent.ClassifierModel.Equals(route.Model.Name, StringComparison.OrdinalIgnoreCase);
+
+        var stream = canReusePrehydrated
+            ? chatService.SendPrehydratedMessageAsync(
+                context.BranchId,
+                context.UserText,
+                context.Intent.PrehydratedResponse!,
+                route.Model.Name,
+                context.Intent.PrehydratedUsage,
+                attachments,
+                ct)
+            : chatService.SendMessageAsync(
+                context.BranchId,
+                context.UserText,
+                modelOverride: route.Model.Name,
+                attachments: attachments,
+                profile: context.Intent.Profile,
+                ct: ct);
+
+        await foreach (var delta in stream)
         {
             if (delta.Token is not null)
                 yield return new SmartChatEvent("token", new { text = delta.Token });

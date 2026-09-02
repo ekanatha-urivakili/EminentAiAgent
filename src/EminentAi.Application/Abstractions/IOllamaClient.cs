@@ -77,4 +77,13 @@ public interface IOllamaClient
     /// Fire-and-forget friendly — errors are silently swallowed.
     /// </summary>
     Task WarmUpModelAsync(string modelName, CancellationToken ct = default);
+
+    /// <summary>
+    /// §15 item 2 of AGENT_2_AGENT_ARCHITECTURE.md: calls `/api/generate` for an image-output model
+    /// and returns the generated image as base64. The response shape for these models is not a
+    /// documented Ollama contract, so implementations must validate the decoded bytes are a real
+    /// image before returning, and throw otherwise rather than returning garbage — callers are
+    /// expected to fall back to <c>FluxImageGenerator.GenerateViaCliAsync</c> on failure.
+    /// </summary>
+    Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default);
 }

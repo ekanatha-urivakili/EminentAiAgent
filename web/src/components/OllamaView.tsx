@@ -32,7 +32,7 @@ function describeModel(model: ModelInfo) {
 const RECOMMENDED = [
   { cmd: 'ollama pull gemma4:e4b',               label: 'gemma4:e4b',               size: '~9.6 GB', role: 'Default chat + agent',   desc: 'Primary local model for chat, coding, planning, and tool use' },
   { cmd: 'ollama pull qwen3.5:9b',               label: 'qwen3.5:9b',               size: '~6.6 GB', role: 'Text + vision fallback', desc: 'Fallback for text routing and the vision-capable route' },
-  { cmd: 'ollama pull x/flux2-klein:4b',         label: 'x/flux2-klein:4b',         size: '~5.7 GB', role: 'Image generation',       desc: 'Flux image model used only for image-generation requests' },
+  { cmd: 'ollama pull x/flux2-klein:latest',         label: 'x/flux2-klein:latest',         size: '~5.7 GB', role: 'Image generation',       desc: 'Flux image model used only for image-generation requests' },
   { cmd: 'ollama pull qwen2.5-coder:1.5b-base', label: 'qwen2.5-coder:1.5b-base', size: '~1 GB',   role: 'Inline completions',     desc: 'Fast FIM model for the VS Code extension' },
   { cmd: 'ollama pull llama3.1:8b',              label: 'llama3.1:8b',              size: '~4.7 GB', role: 'General chat',           desc: 'Strong instruction following for everyday questions' },
   { cmd: 'ollama pull nomic-embed-text',         label: 'nomic-embed-text',         size: '~0.3 GB', role: 'Embeddings (RAG)',        desc: 'Needed for file-upload retrieval and search' },

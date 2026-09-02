@@ -17,7 +17,7 @@ graph LR
     end
 
     subgraph "Local Laptop"
-        BE[.NET 8 API]
+    BE[.NET 10 API]
         Ollama[Ollama - LLMs]
         Whisper[Whisper.cpp - STT]
         Piper[Piper - TTS]
@@ -48,10 +48,10 @@ graph LR
 - **SignalR Hub:** A new bi-directional streaming hub to handle real-time voice and video frames.
 - **Voice Pipeline (ChatGPT Mode):**
     1. **STT:** Backend receives audio chunks, passes them to a local `whisper-server` (running `whisper.cpp`).
-    2. **LLM:** Transcribed text is sent to Ollama (e.g., `qwen2.5-coder`).
+    2. **LLM:** Transcribed text is sent to the configured local Ollama model (currently `gemma4:e4b` by default).
     3. **TTS:** LLM text response is streamed to a local TTS engine (Piper) which generates audio chunks.
     4. **Streaming:** Audio chunks are sent back to the Frontend via SignalR for immediate playback.
-- **Video Mode:** Frontend sends Base64 encoded video frames at 1-2 FPS. Backend uses vision-capable models (e.g., `llama3-vision` or `llava`) to "see" the user's environment.
+- **Video Mode:** Frontend sends Base64 encoded video frames at 1-2 FPS. Backend uses a configured vision-capable model (currently `qwen3-vl:latest`, with `qwen3.5:9b` fallback) to analyse the user's environment.
 
 ## 3. Implementation Steps
 

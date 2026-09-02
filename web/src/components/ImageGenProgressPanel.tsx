@@ -68,7 +68,7 @@ const PIPELINE: PipelineStep[] = [
         : '';
       return currentPrompt
         ? `"${currentPrompt}"${countStr}`
-        : `Running x/flux2-klein:4b${countStr} — typically 30–180 s`;
+        : `Running x/flux2-klein:latest${countStr} — typically 30–180 s`;
     },
   },
   {
@@ -284,7 +284,7 @@ export function ImageGenProgressPanel(props: ImageGenProgressProps) {
               <p className="text-[10px] text-violet-600/70 dark:text-violet-400/70">
                 <span className="font-mono">{analystModel ?? 'gemma4:e4b'}</span>
                 {' '}→ prompt engineer → {' '}
-                <span className="font-mono">x/flux2-klein:4b</span>
+                <span className="font-mono">x/flux2-klein:latest</span>
                 {' '}→ image generator
               </p>
             </div>

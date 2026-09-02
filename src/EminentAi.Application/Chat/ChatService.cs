@@ -106,6 +106,68 @@ public class ChatService(IConversationRepository repo, IOllamaClient ollama, IPi
             yield return delta;
     }
 
+    /// <summary>
+    /// Persists a turn whose assistant content was already generated elsewhere (§15 item 1 of
+    /// AGENT_2_AGENT_ARCHITECTURE.md: the intent classifier's own tool-calling round-trip doubled
+    /// as the final General answer). Skips the model call entirely — the caller is responsible for
+    /// having verified the content came from the same model this turn will be attributed to.
+    /// </summary>
+    public async IAsyncEnumerable<ChatDelta> SendPrehydratedMessageAsync(
+        Guid branchId, string userContent, string assistantContent, string model, Usage? usage,
+        List<ChatAttachment>? attachments = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var branch = await repo.GetBranchAsync(branchId, ct)
+            ?? throw new KeyNotFoundException("Branch not found");
+
+        var history = branch.Messages.OrderBy(m => m.CreatedAt).ToList();
+        var redactedUser = redactor.Redact(userContent);
+        var redactedAssistant = redactor.Redact(assistantContent);
+        var imageAttachments = (attachments ?? new List<ChatAttachment>())
+            .Where(a => a.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var userMessage = new Message
+        {
+            BranchId = branchId,
+            Role = MessageRole.User,
+            Content = redactedUser
+        };
+        foreach (var attachment in imageAttachments)
+        {
+            userMessage.Attachments.Add(new MessageAttachment
+            {
+                MessageId = userMessage.Id,
+                Name = attachment.Name,
+                ContentType = attachment.ContentType,
+                DataBase64 = attachment.DataBase64
+            });
+        }
+        await repo.AddMessageAsync(userMessage, ct);
+
+        if (history.Count == 0 && branch.Conversation is not null &&
+            (string.IsNullOrWhiteSpace(branch.Conversation.Title) || branch.Conversation.Title == "New chat"))
+        {
+            branch.Conversation.Title = redactedUser.Length > 60 ? redactedUser[..60] + "…" : redactedUser;
+        }
+
+        var assistantMessage = new Message
+        {
+            BranchId = branchId,
+            Role = MessageRole.Assistant,
+            Model = model,
+            Content = redactedAssistant,
+            TokensIn = usage?.In,
+            TokensOut = usage?.Out,
+            LatencyMs = 0
+        };
+        await repo.AddMessageAsync(assistantMessage, ct);
+        await repo.SaveChangesAsync(ct);
+
+        yield return new ChatDelta(Token: redactedAssistant, MessageId: assistantMessage.Id);
+        yield return new ChatDelta(Done: true, Usage: usage, MessageId: assistantMessage.Id);
+    }
+
     /// <summary>Regenerate is non-destructive: the new reply is a sibling sharing ParentMessageId.</summary>
     public async IAsyncEnumerable<ChatDelta> RegenerateAsync(
         Guid messageId, string? modelOverride = null, float? temperature = null,

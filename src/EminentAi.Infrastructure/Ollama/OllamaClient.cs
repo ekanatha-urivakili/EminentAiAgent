@@ -232,6 +232,56 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         }
     }
 
+    /// <summary>
+    /// §15 item 2: `/api/generate` for image-output models. There is no documented response shape
+    /// for these — this checks the two plausible fields (`images[0]`, `response`) and validates the
+    /// decoded bytes are actually PNG/JPEG/WebP before returning, so a shape mismatch throws instead
+    /// of silently returning corrupt data. Callers should treat any exception here as "fall back to
+    /// the CLI path", not as a hard failure.
+    /// </summary>
+    public async Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default)
+    {
+        var payload = new { model, prompt, stream = false };
+        using var response = await http.PostAsJsonAsync("/api/generate", payload, JsonOpts, ct);
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken: ct);
+        if (json is null)
+            throw new InvalidOperationException("/api/generate returned an empty body");
+
+        if (json["images"] is JsonArray { Count: > 0 } images
+            && images[0]?.GetValue<string>() is { } fromImages
+            && TryDecodeImage(fromImages) is { } decodedFromImages)
+            return decodedFromImages;
+
+        if (json["response"]?.GetValue<string>() is { } fromResponse
+            && TryDecodeImage(fromResponse) is { } decodedFromResponse)
+            return decodedFromResponse;
+
+        throw new InvalidOperationException(
+            "/api/generate response did not contain a recognizable image in 'images[0]' or 'response'");
+    }
+
+    private static string? TryDecodeImage(string raw)
+    {
+        var candidate = raw.Trim();
+        const string dataUriMarker = "base64,";
+        var markerIndex = candidate.IndexOf(dataUriMarker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex >= 0) candidate = candidate[(markerIndex + dataUriMarker.Length)..];
+
+        try
+        {
+            var bytes = Convert.FromBase64String(candidate);
+            return EminentAi.Application.Agents.ImageGeneration.FluxImageGenerator.DetectImageFormat(bytes) is not null
+                ? candidate
+                : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 
     private sealed class OllamaChatResponse

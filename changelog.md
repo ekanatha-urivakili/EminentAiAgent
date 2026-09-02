@@ -1,4 +1,6 @@
-# Changelog: Current Branch vs Main Branch
+# Historical Changelog Snapshot
+
+> This file is an archived branch-comparison note, generated on 2023-10-15. It is not a record of the current implementation and its model references are obsolete. Current runtime documentation is [README.md](README.md) and [docs/AGENT_2_AGENT_ARCHITECTURE.md](docs/AGENT_2_AGENT_ARCHITECTURE.md).
 
 ## 🚀 Major Changes
 

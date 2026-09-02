@@ -184,14 +184,15 @@ sequenceDiagram
 ## 9. Install and Configure
 
 ```bash
-ollama pull qwen3:8b
+ollama pull gemma4:e4b
+ollama pull ornith-1.5:9b
 export OLLAMA_API_KEY="your-ollama-api-key"
 
 cd vscode-extension
 npm install
 npm run compile
 npm run package
-code --install-extension eminentai-0.4.0.vsix
+code --install-extension eminentai-0.7.1.vsix
 ```
 
 Open a folder in VS Code before using Agent mode. Put project-specific rules in `<workspace>/EminentAI.md`.

@@ -1,0 +1,19 @@
+{
+  "name": "eminentai-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "prepare-sidecar": "bash scripts/prepare-sidecar.sh",
+    "build-web": "cross-env VITE_API_URL=http://127.0.0.1:5210 npm --prefix ../web run build",
+    "dev": "npm run build-web && npm run prepare-sidecar && tauri dev",
+    "build": "npm run build-web && npm run prepare-sidecar && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "cross-env": "^7"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-shell": "^2"
+  }
+}

@@ -108,7 +108,12 @@ public sealed class AgentOrchestratorFacade(
             classificationMs = intentDecision.ClassificationMs,
             wasFastPath = intentDecision.Telemetry.WasFastPath,
             manualOverrideApplied = intentDecision.Telemetry.ManualOverrideApplied,
-            overrideRejectedReason = intentDecision.Telemetry.OverrideRejectedReason
+            overrideRejectedReason = intentDecision.Telemetry.OverrideRejectedReason,
+            source = intentDecision.Telemetry.ManualOverrideApplied
+                ? "ui-affordance"
+                : intentDecision.Telemetry.WasFastPath
+                    ? "fast-path"
+                    : "tool-call"
         });
 
         // Step 5: acquire exclusive GPU access for the whole agent turn (§18.5.1), then dispatch.
@@ -123,7 +128,13 @@ public sealed class AgentOrchestratorFacade(
             Intent: intentDecision,
             RequestTokenHash: request.RequestTokenHash);
 
-        using var gpuLease = await gpuCoordinator.AcquireAsync(route.Model.Name, ct: ct);
+        // §15 item 3: image generation is the long-running case the priority queue exists for, so it
+        // stays Normal; every other intent is a short text/vision turn and gets High so it can skip
+        // ahead of a queued image generation instead of waiting strict FIFO behind it.
+        var gpuPriority = intentDecision.Intent == AgentKind.ImageGeneration
+            ? GpuTaskPriority.Normal
+            : GpuTaskPriority.High;
+        using var gpuLease = await gpuCoordinator.AcquireAsync(route.Model.Name, gpuPriority, ct);
 
         // Step 6: propagate all events
         await foreach (var evt in agent.ExecuteAsync(context, route, ct))
@@ -158,7 +169,7 @@ public sealed class AgentOrchestratorFacade(
     private static string? RecommendedPullCommand(AgentKind intent) => intent switch
     {
         AgentKind.Vision         => "ollama pull qwen3-vl:latest",
-        AgentKind.ImageGeneration => "ollama pull x/flux2-klein:4b",
+        AgentKind.ImageGeneration => "ollama pull x/flux2-klein:latest",
         _                        => null
     };
 }

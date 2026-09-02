@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using EminentAi.Application.Abstractions;
@@ -16,13 +17,17 @@ namespace EminentAi.Infrastructure.Routing;
 ///
 /// Scope note: this removes the fragile parts of the old design — a one-word text label parsed
 /// with a regex sanitizer (§18.2 item 3's brittleness), and the quoted-string fast-path that could
-/// misroute Vision text into image generation (§18.2 item 6, removed below). It does NOT attempt
-/// the "zero extra inference for General" version of §18.5.3's pseudocode: reusing this call's own
-/// generated content as the final answer would require re-plumbing ChatService/GeneralAgent's
-/// persistence path in a way that cannot be safely verified without a live Ollama instance in this
-/// session. So this still makes one dedicated round-trip per free-text turn — same cost as before,
-/// but the decision itself is a native tool call instead of a hand-parsed string, and the call is
-/// bounded by MaxOutputTokens so a "no tool matches" turn costs a few tokens, not a full answer.
+/// misroute Vision text into image generation (§18.2 item 6, removed below).
+///
+/// §15 item 1: when none of the routing tools match, the model is instructed to answer the user's
+/// message directly in the same call instead of replying with nothing. That generated text is
+/// carried on <see cref="IntentDecision.PrehydratedResponse"/> so the orchestrator can persist it
+/// as the final General answer without a second inference round-trip. The output-token cap is
+/// therefore removed: a tool call still terminates generation almost immediately (so Coding/
+/// Architecture/Vision/ImageGeneration routing stays cheap), while a General decision now costs the
+/// same one round-trip it always did — the difference is that round-trip's content is no longer
+/// thrown away. Reuse is opportunistic only: the orchestrator still falls back to a normal General
+/// dispatch whenever the resolved model differs from <see cref="IntentDecision.ClassifierModel"/>.
 /// </summary>
 public sealed class ToolCallingIntentResolver(
     IOllamaClient ollama,
@@ -54,9 +59,9 @@ public sealed class ToolCallingIntentResolver(
 
     private const string SystemPrompt =
         "Decide how to handle the user's next message. If it clearly matches one of the available " +
-        "tools, call exactly that one tool with no arguments. If none of the tools clearly applies " +
-        "(a general question, conversation, or anything not covered), do not call any tool and reply " +
-        "with nothing.";
+        "tools, call exactly that one tool with no arguments and nothing else. If none of the tools " +
+        "clearly applies (a general question, conversation, or anything not covered), do not call " +
+        "any tool — instead answer the user's message directly and completely, as you normally would.";
 
     public async Task<IntentDecision> ClassifyAsync(IntentRequest request, CancellationToken ct = default)
     {
@@ -81,23 +86,26 @@ public sealed class ToolCallingIntentResolver(
             },
             Temperature: 0.0f,
             ContextWindow: 512,
-            Tools: RoutingTools,
-            MaxOutputTokens: 16);
+            Tools: RoutingTools);
 
         AgentKind intent;
         string classifierModel = _residentModel;
         string rawLabel;
+        string? prehydratedResponse = null;
+        Usage? prehydratedUsage = null;
 
         try
         {
-            var toolCalls = new List<ToolCall>();
-            await foreach (var delta in ollama.ChatStreamAsync(chatRequest, ct))
-                if (delta.ToolCalls is { Count: > 0 } calls)
-                    toolCalls.AddRange(calls);
-
+            var (toolCalls, content, usage) = await RunClassifierStreamAsync(chatRequest, ct);
             var toolName = toolCalls.FirstOrDefault()?.Name;
             intent = MapToolNameToIntent(toolName);
             rawLabel = toolName ?? "NO_TOOL_CALL";
+
+            if (toolName is null && !string.IsNullOrWhiteSpace(content))
+            {
+                prehydratedResponse = content;
+                prehydratedUsage = usage;
+            }
         }
         catch (Exception primaryEx) when (!ct.IsCancellationRequested)
         {
@@ -110,15 +118,17 @@ public sealed class ToolCallingIntentResolver(
                 try
                 {
                     var fallbackRequest = chatRequest with { Model = _fallbackModel };
-                    var toolCalls = new List<ToolCall>();
-                    await foreach (var delta in ollama.ChatStreamAsync(fallbackRequest, ct))
-                        if (delta.ToolCalls is { Count: > 0 } calls)
-                            toolCalls.AddRange(calls);
-
+                    var (toolCalls, content, usage) = await RunClassifierStreamAsync(fallbackRequest, ct);
                     var toolName = toolCalls.FirstOrDefault()?.Name;
                     intent = MapToolNameToIntent(toolName);
                     classifierModel = _fallbackModel;
                     rawLabel = toolName ?? "NO_TOOL_CALL";
+
+                    if (toolName is null && !string.IsNullOrWhiteSpace(content))
+                    {
+                        prehydratedResponse = content;
+                        prehydratedUsage = usage;
+                    }
                 }
                 catch (Exception fallbackEx) when (!ct.IsCancellationRequested)
                 {
@@ -138,8 +148,8 @@ public sealed class ToolCallingIntentResolver(
         }
 
         sw.Stop();
-        logger.LogDebug("Intent resolved via tool-call: {Kind} (tool: {Raw}) in {Ms}ms",
-            intent, rawLabel, sw.ElapsedMilliseconds);
+        logger.LogDebug("Intent resolved via tool-call: {Kind} (tool: {Raw}) in {Ms}ms, prehydrated: {Prehydrated}",
+            intent, rawLabel, sw.ElapsedMilliseconds, prehydratedResponse is not null);
 
         return new IntentDecision(
             Intent: intent,
@@ -151,7 +161,29 @@ public sealed class ToolCallingIntentResolver(
                 WasFastPath: false,
                 ManualOverrideApplied: false,
                 OverrideRequestedKind: null,
-                OverrideRejectedReason: null));
+                OverrideRejectedReason: null),
+            PrehydratedResponse: prehydratedResponse,
+            PrehydratedUsage: prehydratedUsage);
+    }
+
+    private async Task<(List<ToolCall> ToolCalls, string? Content, Usage? Usage)> RunClassifierStreamAsync(
+        ChatRequest request, CancellationToken ct)
+    {
+        var toolCalls = new List<ToolCall>();
+        var content = new StringBuilder();
+        Usage? usage = null;
+
+        await foreach (var delta in ollama.ChatStreamAsync(request, ct))
+        {
+            if (delta.ToolCalls is { Count: > 0 } calls)
+                toolCalls.AddRange(calls);
+            if (delta.Token is not null)
+                content.Append(delta.Token);
+            if (delta.Done)
+                usage = delta.Usage;
+        }
+
+        return (toolCalls, content.Length > 0 ? content.ToString() : null, usage);
     }
 
     private static AgentKind MapToolNameToIntent(string? toolName) => toolName switch

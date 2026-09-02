@@ -21,8 +21,17 @@ public sealed class ModelMatrixOptions
     public string ImageVisionPrimary { get; set; } = "qwen3-vl:latest";
     public string ImageVisionFallback { get; set; } = "qwen3.5:9b";
 
-    public string ImageGenPrimary { get; set; } = "x/flux2-klein:4b";
+    public string ImageGenPrimary { get; set; } = "x/flux2-klein:latest";
     public string ImageGenFallback { get; set; } = "x/z-image-turbo";
+
+    /// <summary>
+    /// §15 item 2: opt-in switch to try `/api/generate` before the `ollama run` CLI subprocess for
+    /// image generation. Defaults to false — this migration was reverted once before over an
+    /// unverified response shape, so it ships off until verified against the models actually
+    /// installed on a given machine. The CLI path always remains the automatic fallback regardless
+    /// of this setting.
+    /// </summary>
+    public bool UseHttpGenerateForImages { get; set; } = false;
 
     /// <summary>Keyed by <see cref="EminentAi.Application.Agents.AgentKind"/> name. Earlier entries in each array win.</summary>
     public Dictionary<string, string[]> NamePriorities { get; set; } = new()
@@ -34,7 +43,7 @@ public sealed class ModelMatrixOptions
         ["Architecture"] =
             ["ornith-1.5:9b", "ornith", "gemma4:e4b", "qwen3.5:9b", "qwen3.5:4b", "qwen3.5", "gemma4", "qwen2.5:latest", "qwen2.5"],
         ["ImageGeneration"] =
-            ["x/flux2-klein:4b", "flux2-klein", "flux", "diffusion"],
+            ["x/flux2-klein:latest", "flux2-klein", "flux", "diffusion"],
         ["General"] =
             ["gemma4:e4b", "ornith-1.5:9b", "ornith", "qwen3.5:9b", "qwen3.5:4b", "qwen3.5", "qwen2.5:latest", "qwen2.5", "llama3"],
     };
