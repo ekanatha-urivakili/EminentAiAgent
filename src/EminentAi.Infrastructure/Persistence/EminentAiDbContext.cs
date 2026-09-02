@@ -63,6 +63,7 @@ public class EminentAiDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Email).IsUnique();
+            entity.HasIndex(e => e.SessionTokenHash);
         });
 
         modelBuilder.Entity<AgentRun>(entity =>

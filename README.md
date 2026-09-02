@@ -37,10 +37,11 @@ src/EminentAi.Domain          Entities: conversations, branches, messages, agent
                               generated images, policy
 src/EminentAi.Application     Use cases: ChatService, PlannerService, AgentOrchestrator,
                               AgentOrchestratorFacade, IIntentRouter, IModelRouter,
-                              ISpecializedAgent, ImageGenerationAgent, ApprovalBroker
-src/EminentAi.Infrastructure  OllamaClient, IntentRouterService, ModelRouterService,
-                              OllamaModelProvider, McpHost, PolicyEngine, PiiRedactor,
-                              BuiltinToolRunner, EF Core SQLite persistence
+                              ISpecializedAgent, ImageGenerationAgent, IGpuWorkCoordinator,
+                              InfographicPromptBuilder, ModelMatrixOptions, ApprovalBroker
+src/EminentAi.Infrastructure  OllamaClient, ToolCallingIntentResolver, ModelRouterService,
+                              OllamaModelProvider, GpuWorkCoordinator, McpHost, PolicyEngine,
+                              PiiRedactor, BuiltinToolRunner, EF Core SQLite persistence
 src/EminentAi.Api             ASP.NET Core Minimal API + SSE endpoints on 127.0.0.1:5210
 Generated_images/             AI-generated PNGs — gitignored, served via /api/generated-images/
 web/                          React 19 + Vite + Tailwind UI
@@ -74,26 +75,24 @@ Or download the installer directly from [ollama.com/download](https://ollama.com
 
 | Model | Size | Tier | Role |
 | --- | --- | --- | --- |
-| `qwen3:8b` | 5.2 GB | balanced | Intent classifier, general agent, architecture, tool orchestration |
-| `qwen2.5-coder:1.5b` | 986 MB | fast | Code Agent + VS Code FIM completions |
-| `qwen2.5:latest` | 4.7 GB | balanced | General Agent / Architecture fallback |
-| `qwen3:latest` | 5.2 GB | balanced | Alias retained for image prompt engineering |
-| `gemma4:e4b` | 9.6 GB | balanced | Architecture Agent fallback |
-| `qwen2.5vl:latest` | 6.0 GB | vision | Vision Agent — only multimodal model |
-| `x/flux2-klein:4b` | 5.7 GB | image_gen | Image generation — Flux2 diffusion |
-| `x/z-image-turbo` | 12 GB | image_gen | High-quality image generation |
-| `nomic-embed-text:latest` | 274 MB | embedding | Reserved: RAG / semantic search |
+| `gemma4:e4b` | 9.6 GB | balanced | Default text model, primary classifier, and image prompt analyst |
+| `ornith-1.5:9b` | 5.6 GB | reasoning | Text, coding, architecture, and classifier fallback |
+| `qwen3-vl:latest` | 6.1 GB | vision | Dedicated vision-language model for image analysis & reference descriptions |
+| `qwen3.5:4b` | 2.8 GB | balanced | Fast local fallback model |
+| `x/flux2-klein:4b` | 5.7 GB | image_gen | Capability-gated educational infographic generation (Flux2 diffusion) |
+| `x/z-image-turbo` | 12 GB | image_gen | Image generation fallback |
+
+Flux models are capability-gated and never selected for text chat. Smart routing uses Gemma and Ornith for reasoning, Qwen for vision, and invokes Flux only for image generation requests.
 
 ## Prerequisites
 
 ```bash
 ollama serve                          # start the daemon (macOS: brew services start ollama)
-ollama pull qwen3:8b                  # classifier + local tool agent
-ollama pull qwen2.5:latest            # general agent
-ollama pull qwen2.5vl:latest          # vision agent
-ollama pull qwen2.5-coder:1.5b        # code agent + FIM completions
+ollama pull gemma4:e4b                # default chat, classifier, and local tool agent
+ollama pull qwen3-vl:latest           # dedicated vision model
+ollama pull ornith-1.5:9b             # coding, architecture, and reasoning
+ollama pull qwen3.5:4b                # fast local fallback
 ollama pull x/flux2-klein:4b          # image generation (Flux2)
-ollama pull x/z-image-turbo           # image generation (high quality, 12 GB)
 npm install --prefix web
 npm install --prefix vscode-extension
 ```
@@ -139,8 +138,8 @@ The backend uses `src/EminentAi.Api/appsettings.json`. Important settings:
 
 - **Chat**: streaming conversation persisted to SQLite. Regenerate creates a sibling message; fork creates a new branch.
 - **Plan**: read-only planning mode that returns validated JSON with repair retries.
-- **Agent**: autonomous execution with `qwen3:8b`, repository inspection, targeted file replacement, ZIP creation, step/token/time budgets, policy checks, and human approval for mutations.
-- **Smart Chat** (`POST /api/chat/smart`): agent-to-agent routing — intent is classified by `qwen3:8b`, the right specialist model is selected automatically, and the turn is dispatched to the appropriate agent (Vision, Code, Architecture, ImageGeneration, General). A `routing_decision` SSE event is emitted before the first token so the UI can show which model handled the request.
+- **Agent**: autonomous execution with `gemma4:e4b` by default and `qwen3.5:4b`/`ornith-1.5:9b` as fallback, plus repository inspection, targeted file replacement, ZIP creation, step/token/time budgets, policy checks, and human approval for mutations.
+- **Smart Chat** (`POST /api/chat/smart`): agent-to-agent routing with GPU work lease concurrency serialization. Intent is resolved through UI mode affordances (Code, Architecture, Infographic, Vision image attachment) or via tool-calling on the resident model (`gemma4:e4b` with `ornith-1.5:9b` fallback). Specialist models are selected dynamically, and turns are dispatched to the appropriate agent (Vision, Code, Architecture, ImageGeneration, General). A `routing_decision` SSE event is emitted before the first token detailing the route, model, provider, source, and timing.
 
 ## Current Architecture
 
@@ -208,12 +207,15 @@ sequenceDiagram
 
 ### Image Generation Pipeline
 
-Smart Chat routes image requests through a two-agent pipeline:
+Smart Chat routes image requests through an agent-to-agent educational infographic generation pipeline:
 
-1. **Agent 1 — `qwen3:latest` (prompt engineer)**: analyses the request, expands it into one or more optimised Flux2 prompts.
-2. **Agent 2 — Flux diffusion model** (`x/flux2-klein:4b` or `x/z-image-turbo`): generates a PNG for each expanded prompt.
+1. **Stage 0 (Vision reference)**: `qwen3-vl:latest` describes any attached reference images before content planning.
+2. **Stage 1 (Content Architect)**: `gemma4:e4b` (`ornith-1.5:9b` fallback) converts the topic into structured cards, diagrams, bullets, and best practices.
+3. **Stage 2-3 (VRAM Management)**: loaded models are snapshotted and unloaded to dedicate full GPU VRAM to diffusion.
+4. **Stage 4-5 (Diffusion Generation)**: `x/flux2-klein:4b` (`x/z-image-turbo` fallback) generates a high-resolution PNG for each infographic prompt.
+5. **Stage 6 (Model Restoration)**: previously active models are asynchronously warmed up in memory.
 
-VRAM management: all loaded models are unloaded before generation to give Flux full GPU memory, then restored afterwards. Progress is streamed via `image_gen_progress` SSE events so the UI shows a live pipeline panel. Generated PNGs are saved to `Generated_images/` and served through `/api/generated-images/{filename}`.
+Generated PNGs are saved to `Generated_images/` and served with session-token ownership validation through `/api/generated-images/{filename}`.
 
 Built-in connectors:
 
@@ -260,12 +262,12 @@ External stdio MCP connectors can be registered through `/api/connectors`.
 
 | Event | When | Key fields |
 | --- | --- | --- |
-| `routing_decision` | After intent and model resolved, before first token | `intent`, `model`, `provider`, `wasFastPath` |
+| `routing_decision` | After intent and model resolved, before first token | `intent`, `model`, `provider`, `reason`, `classificationMs`, `wasFastPath`, `manualOverrideApplied`, `overrideRejectedReason` |
 | `token` | Per token during text generation | `text` |
-| `image_gen_progress` | Pipeline stage transitions | `stage` (`analyzing_request` / `analysis_done` / `freeing_vram` / `generating` / `saving` / `restoring_models`) |
-| `image_generated` | After each PNG is saved and persisted | `url`, `filename`, `fluxPrompt`, `generationMs` |
+| `image_gen_progress` | Pipeline stage transitions | `stage` (`analyzing_request`, `analysis_done`, `freeing_vram`, `generating`, `saving`, `restoring_models`, `primary_model_failed`) |
+| `image_generated` | After each PNG is saved and persisted | `url`, `filename`, `fluxPrompt`, `description`, `index`, `total`, `generationMs` |
 | `done` | After DB persist completes | `messageId` |
-| `routing_error` | No model found or invalid override | `intent`, `message` |
+| `routing_error` | No model found or invalid override | `intent`, `message`, `ollamaPullCommand` |
 
 ## Password Reset
 
@@ -308,7 +310,7 @@ Installable VSIX:
 cd vscode-extension
 npm install
 npm run package
-code --install-extension eminentai-0.4.0.vsix
+code --install-extension eminentai-0.7.1.vsix
 ```
 
 Features:

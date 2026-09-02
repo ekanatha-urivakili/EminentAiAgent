@@ -30,7 +30,7 @@ trap cleanup SIGINT SIGTERM
 if ! curl -s --max-time 2 http://127.0.0.1:11434/api/tags > /dev/null; then
     echo "⚠️  Ollama is not responding on 127.0.0.1:11434."
     echo "   Start it first:  brew services start ollama"
-    echo "   Then pull models: ollama pull qwen2.5-coder:7b"
+    echo "   Then pull models: ollama pull gemma4:e4b && ollama pull qwen3-vl:latest && ollama pull ornith-1.5:9b && ollama pull qwen3.5:4b && ollama pull x/flux2-klein:4b"
 fi
 
 echo "🚀 Starting EminentAi backend on http://127.0.0.1:5210 ..."

@@ -126,9 +126,10 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
     {
         var n = name.ToLowerInvariant();
         if (n.Contains("embed") || n.Contains("nomic") || n.Contains("bge")) return "embedding";
-        if (n.Contains("vl") || n.Contains("vision") || n.Contains("llava") || n.Contains("moondream")) return "vision";
+        if (n.StartsWith("qwen3.5", StringComparison.Ordinal)
+            || n.Contains("qwen3-vl") || n.Contains("vl") || n.Contains("vision") || n.Contains("llava") || n.Contains("moondream")) return "vision";
         if (n.Contains("flux") || n.Contains("diffusion") || n.Contains("stable-diff")) return "image_gen";
-        if (n.Contains("r1") || n.Contains("reason") || n.Contains("think") || n.Contains("qwq")) return "reasoning";
+        if (n.Contains("r1") || n.Contains("reason") || n.Contains("think") || n.Contains("qwq") || n.Contains("ornith")) return "reasoning";
 
         if (parameterSize is not null &&
             double.TryParse(parameterSize.TrimEnd('B', 'b', 'M', 'm'), out var size))
@@ -164,6 +165,7 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         {
             temperature = req.Temperature,
             num_ctx = req.ContextWindow ?? 8192,
+            num_predict = req.MaxOutputTokens,
             // KV cache quantization is mandatory on 16 GB machines (see architecture §0.5)
             f16_kv = false
         },
@@ -200,17 +202,6 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
         }
     }
 
-    public async Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct = default)
-    {
-        var payload = new { model, prompt, stream = false };
-        using var response = await http.PostAsJsonAsync("/api/generate", payload, JsonOpts, ct);
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadFromJsonAsync<OllamaGenerateResponse>(cancellationToken: ct);
-        if (body?.Response is null)
-            throw new InvalidOperationException($"Flux2 response body missing 'response' field. Model: {model}");
-        return body.Response;
-    }
-
     public async Task UnloadModelAsync(string modelName, CancellationToken ct = default)
     {
         try
@@ -242,12 +233,6 @@ public sealed class OllamaClient(HttpClient http) : IOllamaClient
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
-
-    private sealed class OllamaGenerateResponse
-    {
-        [JsonPropertyName("response")] public string? Response { get; set; }
-        [JsonPropertyName("done")] public bool Done { get; set; }
-    }
 
     private sealed class OllamaChatResponse
     {

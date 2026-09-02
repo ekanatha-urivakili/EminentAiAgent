@@ -7,7 +7,7 @@ export interface ModelInfo {
   sizeBytes: number;
   family?: string;
   parameterSize?: string;
-  tier: 'fast' | 'balanced' | 'reasoning' | 'vision' | 'embedding';
+  tier: 'fast' | 'balanced' | 'reasoning' | 'vision' | 'embedding' | 'image_gen';
 }
 
 export interface LoadedModelInfo {
@@ -320,6 +320,10 @@ export interface AgentRunDetail {
 // ── Smart chat / A2A routing ─────────────────────────────────────────────────
 export type AgentKind = 'vision' | 'coding' | 'architecture' | 'imageGeneration' | 'general';
 
+// §18.5.4: how this turn's intent was decided — the UI-affordance/tool-calling routing badge
+// distinguishes "you selected" from "model decided" from the legacy zero-cost regex fast-path.
+export type RoutingSource = 'ui-affordance' | 'tool-call' | 'fast-path';
+
 export interface RoutingDecision {
   intent: AgentKind;
   model: string;
@@ -328,6 +332,8 @@ export interface RoutingDecision {
   classificationMs: number;
   wasFastPath: boolean;
   manualOverrideApplied: boolean;
+  overrideRejectedReason?: string;
+  source: RoutingSource;
 }
 
 export interface ImageGenerationResult {

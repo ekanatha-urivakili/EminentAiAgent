@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ExternalLink, Play, RefreshCw, Square, Cpu, Eye, Zap, Scale, BrainCircuit, Check, Copy, ChevronDown, Terminal, Download, Package, Search, CloudDownload, X } from 'lucide-react';
+import { ExternalLink, Play, RefreshCw, Square, Cpu, Eye, Image as ImageIcon, Zap, Scale, BrainCircuit, Check, Copy, ChevronDown, Terminal, Download, Package, Search, CloudDownload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatBytes } from '../lib/utils';
 import { useStore } from '../state/store';
@@ -7,10 +7,10 @@ import type { ModelInfo, OllamaRegistryModel } from '../lib/types';
 import { cn } from '../lib/utils';
 
 const tierIcon: Record<ModelInfo['tier'], typeof Cpu> = {
-  fast: Zap, balanced: Scale, reasoning: BrainCircuit, vision: Eye, embedding: Cpu,
+  fast: Zap, balanced: Scale, reasoning: BrainCircuit, vision: Eye, embedding: Cpu, image_gen: ImageIcon,
 };
 const tierLabel: Record<ModelInfo['tier'], string> = {
-  fast: 'Fast', balanced: 'Balanced', reasoning: 'Reasoning', vision: 'Vision', embedding: 'Embedding',
+  fast: 'Fast', balanced: 'Balanced', reasoning: 'Reasoning', vision: 'Vision', embedding: 'Embedding', image_gen: 'Image generation',
 };
 
 function modelBase(name: string) { return name.split(':')[0]; }
@@ -22,6 +22,7 @@ function describeModel(model: ModelInfo) {
   if (base.startsWith('llama3')) return 'Llama 3 is a compact multilingual instruction-tuned family designed for local dialogue, retrieval, and summarization.';
   if (base.includes('llava') || model.tier === 'vision') return 'Vision-capable model for prompts that include images as well as text.';
   if (base.includes('embed') || model.tier === 'embedding') return 'Embedding model for search, retrieval, clustering, and similarity workflows.';
+  if (model.tier === 'image_gen') return 'Image-generation model used only by the capability-gated image pipeline.';
   if (base.includes('coder') || base.includes('code')) return 'Code-focused local model for programming help, refactoring, and technical explanations.';
   if (model.tier === 'reasoning') return 'Reasoning-oriented model for multi-step questions, analysis, and planning.';
   return 'General local Ollama model for chat, drafting, summarization, and everyday assistant tasks.';
@@ -29,7 +30,9 @@ function describeModel(model: ModelInfo) {
 
 // ── Recommended models ───────────────────────────────────────────────────────
 const RECOMMENDED = [
-  { cmd: 'ollama pull qwen2.5-coder:7b',        label: 'qwen2.5-coder:7b',        size: '~4.7 GB', role: 'Chat + agent',           desc: 'Best small coder; solid tool calling for agent mode' },
+  { cmd: 'ollama pull gemma4:e4b',               label: 'gemma4:e4b',               size: '~9.6 GB', role: 'Default chat + agent',   desc: 'Primary local model for chat, coding, planning, and tool use' },
+  { cmd: 'ollama pull qwen3.5:9b',               label: 'qwen3.5:9b',               size: '~6.6 GB', role: 'Text + vision fallback', desc: 'Fallback for text routing and the vision-capable route' },
+  { cmd: 'ollama pull x/flux2-klein:4b',         label: 'x/flux2-klein:4b',         size: '~5.7 GB', role: 'Image generation',       desc: 'Flux image model used only for image-generation requests' },
   { cmd: 'ollama pull qwen2.5-coder:1.5b-base', label: 'qwen2.5-coder:1.5b-base', size: '~1 GB',   role: 'Inline completions',     desc: 'Fast FIM model for the VS Code extension' },
   { cmd: 'ollama pull llama3.1:8b',              label: 'llama3.1:8b',              size: '~4.7 GB', role: 'General chat',           desc: 'Strong instruction following for everyday questions' },
   { cmd: 'ollama pull nomic-embed-text',         label: 'nomic-embed-text',         size: '~0.3 GB', role: 'Embeddings (RAG)',        desc: 'Needed for file-upload retrieval and search' },
@@ -196,7 +199,7 @@ function InstallGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
                 </table>
               </div>
               <p className="text-xs text-muted-foreground">
-                <span className="font-medium">Minimum to get started:</span> pull <code className="bg-muted px-1 rounded">qwen2.5-coder:7b</code> — that covers chat, plan, and agent modes.
+                <span className="font-medium">Minimum to get started:</span> pull <code className="bg-muted px-1 rounded">gemma4:e4b</code> — that covers chat, plan, and agent modes.
                 Pull <code className="bg-muted px-1 rounded">nomic-embed-text</code> only if you use file uploads.
               </p>
               <p className="text-xs text-muted-foreground">
@@ -499,7 +502,7 @@ export function OllamaView() {
           <div className="space-y-2">
             <CodeLine cmd="brew install ollama" />
             <CodeLine cmd="brew services start ollama" />
-            <CodeLine cmd="ollama pull qwen2.5-coder:7b" />
+            <CodeLine cmd="ollama pull gemma4:e4b" />
           </div>
           <p className="text-xs text-muted-foreground">
             After pulling the model, click <span className="font-medium">Refresh</span> above. No Homebrew? See the full guide above.

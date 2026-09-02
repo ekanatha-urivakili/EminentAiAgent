@@ -1,12 +1,101 @@
 # Agent-to-Agent Orchestration Architecture
 
 > **EminentAi — Multi-Agent Routing System**
-> Version 3.1 — revised after async/security performance review. Current implementation keeps facade-level intent/model routing sequential, while MCP discovery and model-provider checks are parallelized internally.
+> Version 4.0 — local model order: `ornith-1.5:9b` for Coding & Architecture (and classifier fallback), `gemma4:e4b` for General / Classifier / Infographic Content Analyst, `qwen3-vl:latest` for Vision (also used to describe reference images in the image-gen pipeline, fallback `qwen3.5:9b`), `x/flux2-klein:4b` for image generation (fallback `x/z-image-turbo`). Current implementation keeps facade-level intent/model routing sequential, while MCP discovery and model-provider checks are parallelized internally.
 > Provider-agnostic: Ollama local models today, Claude / ChatGPT / Copilot extensible by design.
 
 ---
 
 ## Revision Notes
+
+### v3.9 → v4.0 (§18.7 Phases 2–4 Implemented, With Two Deliberate Scope Cuts)
+
+All four roadmap phases were attempted. Two were implemented exactly as designed; two were implemented with a deliberate, documented scope reduction from the original blueprint, because completing them as originally written would have meant shipping unverifiable or previously-disproven behavior. `dotnet build EminentAi.slnx` and `npx tsc -b` both pass with zero errors.
+
+| Phase | Status | What actually shipped |
+|---|---|---|
+| **Phase 2 — UI-Affordance Routing** | Done, as designed | `Composer.tsx`: three explicit route buttons (Code/Architecture/Infographic) send `manualRouteOverride` as a one-shot per-message selection; attaching an image now implies Vision the same way (previously only claimed in §13, never implemented — closes that gap too). `manualRouteOverride` now applies even when the "Auto" toggle is off. `RoutingDecision` gained a `source: 'ui-affordance' \| 'tool-call' \| 'fast-path'` field; `RoutingBadge` shows "you selected" vs "model decided" vs "fast-path" |
+| **Phase 3 — Tool-Calling Fallback** | Done, **scoped down** | `IntentRouterService` deleted; `ToolCallingIntentResolver` (new) resolves free-text intent via native tool-calling instead of a hand-parsed one-word label — this genuinely removes §18.2 item 3's raw-string fragility and item 6's quoted-string false-positive. **Not implemented:** reusing that call's own output as the final General-case answer (the "zero extra inference" pseudocode in §18.5.3). Doing so safely requires re-plumbing `ChatService`/`GeneralAgent`'s persistence path, which could not be verified without a live Ollama instance in this session — attempting it blind risked silent double-persistence or dropped messages. So a free-text turn still costs one dedicated classification round-trip, same as before v4.0, but the round-trip itself is now structurally sound |
+| **Phase 4 — Robust Media Engine** | Done, **scoped down** | `FluxImageGenerator.GenerateViaCliAsync` now kills the OS process tree (`Process.Kill(entireProcessTree: true)`) when the token is cancelled or the 15-minute timeout fires — this is the concrete, verifiable half of §18.2 item 2 (orphan processes) and required no change to response parsing. **Not implemented:** migrating from `ollama run` CLI to a direct HTTP `/api/generate` call. The v3.1→v3.2 revision notes record that this exact HTTP path was tried first and abandoned specifically because of Flux-model response-shape uncertainty across variants — reverting to it now, without a live instance running `x/flux2-klein:4b`/`x/z-image-turbo` to verify against, risks reintroducing a previously-fixed defect. This migration should be done with a live Ollama instance to test against, not blind |
+
+**Why the two cuts:** both Phase 3 and Phase 4's full designs trade a verified, working mechanism for an unverified one, on the promise of a latency or architecture win. Per this document's own §18.3 standard (reject a rewrite unless the win survives scrutiny), shipping either change without the ability to test it against a live Ollama instance would be the same mistake §18.3 criticizes elsewhere — swapping something that works for something that looks better on paper. Both remain natural next steps once manual verification against a running instance is possible.
+
+---
+
+### v3.8 → v3.9 (§18.7 Phase 1 Implemented)
+
+Phase 1 of the v4.1 roadmap (§18.7) is implemented on `feature/AI-Desktop-App` and builds clean (`dotnet build EminentAi.slnx`, 0 errors).
+
+| Roadmap item | Status | Where |
+|---|---|---|
+| GPU Work Coordinator & Concurrency Lock | Done | `IGpuWorkCoordinator`/`GpuWorkCoordinator` (new); `AgentOrchestratorFacade` acquires a lease for the full duration of every agent turn before dispatch |
+| Eliminate Global VRAM Eviction race (§18.2 item 1) | Done, scoped as designed | Not implemented by removing `ImageGenerationAgent`'s snapshot/evict/restore dance (that still requires §18.5.2's HTTP sidecar to be safe) — implemented by making concurrent eviction impossible: the GPU lease serializes all turns, so no turn can be mid-stream while another evicts models |
+| Config-driven Model Matrix (appsettings.json) | Done | New `ModelMatrixOptions` (`EminentAi.Application/Configuration`), bound from `EminentAi:ModelMatrix` in `appsettings.json`; replaces hardcoded constants in `IntentRouterService`, `ModelRouterService.NamePriorities`, and `ImageGenerationAgent` |
+| Fix doc/code drift: Vision override abort (§18.2 item 5) | Done | `AgentOrchestratorFacade`: a rejected override now falls through to `IIntentRouter.ClassifyAsync` instead of emitting `routing_error` and aborting the turn; the rejection reason is preserved in `ClassificationRecord.OverrideRejectedReason` and echoed in the `routing_decision` SSE payload (new field) |
+| PII redaction on model-echoed text (§18.2 item 7) | Done, bundled in with this pass | `ImageGenerationAgent` now redacts `Understanding`, `Description`, and `FluxPrompt` once immediately after analysis, before anything is emitted or persisted — previously `FluxPrompt` was only redacted per-image at generation time and `Understanding`/`Description` were never redacted at all |
+| Dead code: `IOllamaClient.GenerateImageAsync` (§18.2 item 8) | Done, bundled in with this pass | Removed from `IOllamaClient` and `OllamaClient`, along with the now-unused private `OllamaGenerateResponse` DTO |
+
+**Deferred to Phase 2/3, not attempted in this pass:** UI-affordance mode buttons (§18.5.4), tool-calling intent resolution (§18.5.3), removing the quoted-string fast-path (§18.2 item 6), and the HTTP/IPC media sidecar (§18.5.2) that would let the VRAM-eviction dance itself be removed rather than just made safe under concurrency.
+
+---
+
+### v3.7 → v3.8 (Second-Pass Verification — Dead Code Confirmed, One Finding Rejected)
+
+A second independent review pass re-checked v3.7 against the actual source. One of its two new claims held up under verification; the other did not.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `IOllamaClient.GenerateImageAsync` / `OllamaClient.GenerateImageAsync` are fully implemented but have zero call sites — the real pipeline uses `FluxImageGenerator`'s CLI path instead | High — confirmed by source grep | Added as §18.2 item 8; annotated the stale §13/§14 rows that still list it as "to add"; added removal to the §18.8 file map alongside the `DiffusionSidecarClient` work |
+| `src/EminentAi.Application/Class1.cs` (and `Infrastructure`/`Domain` siblings) flagged as "unused template boilerplate" | Rejected — checked by reading the files | All three already contain only `// (intentionally empty — placeholder removed)`. Not live scaffold code. Recorded as a rejected finding in §18.2 item 8's note so it isn't re-raised by a future pass |
+| §18.4's target-architecture diagram didn't visualize the §18.2 item 7 PII-redaction-of-echoed-text fix | Medium | Added an explicit `PiiGate` node on the ingestion path, with a dashed feedback edge from the Infographic Pipeline Orchestrator showing that model-echoed `Understanding`/`Description` text is redacted before emission, not just user input |
+
+---
+
+### v3.6 → v3.7 (§18 Redesigned — Tool-Calling & UI-Affordance Routing, Doc/Code Drift Fixes)
+
+This revision replaces the entire §18 blueprint following an independent architect review. The review (a) diffed §18's own claims against the actual `feature/AI-Desktop-App` code and found real doc/code contract drift in the sections §18 did *not* cover, and (b) rejected two of §18 v1's four subsystem proposals as over-engineered for a single-user local desktop app, in favor of patterns closer to what shipped agent products (Cursor, Claude Code, Copilot) and LLM-routing products (OpenRouter, Martian) actually use.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| §6.1/§8/§16 claim a `Vision` override without an image "falls through to classify normally"; `AgentOrchestratorFacade.cs` actually emits `routing_error` and aborts the turn | High | Documented as a real behavioral bug in §18.2 (item 5); target architecture in §18.4 removes the override-rejection dead-end entirely by letting the model itself see the lack of an image and decide |
+| §4.3 declares `ClassificationRecord.OverrideRejectedReason` as `AgentKind?`; actual record is `string?` | Low | Documented in §18.2 (item 5) as doc/code contract drift |
+| §6.2's fast-path table omits that `ImageGenKeywords` also matches any bare quoted-string message (`"..."`, `"...", "..."`), which can misroute quoted OCR/Vision text into image generation | Medium | Documented in §18.2 (item 6); eliminated in the target architecture by moving image-gen triggering to an explicit UI affordance instead of regex-on-free-text |
+| `IPiiRedactor` is applied to `userText` and the Flux prompt but not to `understanding`/`description`, which are echoed into SSE and persisted verbatim | Medium | Documented in §18.2 (item 7); target architecture requires all model-echoed text to pass through redaction before emission, not just user-authored text |
+| §18 v1 proposed an ONNX/MiniLM embedding-centroid router as the primary latency fix | Rejected | Removed. A hand-maintained centroid classifier requires an ongoing labeled corpus and threshold tuning to save ~500ms on a path dominated by 30–180s image generation. Superseded by tool-calling-based intent resolution (§18.4) and UI-affordance routing (§18.5), matching how Cursor/Claude Code/Copilot avoid a dedicated classifier entirely — see §18.3 |
+| §18 v1 proposed migrating specialized agents to Microsoft Semantic Kernel | Rejected | Removed. Buys OpenTelemetry/filters at the cost of a framework dependency with a history of breaking API rewrites, for a working, understood ~2000-line orchestrator. The same observability gain is available by adding `System.Diagnostics.Activity` spans directly — see §18.3 |
+| §18 v1's GPU Work Coordinator and HTTP/IPC media sidecar proposals | Kept | Both are genuine hardware-constraint fixes, independent of the routing-strategy question — carried forward unchanged into §18.4/§18.5 |
+
+---
+
+### v3.5 → v3.6 (Verified Against Implementation — ImageGenerationAgent Redesign)
+
+This revision was produced by diffing the doc against the actual code on `feature/AI-Desktop-App` (43 files ahead of `origin/main`). Routing core (§§4–8) matched the implementation closely; `ImageGenerationAgent` had diverged completely.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `ImageGenerationAgent` doc described a single-logo "translate → generate" pipeline; actual code is a fixed-template **educational infographic generator** | High | Rewrote §6.6, §7.4, §9, §10 around the real pipeline: `InfographicPromptBuilder` (fixed design, variable content), multi-infographic output, `GeneratedImage[]` not a single URL |
+| Classifier fallback documented as `qwen3.5:9b` | Medium | `IntentRouterService.cs:20` uses `ornith-1.5:9b` as the fallback classifier — fixed in §6.2 |
+| Image-gen fallback model `x/z-image-turbo` undocumented | High | `FluxImageGenerator.cs:13` defines it as the fallback for `x/flux2-klein:4b`; added to §15 and the SSE stage table (`primary_model_failed`) |
+| Reference-image description stage (Stage 0, vision model) undocumented | High | `ImageGenerationAgent.cs:130` describes attached reference images via `qwen3-vl:latest` (fallback `qwen3.5:9b`) before content analysis; added to §6.6 |
+| Shared `FluxImageGenerator` static class not in file map | Medium | Extracted so both `ImageGenerationAgent` and the Agent-mode `image.generate` builtin tool (`BuiltinToolRunner.cs:82`) call the same CLI-based generator; added to §11 |
+| `SmartChatContext`/`SmartTurnRequest` gained `RequestTokenHash` | Low | Used for `GeneratedImages` ownership checks independent of `BranchId`; added to §4.5 and §11 |
+| New top-level `AI_DESKTOP_APP_ARCHI.md` (Tauri + ASP.NET Core sidecar packaging plan) is a separate initiative, not reflected here | Info | Cross-referenced from §1 — it does not change anything in this document; it is a packaging/shell plan around the same backend |
+
+### v3.4 → v3.5 (Specialized Local Model Matrix)
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Pulled dedicated vision model `qwen3-vl:latest` | High | Vision routes now prefer `qwen3-vl:latest` over text-only fallbacks |
+| Added 9B reasoning/coding model `ornith-1.5:9b` | Medium | Coding & Architecture routes prioritize `ornith-1.5:9b` for 9B reasoning depth; `gemma4:e4b` is primary for General, Classifier, and Infographic Analyst |
+| Reference image describer updated | Medium | `ImageGenerationAgent` reference image analysis prioritizes `qwen3-vl:latest` |
+
+### v3.3 → v3.4 (Local Model Priority)
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Routing referenced local models that are no longer installed | High | Text routes now prefer `gemma4:e4b`, then `qwen3.5:9b` |
+| Classifier and image analyst had no local-model fallback | Medium | Both use `gemma4:e4b` first and retry with `qwen3.5:9b` |
+| Image routing must not leak into text selection | High | `x/flux2-klein:4b` remains capability-gated to `ImageGeneration` |
 
 ### v3.2 → v3.3 (Workspace Tools, Web Research, and IDE Agent)
 
@@ -111,12 +200,23 @@
 15. [Model Fallback Matrix](#15-model-fallback-matrix)
 16. [Security Considerations](#16-security-considerations)
 17. [Operational Notes](#17-operational-notes)
+18. [Architectural Critique & Next-Generation Alternatives (v4.1 Blueprint — Tool-Calling & UI-Affordance Routing)](#18-architectural-critique--next-generation-alternatives-v41-blueprint--tool-calling--ui-affordance-routing)
+   - 18.1 [Architectural Review & Scorecard](#181-architectural-review--scorecard)
+   - 18.2 [Critical Gaps & Fragility Analysis](#182-critical-gaps--fragility-analysis)
+   - 18.3 [Rejected Alternatives & Industry Comparison](#183-rejected-alternatives--industry-comparison)
+   - 18.4 [Proposed Target Architecture: Tool-Calling Intent Resolution](#184-proposed-target-architecture-tool-calling-intent-resolution)
+   - 18.5 [Core Subsystem Design](#185-core-subsystem-design)
+   - 18.6 [Target State Sequence Diagram](#186-target-state-sequence-diagram)
+   - 18.7 [Migration & Phased Implementation Roadmap](#187-migration--phased-implementation-roadmap)
+   - 18.8 [v4.1 File Map — What Actually Changes](#188-v41-file-map--what-actually-changes)
 
 ---
 
 ## 1. Overview
 
 Every chat message today goes to whatever model the user manually selected. No intelligence routes by task type, and no abstraction allows swapping providers without rewriting infrastructure.
+
+> **Related document:** [`AI_DESKTOP_APP_ARCHI.md`](../AI_DESKTOP_APP_ARCHI.md) is a separate, higher-level plan for packaging this same ASP.NET Core backend behind a Tauri desktop shell. It does not change anything described here — the smart-chat routing layer, agents, and SSE contract in this document are what the desktop shell would call over loopback HTTP.
 
 This architecture inserts a **true orchestration layer** with a clean separation of concerns:
 
@@ -140,15 +240,11 @@ POST /api/chat/smart
 ```
 NAME                       SIZE     TIER           ROLE
 ────────────────────────────────────────────────────────────────────────
-qwen3:8b                   5.2 GB   balanced       Intent classifier + tool orchestrator + architecture
-qwen2.5-coder:1.5b         986 MB   fast           Code Agent + VS Code FIM completions
-qwen2.5:latest             4.7 GB   balanced       General Agent / Architecture fallback
-qwen3:latest               5.2 GB   balanced       Alias retained for image prompt engineering
-gemma4:e4b                 9.6 GB   balanced       Architecture Agent — fallback
-qwen2.5vl:latest           6.0 GB   vision         Vision Agent — only multimodal model
+gemma4:e4b                 9.6 GB   balanced       Default text model + classifier + image prompt analyst
+ornith-1.5:9b              5.6 GB   reasoning      Text, coding, architecture, classifier fallback
+qwen3-vl:latest            6.1 GB   vision         Dedicated vision-language model for image analysis
+qwen3.5:4b                 2.8 GB   balanced       Fast/local fallback model
 x/flux2-klein:4b           5.7 GB   image_gen      Image generation — Flux2 diffusion
-x/z-image-turbo            12 GB    image_gen      Image generation — high quality
-nomic-embed-text:latest    274 MB   embedding      Reserved: RAG / semantic search
 ```
 
 **VRAM management:** `ImageGenerationAgent` takes an active approach — it snapshots all currently loaded models via `/api/ps`, unloads each with `keep_alive=0`, runs the Flux model, then fire-and-forgets `WarmUpModelAsync` for each previously loaded model. This prevents OOM on 16 GB systems when Flux needs the full VRAM budget. Progress is streamed via `image_gen_progress` SSE events so the UI is never silent during the 30–180 s generation window.
@@ -472,11 +568,14 @@ public interface ISpecializedAgent
 }
 
 // AssistantMessageId was removed from SmartChatContext. ChatService creates the assistant Message entity and surfaces its ID on streamed deltas before persisting it at the end of the stream.
+// RequestTokenHash (added v3.6) is a hash of the caller's bearer token, independent of BranchId,
+// used by ImageGenerationAgent to record per-session ownership on GeneratedImages rows.
 public sealed record SmartChatContext(
     Guid BranchId,
     string UserText,
     IReadOnlyList<ChatAttachment> Attachments,
-    IntentDecision Intent
+    IntentDecision Intent,
+    string? RequestTokenHash
 );
 
 public sealed record SmartChatEvent(string Type, object Data);
@@ -617,6 +716,13 @@ The applied `AgentKind` is always returned in `routing_decision.intent` so the U
 
 ### 6.2 IntentRouterService
 
+> **Superseded as of v4.0 (§18.7 Phase 3):** `IntentRouterService` was deleted from the codebase and
+> its `IIntentRouter` registration replaced by `ToolCallingIntentResolver` (§18.5.3), which resolves
+> free-text intent via native tool-calling instead of the raw-string classification prompt described
+> below. This LLD is retained for historical/design-rationale context — the fast-path table, the
+> classification prompt, and the defensive label parsing it documents no longer exist in the running
+> system. See §18.2 items 3/6 for why, and the v3.9 → v4.0 revision notes for what replaced it.
+
 ```mermaid
 classDiagram
     class IntentRouterService {
@@ -640,7 +746,7 @@ classDiagram
 | `HasImageAttachment && text matches \b(read\|extract\|what\|describe\|tell me about\|text in)\b` | `Vision` | `fastPath:vision` |
 | `text matches ^(generate\|draw\|create a (logo\|image\|picture\|banner)\|design an? image\|make an? logo)` | `ImageGeneration` | `fastPath:imageGen` |
 
-**Classification prompt** (sent to `qwen3:8b`, temperature 0.0, max 10 tokens):
+**Classification prompt** (sent to `gemma4:e4b`, then retried with `ornith-1.5:9b` on failure; temperature 0.0, max 10 tokens):
 
 ```
 You are a one-word classifier. Reply with EXACTLY ONE label — no punctuation, no explanation.
@@ -741,11 +847,11 @@ private IReadOnlyList<ModelDescriptor> FilterByCapabilities(
 private static readonly IReadOnlyDictionary<AgentKind, string[]> NamePriorities =
     new Dictionary<AgentKind, string[]>
     {
-        [AgentKind.Vision]          = ["qwen2.5vl", "vl", "vision", "llava", "moondream"],
-        [AgentKind.Coding]          = ["qwen2.5-coder:1.5b", "qwen2.5-coder", "coder", "deepseek-coder"],
-        [AgentKind.Architecture]    = ["qwen3:latest", "qwen3", "gemma4", "qwen2.5:latest", "qwen2.5"],
-        [AgentKind.ImageGeneration] = ["flux2-klein", "flux", "diffusion"],
-        [AgentKind.General]         = ["qwen2.5:latest", "qwen2.5", "qwen3.5", "llama3"],
+        [AgentKind.Vision]          = ["qwen3-vl:latest", "qwen3-vl", "qwen3.5:9b", "qwen3.5:4b", "qwen3.5", "qwen2.5vl", "vl", "vision", "llava", "moondream"],
+        [AgentKind.Coding]          = ["ornith-1.5:9b", "ornith", "gemma4:e4b", "qwen3.5:9b", "qwen3.5:4b", "qwen3.5", "qwen2.5-coder", "coder", "deepseek-coder"],
+        [AgentKind.Architecture]    = ["ornith-1.5:9b", "ornith", "gemma4:e4b", "qwen3.5:9b", "qwen3.5:4b", "qwen3.5", "gemma4", "qwen2.5:latest", "qwen2.5"],
+        [AgentKind.ImageGeneration] = ["x/flux2-klein:4b", "flux2-klein", "flux", "diffusion"],
+        [AgentKind.General]         = ["gemma4:e4b", "ornith-1.5:9b", "ornith", "qwen3.5:9b", "qwen3.5:4b", "qwen3.5", "qwen2.5:latest", "qwen2.5", "llama3"],
     };
 ```
 
@@ -851,6 +957,8 @@ public async IAsyncEnumerable<ChatDelta> SendMessageAsync(
 
 ### 6.6 ImageGenerationAgent
 
+`ImageGenerationAgent` is **not** a general "type a prompt, get an image" pipeline. It is a fixed-template **educational software-engineering infographic generator** — every output uses the same visual design (`InfographicPromptBuilder`); only the *content* (title, subtitle, up to 8 cards, best-practice labels) varies per request, so a whole series looks consistent. A single user request can expand into multiple infographics (one per distinct topic), each producing its own image.
+
 ```mermaid
 classDiagram
     class ImageGenerationAgent {
@@ -859,78 +967,117 @@ classDiagram
         -IConversationRepository _conversationRepo
         -IPiiRedactor _redactor
         -string _outputDirectory
-        -const string FluxModel = "x/flux2-klein:4b"
-        -const string AnalystModel = "qwen3:latest"
+        -const string PrimaryModel = FluxImageGenerator.PrimaryModel   "x/flux2-klein:4b"
+        -const string FallbackModel = FluxImageGenerator.FallbackModel "x/z-image-turbo"
+        -const string PrimaryAnalystModel = "gemma4:e4b"
+        -const string FallbackAnalystModel = "ornith-1.5:9b"
+        -const string PrimaryVisionModel = "qwen3-vl:latest"
+        -const string FallbackVisionModel = "qwen3.5:9b"
         +Kind: AgentKind = ImageGeneration
         +ExecuteAsync(SmartChatContext, ModelRoute, CancellationToken) IAsyncEnumerable~SmartChatEvent~
-        -AnalyzeAndExpandPromptsAsync(userText, ct) Task~AnalysisResult~
-        -GenerateViaCliAsync(model, prompt, ct) Task~string~
+        -DescribeReferenceImagesAsync(imageAttachments, ct) Task~string?~
+        -AnalyzeAndExpandPromptsAsync(userText, referenceDescription, ct) Task~AnalysisResult~
         -SaveImageAsync(base64Raw, ct) Task~(FullPath, Filename)~
+    }
+
+    class FluxImageGenerator {
+        <<static>>
+        +const PrimaryModel = "x/flux2-klein:4b"
+        +const FallbackModel = "x/z-image-turbo"
+        +GenerateViaCliAsync(model, prompt, ct) Task~string~
+        +GenerateWithFallbackAsync(primary, fallback, prompt, ct) Task~(Base64Png, ModelUsed)~
+        +DetectImageFormat(bytes) string?
+    }
+
+    class InfographicPromptBuilder {
+        <<static>>
+        +const MaxCards = 8
+        +BuildPrompt(InfographicSpec) string
     }
 
     ImageGenerationAgent ..|> ISpecializedAgent
     ImageGenerationAgent --> IOllamaClient
     ImageGenerationAgent --> IGeneratedImageRepository
     ImageGenerationAgent --> IConversationRepository
+    ImageGenerationAgent --> FluxImageGenerator
+    ImageGenerationAgent --> InfographicPromptBuilder
 ```
 
-**Actual pipeline (v3.2):**
+`FluxImageGenerator` is a shared static class — both `ImageGenerationAgent` and the Agent-mode `image.generate` builtin tool (`BuiltinToolRunner.cs`) call it for CLI-based generation, so the two code paths cannot drift in how they invoke `ollama run` or parse output.
+
+**Actual pipeline (v3.6):**
 
 ```mermaid
 flowchart LR
-    A["User prompt"] --> B["Agent 1: qwen3:latest\nAnalyse + expand to N Flux prompts\nJSON: understanding + prompts[]"]
-    B --> C["Snapshot loaded models\nvia /api/ps"]
+    A["User message\n(+ optional reference image)"] --> A0{"Reference image\nattached?"}
+    A0 -->|"yes"| V["Stage 0: qwen3-vl:latest\nFallback: qwen3.5:9b\nDescribe reference image in 1-2 sentences"]
+    A0 -->|"no"| B
+    V --> B["Stage 1: gemma4:e4b\nFallback: ornith-1.5:9b\nExpand topic into N infographic\nCONTENT blocks (JSON) — title,\nsubtitle, ≤8 cards, best practices"]
+    B --> C["Snapshot loaded models via /api/ps"]
     C --> D["Unload all models\nkeep_alive=0 · 500ms settle"]
-    D --> E["For each expanded prompt:\nollama run flux2-klein prompt\n15-min timeout"]
-    E --> F["Strategy A: PNG in workdir\nStrategy B: base64 in stdout"]
-    F --> G["Save to Generated_images/uuid.png\nPath containment check"]
-    G --> H["INSERT GeneratedImages\n+ INSERT Message\nwith all image markdown"]
-    H --> I["image_generated SSE\ndone SSE"]
-    I --> J["WarmUp previously\nloaded models\nfire-and-forget"]
+    D --> E["Per infographic:\nInfographicPromptBuilder merges FIXED\ndesign template + generated content"]
+    E --> F["ollama run x/flux2-klein:4b <prompt>\n15-min timeout"]
+    F -->|"fails"| F2["primary_model_failed SSE\nollama run x/z-image-turbo <prompt>"]
+    F --> G["Strategy A: PNG in workdir\nStrategy B: base64 in stdout"]
+    F2 --> G
+    G --> H["Save to Generated_images/uuid.png\nPath containment check"]
+    H --> I["image_generated SSE per image"]
+    I --> J["INSERT GeneratedImages ×N\n+ INSERT Message\nwith all image markdown"]
+    J --> K["done SSE"]
+    K --> L["WarmUp previously loaded models\nfire-and-forget"]
 ```
 
-**Analyst system prompt** (sent to `qwen3:latest`, temp 0.2, force JSON):
+**Stage 0 — reference image description (new in v3.6):** if the user attaches an image, `DescribeReferenceImagesAsync` sends it to `qwen3-vl:latest` (fallback `qwen3.5:9b`) with a fixed prompt asking for a 1-2 sentence description (subject, style, colours, composition). The description is prepended to the content-analyst's input as `Reference image: {description}`. This never touches the fixed visual design — it only informs the *content*.
 
-The analyst is instructed to return:
+**Content-analyst system prompt** (sent to `gemma4:e4b`, then `ornith-1.5:9b` on failure; temp 0.2, force JSON): the analyst's ONLY job is content — title, subtitle, cards, best practices — never visual style, colour, or layout (those are fixed in `InfographicPromptBuilder.DesignBlock`). It returns:
+
 ```json
 {
-  "understanding": "One sentence: what the user wants",
-  "prompts": [
-    { "description": "short human-readable label", "prompt": "the Flux2 prompt" }
+  "understanding": "One sentence: what topic(s) you are covering",
+  "infographics": [
+    {
+      "title": "SHORT TITLE",
+      "subtitle": "SHORT SUBTITLE",
+      "cards": [
+        { "title": "CARD TITLE", "diagram": "A -> B -> C", "bullets": ["...", "...", "..."] }
+      ],
+      "bestPractices": ["...", "..."]
+    }
   ]
 }
 ```
 
-For multi-variant requests (dark/light theme, different sizes, multiple colour schemes), the analyst generates a separate prompt object per variant. `<think>…</think>` reasoning blocks from qwen3 are stripped before JSON parsing.
+Rules enforced in the prompt: at most `InfographicPromptBuilder.MaxCards` (8) cards per infographic — chosen for accuracy, Ollama's own guidance is that more causes distorted Flux text; each card has a 2-4 word uppercase title, a one-line diagram description, and exactly three bullets under five words each; if the user asks about multiple distinct topics, the analyst returns a **separate infographic object per topic** — one user message can produce N images. `<think>…</think>` reasoning blocks (from qwen-family models) are stripped before JSON parsing. On analyst failure (both models), a single-card fallback infographic is built directly from the raw user text (`FallbackResult`) rather than failing the turn.
 
-**Quoted-prompt shortcut:** Input of the form `"A cute baby", "Bold text"` bypasses the analyst and sends each quoted string directly to Flux with enhancement instructions.
+**`InfographicPromptBuilder`:** merges a constant `DesignBlock` (white background, purple border, numbered circular badges, pastel card colours, hand-drawn headline typography, `ekanatha.io` watermark) and `AvoidBlock` (no photorealism, no gradients, no dark background, no distorted letters) with the per-request `InfographicSpec` (title/subtitle/cards/bestPractices) to produce the final Flux prompt. Card layout is single-row for ≤5 cards, otherwise a 4-column grid.
 
 **`IOllamaClient` methods used by `ImageGenerationAgent`:**
 
 ```csharp
-Task<string> ChatOnceAsync(ChatRequest request, CancellationToken ct);       // Agent 1: qwen3 analysis
-Task<IReadOnlyList<LoadedModelInfo>> GetLoadedModelsAsync(CancellationToken ct); // VRAM snapshot
-Task UnloadModelAsync(string modelName, CancellationToken ct);               // VRAM free
-Task WarmUpModelAsync(string modelName, CancellationToken ct);               // VRAM restore (fire-and-forget)
-// GenerateImageAsync is NOT used — CLI path via `ollama run` is used instead
+Task<string> ChatOnceAsync(ChatRequest request, CancellationToken ct);            // Stage 0 vision + Stage 1 content analysis
+Task<IReadOnlyList<LoadedModelInfo>> GetLoadedModelsAsync(CancellationToken ct);   // VRAM snapshot
+Task UnloadModelAsync(string modelName, CancellationToken ct);                    // VRAM free
+Task WarmUpModelAsync(string modelName, CancellationToken ct);                    // VRAM restore (fire-and-forget)
+// GenerateImageAsync / /api/generate is NOT used — CLI path via FluxImageGenerator.GenerateViaCliAsync (`ollama run`) is used instead
 ```
 
 **SSE stages emitted:**
 
 | Stage | Meaning |
 |---|---|
-| `analyzing_request` | qwen3:latest is processing the request |
-| `analysis_done` | Expansion complete; `understanding` and `total` counts emitted |
+| `analyzing_request` | `gemma4:e4b` is processing the request; `analystModel` emitted |
+| `analysis_done` | Expansion complete; `understanding`, `analystModel`, `total` (infographic count), `prompts[]` emitted |
 | `freeing_vram` | Unloading models; `killingModels[]` list emitted |
-| `generating` | Flux is running for prompt N of M; `prompt`, `description` emitted |
-| `gen_failed` | Flux failed for one image; pipeline continues with next |
+| `generating` | Flux is running for infographic N of M; `current`, `total`, `prompt`, `description` emitted |
+| `primary_model_failed` | `x/flux2-klein:4b` failed for one image; falling back to `x/z-image-turbo`; `model`, `fallback`, `error` emitted |
+| `gen_failed` | Both primary and fallback failed for one image; pipeline continues with the next |
 | `saving` | PNG detected; writing to disk |
 | `save_failed` | Write failed; pipeline continues |
 | `restoring_models` | Fire-and-forget warm-up; `models[]` list emitted |
 
 **Ownership persistence** — before `done` is emitted:
 
-Both `GeneratedImages` row and `Message` row (containing markdown for all successful images) are written before `done` is yielded.
+The user message is persisted **immediately**, before the (potentially multi-minute) pipeline runs, so it survives a client disconnect mid-generation. Once generation finishes, every successful image gets a `GeneratedImages` row (keyed by `RequestTokenHash`, not just `BranchId`) and the assistant `Message` (markdown for all successful images) is written using `CancellationToken.None` — a disconnect after images are generated must not lose them. `done` is yielded only after all of that persistence completes. If every image in the batch fails, no assistant message is created and a `routing_error` is emitted instead.
 
 ---
 
@@ -968,16 +1115,16 @@ sequenceDiagram
     MR->>OProv: ListModelsAsync() [cached]
     OProv-->>MR: [ModelDescriptor list]
     MR->>MR: FilterByPolicy → all pass (IsLocal, cost=0)
-    MR->>MR: FilterByCapabilities({Vision}) → qwen2.5vl passes
-    MR->>MR: FindByNamePriority("qwen2.5vl") → qwen2.5vl:latest
-    MR-->>AOF: ModelRoute{qwen2.5vl:latest, "ollama", exactMatch:true}
+    MR->>MR: FilterByCapabilities({Vision}) → qwen3.5:9b passes
+    MR->>MR: FindByNamePriority("qwen3.5:9b") → qwen3.5:9b
+    MR-->>AOF: ModelRoute{qwen3.5:9b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"vision", model:"qwen2.5vl:latest", provider:"ollama", wasFastPath:true}
+    API-->>Web: SSE: routing_decision {intent:"vision", model:"qwen3.5:9b", provider:"ollama", wasFastPath:true}
 
     AOF->>VA: ExecuteAsync(context, route, ct)
-    VA->>CS: SendMessageAsync(branchId, text, "qwen2.5vl:latest", attachments, AgentProfile.Vision)
-    CS->>OC: ChatStreamAsync(qwen2.5vl, [system:vision, history, user+images])
+    VA->>CS: SendMessageAsync(branchId, text, "qwen3.5:9b", attachments, AgentProfile.Vision)
+    CS->>OC: ChatStreamAsync(qwen3.5:9b, [system:vision, history, user+images])
     loop streaming tokens
         OC-->>CS: ChatDelta{token}
         CS-->>VA: ChatDelta{token}
@@ -1006,11 +1153,11 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3:8b)
+    participant OC_C as OllamaClient (gemma4:e4b)
     participant MR as ModelRouterService
     participant CA as CodeAgent
     participant CS as ChatService
-    participant OC_M as OllamaClient (qwen2.5-coder:1.5b)
+    participant OC_M as OllamaClient (gemma4:e4b)
     participant DB as SQLite
 
     User->>Web: "Show me a real-world Saga pattern in C# with compensating transactions"
@@ -1019,20 +1166,20 @@ sequenceDiagram
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
     IR->>IR: No fast-path match
-    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt, temp:0.0)
+    IR->>OC_C: ChatOnceAsync(gemma4:e4b, classifyPrompt, temp:0.0)
     OC_C-->>IR: "CODING"
     IR->>IR: ParseIntentLabel("CODING") → Coding
     IR-->>AOF: IntentDecision{Coding, AgentProfile.Coding, rawLabel:"CODING", ms:430}
 
     AOF->>MR: ResolveAsync(AgentProfile.Coding, costPolicy, residencyPolicy)
-    MR-->>AOF: ModelRoute{qwen2.5-coder:1.5b, "ollama", exactMatch:true}
+    MR-->>AOF: ModelRoute{gemma4:e4b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"coding", model:"qwen2.5-coder:1.5b", provider:"ollama"}
+    API-->>Web: SSE: routing_decision {intent:"coding", model:"gemma4:e4b", provider:"ollama"}
 
     AOF->>CA: ExecuteAsync(context, route, ct)
-    CA->>CS: SendMessageAsync(branchId, text, "qwen2.5-coder:1.5b", [], AgentProfile.Coding)
-    CS->>OC_M: ChatStreamAsync(qwen2.5-coder, [system:coding, history, user])
+    CA->>CS: SendMessageAsync(branchId, text, "gemma4:e4b", [], AgentProfile.Coding)
+    CS->>OC_M: ChatStreamAsync(gemma4:e4b, [system:coding, history, user])
     loop streaming
         OC_M-->>CA: ChatDelta{token}
         CA-->>AOF: SmartChatEvent{token}
@@ -1057,11 +1204,11 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3:8b)
+    participant OC_C as OllamaClient (gemma4:e4b)
     participant MR as ModelRouterService
     participant AA as ArchitectureAgent
     participant CS as ChatService
-    participant OC_M as OllamaClient (qwen3:latest)
+    participant OC_M as OllamaClient (gemma4:e4b)
     participant DB as SQLite
 
     User->>Web: "Design a microservices e-commerce platform with React, .NET 10, Redis, PostgreSQL"
@@ -1069,19 +1216,19 @@ sequenceDiagram
 
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
-    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt)
+    IR->>OC_C: ChatOnceAsync(gemma4:e4b, classifyPrompt)
     OC_C-->>IR: "ARCHITECTURE"
     IR-->>AOF: IntentDecision{Architecture, AgentProfile.Architecture, ms:450}
 
     AOF->>MR: ResolveAsync(AgentProfile.Architecture, ...)
-    MR-->>AOF: ModelRoute{qwen3:latest, "ollama", exactMatch:true}
+    MR-->>AOF: ModelRoute{gemma4:e4b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"architecture", model:"qwen3:latest", provider:"ollama"}
+    API-->>Web: SSE: routing_decision {intent:"architecture", model:"gemma4:e4b", provider:"ollama"}
 
     AOF->>AA: ExecuteAsync(context, route, ct)
-    AA->>CS: SendMessageAsync(branchId, text, "qwen3:latest", [], AgentProfile.Architecture)
-    CS->>OC_M: ChatStreamAsync(qwen3:latest, [system:arch, history, user])
+    AA->>CS: SendMessageAsync(branchId, text, "gemma4:e4b", [], AgentProfile.Architecture)
+    CS->>OC_M: ChatStreamAsync(gemma4:e4b, [system:arch, history, user])
     loop streaming HLD + LLD + sequence + flowchart
         OC_M-->>AA: ChatDelta{token}
         AA-->>AOF: SmartChatEvent{token}
@@ -1099,7 +1246,7 @@ sequenceDiagram
 
 ---
 
-### 7.4 Flow 4 — Image Generation
+### 7.4 Flow 4 — Image Generation (Infographic Pipeline)
 
 ```mermaid
 sequenceDiagram
@@ -1110,17 +1257,18 @@ sequenceDiagram
     participant IR as IntentRouterService
     participant MR as ModelRouterService
     participant IGA as ImageGenerationAgent
-    participant OC_T as OllamaClient (qwen3:latest — prompt analyst)
-    participant OC_F as OllamaClient (flux2-klein — generator)
+    participant OC_V as OllamaClient (qwen3-vl:latest — reference vision)
+    participant OC_A as OllamaClient (gemma4:e4b — content analyst)
+    participant OC_F as ollama run (x/flux2-klein:4b, fallback x/z-image-turbo)
     participant FS as Local Filesystem
     participant DB as SQLite
 
-    User->>Web: "Generate a minimalist logo for my AI startup called Eminent"
+    User->>Web: "Make infographics explaining SOLID principles and caching strategies"
     Web->>API: {branchId, content, manualRouteOverride:null}
 
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
-    IR->>IR: Fast-path: "Generate a ... logo" → ImageGeneration
+    IR->>IR: Fast-path: "Generate/create..." or quoted-prompt pattern → ImageGeneration
     IR-->>AOF: IntentDecision{ImageGeneration, AgentProfile.ImageGeneration, wasFastPath:true}
 
     AOF->>MR: ResolveAsync(AgentProfile.ImageGeneration, costPolicy, residencyPolicy)
@@ -1131,39 +1279,62 @@ sequenceDiagram
     API-->>Web: SSE: routing_decision {intent:"imageGeneration", model:"x/flux2-klein:4b", provider:"ollama"}
 
     AOF->>IGA: ExecuteAsync(context, route, ct)
+    IGA->>DB: INSERT Message(role:User) — persisted immediately, before the slow pipeline
 
-    IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"translating"}
-    API-->>Web: SSE: image_gen_progress {stage:"translating"}
+    opt reference image attached
+        IGA->>OC_V: ChatOnceAsync(qwen3-vl:latest, describeReferenceImage)
+        OC_V-->>IGA: "1-2 sentence description" (fallback qwen3.5:9b on failure)
+    end
 
-    IGA->>OC_T: ChatOnceAsync(qwen3:latest, fluxPromptEngineer, userPrompt, temp:0.3)
-    OC_T-->>IGA: "minimalist logo, AI startup, bold sans-serif, dark bg, neon blue, vector art"
+    IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"analyzing_request", analystModel:"gemma4:e4b"}
+    API-->>Web: SSE: image_gen_progress {stage:"analyzing_request"}
 
-    IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"generating", fluxPrompt}
-    API-->>Web: SSE: image_gen_progress {stage:"generating", fluxPrompt}
+    IGA->>OC_A: ChatOnceAsync(gemma4:e4b, analystSystemPrompt, [refDescription+]userText, forceJson:true)
+    OC_A-->>IGA: {understanding, infographics:[{title,subtitle,cards[≤8],bestPractices}, ...]}
+    Note over IGA,OC_A: fallback ornith-1.5:9b on failure; <think> blocks stripped;\nsingle-card fallback infographic if both models fail
 
-    IGA->>OC_F: GenerateImageAsync(flux2-klein, fluxPrompt)
-    Note over IGA,OC_F: POST /api/generate · stream:false · 30–120s\n⚠ response shape must be confirmed by spike
+    IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"analysis_done", understanding, total:2, prompts[]}
+    API-->>Web: SSE: image_gen_progress {stage:"analysis_done", total:2}
 
-    OC_F-->>IGA: base64 PNG string
+    IGA->>IGA: Snapshot loaded models (/api/ps) → unload all (keep_alive=0, 500ms settle)
+    IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"freeing_vram", killingModels[]}
+    API-->>Web: SSE: image_gen_progress {stage:"freeing_vram"}
 
-    IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"saving"}
-    API-->>Web: SSE: image_gen_progress {stage:"saving"}
+    loop for each expanded infographic (InfographicPromptBuilder merges fixed design + content)
+        IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"generating", current, total, prompt, description}
+        API-->>Web: SSE: image_gen_progress {stage:"generating"}
 
-    IGA->>FS: write /generated-images/uuid.png
-    FS-->>IGA: ok
+        IGA->>OC_F: ollama run x/flux2-klein:4b "<merged prompt>" (15-min timeout)
+        alt primary succeeds
+            OC_F-->>IGA: PNG (workdir file or base64 stdout)
+        else primary fails
+            IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"primary_model_failed", model, fallback, error}
+            API-->>Web: SSE: image_gen_progress {stage:"primary_model_failed"}
+            IGA->>OC_F: ollama run x/z-image-turbo "<merged prompt>"
+            OC_F-->>IGA: PNG or failure → gen_failed, continue to next infographic
+        end
 
-    Note over IGA,DB: Persist both rows before any done signal
-    IGA->>DB: INSERT GeneratedImages(id:uuid, branchId)
-    IGA->>DB: INSERT Message(content:"[image](/api/generated-images/uuid.png)")
+        IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"saving"}
+        IGA->>FS: write Generated_images/{guid}.png (path containment check)
+        FS-->>IGA: ok
+
+        IGA-->>AOF: SmartChatEvent{image_generated, url, filename, fluxPrompt, description, index, total, generationMs}
+        API-->>Web: SSE: image_generated {url, index, total, ...}
+    end
+
+    IGA-->>AOF: SmartChatEvent{image_gen_progress, stage:"restoring_models", models[]}
+    API-->>Web: SSE: image_gen_progress {stage:"restoring_models"}
+    IGA->>IGA: WarmUpModelAsync per previously-loaded model (fire-and-forget)
+
+    Note over IGA,DB: Persist GeneratedImages ×N + assistant Message (CancellationToken.None)\nbefore any done signal — already-generated images must survive a disconnect
+    IGA->>DB: INSERT GeneratedImages(id, branchId, requestTokenHash) ×N
+    IGA->>DB: INSERT Message(content: markdown for all successful images)
     DB-->>IGA: ok · returns messageId
-
-    IGA-->>AOF: SmartChatEvent{image_generated, url, fluxPrompt, filename}
-    API-->>Web: SSE: image_generated {url, fluxPrompt, filename, generationMs}
 
     IGA-->>AOF: SmartChatEvent{done, messageId}
     API-->>Web: SSE: done {messageId}
 
-    Web-->>User: Inline PNG + Download + Copy URL + expandable Flux prompt
+    Web-->>User: N inline infographic PNGs, each with Download + Copy URL + expandable Flux prompt
 ```
 
 ---
@@ -1177,11 +1348,11 @@ sequenceDiagram
     participant API as POST /api/chat/smart
     participant AOF as AgentOrchestratorFacade
     participant IR as IntentRouterService
-    participant OC_C as OllamaClient (qwen3:8b)
+    participant OC_C as OllamaClient (gemma4:e4b)
     participant MR as ModelRouterService
     participant GA as GeneralAgent
     participant CS as ChatService
-    participant OC_M as OllamaClient (qwen2.5:latest)
+    participant OC_M as OllamaClient (gemma4:e4b)
     participant DB as SQLite
 
     User->>Web: "What is the difference between REST and GraphQL?"
@@ -1189,19 +1360,19 @@ sequenceDiagram
 
     API->>AOF: ExecuteSmartTurnAsync(request)
     AOF->>IR: ClassifyAsync({text, hasImage:false})
-    IR->>OC_C: ChatOnceAsync(qwen3:8b, classifyPrompt)
+    IR->>OC_C: ChatOnceAsync(gemma4:e4b, classifyPrompt)
     OC_C-->>IR: "GENERAL"
     IR-->>AOF: IntentDecision{General, AgentProfile.General, ms:390}
 
     AOF->>MR: ResolveAsync(AgentProfile.General, ...)
-    MR-->>AOF: ModelRoute{qwen2.5:latest, "ollama", exactMatch:true}
+    MR-->>AOF: ModelRoute{gemma4:e4b, "ollama", exactMatch:true}
 
     AOF-->>API: SmartChatEvent{routing_decision}
-    API-->>Web: SSE: routing_decision {intent:"general", model:"qwen2.5:latest", provider:"ollama"}
+    API-->>Web: SSE: routing_decision {intent:"general", model:"gemma4:e4b", provider:"ollama"}
 
     AOF->>GA: ExecuteAsync(context, route, ct)
-    GA->>CS: SendMessageAsync(branchId, text, "qwen2.5:latest", [], AgentProfile.General)
-    CS->>OC_M: ChatStreamAsync(qwen2.5:latest, [system, history, user])
+    GA->>CS: SendMessageAsync(branchId, text, "gemma4:e4b", [], AgentProfile.General)
+    CS->>OC_M: ChatStreamAsync(gemma4:e4b, [system, history, user])
     loop tokens
         OC_M-->>GA: ChatDelta{token}
         GA-->>AOF: SmartChatEvent{token}
@@ -1225,7 +1396,7 @@ sequenceDiagram
     participant AOF_V as AOF.ValidateManualOverride
     participant IR as IntentRouterService
     participant FP as FastPathCheck (regex)
-    participant OC as OllamaClient (qwen3:8b)
+    participant OC as OllamaClient (gemma4:e4b)
     participant Log as ILogger
 
     AOF->>AOF_V: ValidateManualOverride(manualRouteOverride, intentRequest)
@@ -1250,7 +1421,7 @@ sequenceDiagram
             FP-->>IR: AgentKind.ImageGeneration
             IR->>Log: Log{fastPath:"imageGen", ms:0}
         else
-            IR->>OC: ChatOnceAsync(qwen3:8b, classifyPrompt, temp:0.0, maxTokens:10)
+            IR->>OC: ChatOnceAsync(gemma4:e4b, classifyPrompt, temp:0.0, maxTokens:10)
             OC-->>IR: raw string e.g. "  CODING\n"
             IR->>IR: ParseIntentLabel → trim/strip → "CODING" → Coding
             IR->>Log: Log{rawLabel:"  CODING\n", parsed:Coding, ms:430}
@@ -1281,16 +1452,15 @@ sequenceDiagram
     OProv-->>MR: {healthy:true}
 
     MR->>OProv: ListModelsAsync()
-    OProv-->>MR: [ModelDescriptor list — qwen3 not installed in this example]
+    OProv-->>MR: [ModelDescriptor list — gemma4:e4b not installed in this example]
 
     MR->>MR: FilterByPolicy — all local models pass LocalOnly check
     MR->>MR: FilterByCapabilities({}) — no required caps, all pass
-    MR->>MR: FindByNamePriority(["qwen3:latest","qwen3","gemma4","qwen2.5:latest","qwen2.5"])
-    MR->>MR: "qwen3:latest" not found → "qwen3" not found → "gemma4" not found
-    MR->>MR: "qwen2.5:latest" found
-    MR->>Log: Log{intent:Architecture, preferred:"qwen3:latest", selected:"qwen2.5:latest", reason:"name fallback 4"}
+    MR->>MR: FindByNamePriority(["gemma4:e4b","qwen3.5:9b","qwen3.5","gemma4","qwen2.5"])
+    MR->>MR: "gemma4:e4b" not found → "qwen3.5:9b" found
+    MR->>Log: Log{intent:Architecture, preferred:"gemma4:e4b", selected:"qwen3.5:9b", reason:"name fallback 2"}
 
-    MR-->>AOF: ModelRoute{qwen2.5:latest, "ollama", isExactMatch:false, reason:"qwen3 not installed — fallback to qwen2.5:latest"}
+    MR-->>AOF: ModelRoute{qwen3.5:9b, "ollama", isExactMatch:false, reason:"gemma4:e4b not installed — fallback to qwen3.5:9b"}
 
     Note over MR,CProv: ClaudeModelProvider is NOT queried because\nDataResidencyPolicy.LocalOnly = true.\nIf LocalOnly were false, Claude would be evaluated\nbefore the Ollama name-priority fallback completes.
 ```
@@ -1317,7 +1487,7 @@ flowchart TD
     HasImg -->|"No"| FastIG{"text matches\nimage gen keywords?"}
 
     FastV -->|"Yes"| KVision["Intent = Vision\nwasFastPath"]
-    FastV -->|"No"| LlmClassify["qwen3:8b classify"]
+    FastV -->|"No"| LlmClassify["gemma4:e4b classify\nqwen3.5:9b fallback"]
 
     FastIG -->|"Yes"| KImgGen["Intent = ImageGeneration\nwasFastPath"]
     FastIG -->|"No"| LlmClassify
@@ -1383,7 +1553,7 @@ Content-Type: application/json
 event: routing_decision
 data: {
   "intent": "vision",
-  "model": "qwen2.5vl:latest",
+  "model": "qwen3.5:9b",
   "provider": "ollama",
   "reason": "fast-path: image attached + text contains 'what'",
   "classificationMs": 1,
@@ -1401,26 +1571,41 @@ data: { "text": "The invoice shows..." }
 event: done
 data: { "messageId": "guid", "tokensIn": 312, "tokensOut": 89 }
 
-── image generation: ─────────────────────────────────────────
+── image generation (infographic pipeline — see §6.6): ────────
 
 event: image_gen_progress
-data: { "stage": "translating" }
+data: { "stage": "analyzing_request", "analystModel": "gemma4:e4b" }
 
 event: image_gen_progress
-data: { "stage": "generating", "fluxPrompt": "minimalist logo, AI startup..." }
+data: { "stage": "analysis_done", "understanding": "...", "analystModel": "gemma4:e4b", "total": 2, "prompts": [{ "description": "...", "fluxPrompt": "..." }] }
 
 event: image_gen_progress
-data: { "stage": "saving" }
+data: { "stage": "freeing_vram", "killingModels": ["gemma4:e4b"] }
 
-  [INSERT GeneratedImages + INSERT Message — internal, invisible to client]
+event: image_gen_progress
+data: { "stage": "generating", "current": 1, "total": 2, "prompt": "...", "description": "SOLID Principles" }
 
-event: image_generated
+event: image_gen_progress   // only if x/flux2-klein:4b fails for this image
+data: { "stage": "primary_model_failed", "model": "x/flux2-klein:4b", "fallback": "x/z-image-turbo", "error": "...", "current": 1, "total": 2 }
+
+event: image_gen_progress
+data: { "stage": "saving", "current": 1, "total": 2 }
+
+event: image_generated       // once per successful image, may fire multiple times
 data: {
   "url": "/api/generated-images/3f7a9b2e-...png",
   "filename": "3f7a9b2e-...png",
-  "fluxPrompt": "minimalist logo, AI startup...",
+  "fluxPrompt": "...",
+  "description": "SOLID Principles",
+  "index": 1,
+  "total": 2,
   "generationMs": 47320
 }
+
+event: image_gen_progress
+data: { "stage": "restoring_models", "models": ["gemma4:e4b"] }
+
+  [INSERT GeneratedImages ×N + INSERT Message — internal, invisible to client]
 
 event: done
 data: { "messageId": "guid" }
@@ -1453,22 +1638,23 @@ Returns 400 for invalid filename, 401 for bad/missing token, 403 for ownership m
 | `routing_decision` | `AgentOrchestratorFacade` | After both intent AND model resolved; before first token | `intent`, `model`, `provider`, `reason`, `classificationMs`, `wasFastPath`, `manualOverrideApplied` |
 | `token` | Specialized agent | Per token during text generation | `text` |
 | `image_gen_progress` | `ImageGenerationAgent` | Multiple times — one per stage transition | `stage` (see below), plus stage-specific fields |
-| `image_generated` | `ImageGenerationAgent` | After each PNG is written AND DB row inserted | `url`, `filename`, `fluxPrompt`, `description`, `index`, `total`, `generationMs` |
+| `image_generated` | `ImageGenerationAgent` | After each PNG is written AND DB row inserted; may fire multiple times per turn | `url`, `filename`, `fluxPrompt`, `description`, `index`, `total`, `generationMs` |
 | `done` | Specialized agent | After all DB persists complete | `messageId` |
-| `routing_error` | `AgentOrchestratorFacade` | When no model resolved or override invalid | `intent`, `message` |
+| `routing_error` | `AgentOrchestratorFacade` / `ImageGenerationAgent` | When no model resolved, override invalid, or every image in the batch failed | `intent`, `message` |
 
 **`image_gen_progress` stage field values:**
 
 | Stage | Extra fields | UI meaning |
 |---|---|---|
-| `analyzing_request` | `analystModel` | qwen3 is reading the request |
-| `analysis_done` | `understanding`, `total`, `prompts[]` | Expansion complete |
+| `analyzing_request` | `analystModel` | `gemma4:e4b` is expanding the topic into infographic content |
+| `analysis_done` | `understanding`, `analystModel`, `total`, `prompts[]` | Content expansion complete — `total` is the infographic count |
 | `freeing_vram` | `killingModels[]` | Unloading models before Flux |
-| `generating` | `current`, `total`, `prompt`, `description` | Flux running |
-| `gen_failed` | `current`, `total`, `error` | Flux failed; continuing |
+| `generating` | `current`, `total`, `prompt`, `description` | Flux running for infographic N of M |
+| `primary_model_failed` | `model`, `fallback`, `error`, `current`, `total` | `x/flux2-klein:4b` failed; retrying with `x/z-image-turbo` |
+| `gen_failed` | `current`, `total`, `error` | Both primary and fallback failed; continuing to next |
 | `saving` | `current`, `total` | Writing PNG to disk |
 | `save_failed` | `current`, `total`, `error` | Write failed; continuing |
-| `restoring_models` | `models[]` | Warming up previously loaded models |
+| `restoring_models` | `models[]` | Warming up previously loaded models (fire-and-forget) |
 
 Persistence is an internal step. It is never visible to the client as an SSE event. `done` is the sole signal that the turn is complete and all messages are durable.
 
@@ -1502,8 +1688,9 @@ src/EminentAi.Application/
 │   ├── ArchitectureAgent.cs
 │   ├── GeneralAgent.cs
 │   └── ImageGeneration/
-│       ├── ImageGenerationAgent.cs
-│       └── ImageGenerationResult.cs
+│       ├── ImageGenerationAgent.cs        ← infographic content+image pipeline (see §6.6)
+│       ├── InfographicPromptBuilder.cs    ← fixed design template + per-request InfographicSpec
+│       └── FluxImageGenerator.cs          ← shared CLI generator; also used by Agent-mode "image.generate" tool
 │
 ├── Providers/                         ← interfaces + DTOs live here, NOT in Infrastructure
 │   ├── IModelProvider.cs
@@ -1530,7 +1717,7 @@ src/EminentAi.Infrastructure/
 │   └── OllamaModelProvider.cs         ← implements IModelProvider; IsLocal=true; cost=0
 │
 └── Routing/
-    ├── IntentRouterService.cs          ← fast-path, qwen3:8b, defensive parse, telemetry
+    ├── IntentRouterService.cs          ← fast-path, Gemma/Qwen fallback, defensive parse, telemetry
     └── ModelRouterService.cs           ← multi-provider, FilterByPolicy (uses ModelDescriptor fields)
 ```
 
@@ -1592,12 +1779,12 @@ interface ImageGenProgressProps {
   restoringModels?: string[];
   currentPrompt?: string;
   completedCount?: number;
-  understanding?: string;   // qwen3's one-line understanding
-  analystModel?: string;    // e.g. "qwen3:latest"
+  understanding?: string;   // analyst's one-line understanding
+  analystModel?: string;    // e.g. "gemma4:e4b"
 }
 ```
 
-The panel collapses to a headline + progress bar by default. Expanding reveals the full 5-step pipeline with per-step icons (spinner while active, checkmark when done, dimmed circle when pending), an A2A badge showing `qwen3:latest → flux2-klein:4b`, and model chips for the VRAM unload step.
+The panel collapses to a headline + progress bar by default. Expanding reveals the full 5-step pipeline with per-step icons (spinner while active, checkmark when done, dimmed circle when pending), an A2A badge showing `gemma4:e4b → flux2-klein:4b`, and model chips for the VRAM unload step.
 
 ### Frontend modified files
 
@@ -1609,13 +1796,15 @@ web/src/lib/types.ts
   + RoutingDecision, ImageGenerationResult, SmartChatEvent union
 
 web/src/state/store.ts
-  + routingDecision?: RoutingDecision  on Message
-  + generatedImageUrl?: string          on Message
-  + generatedFluxPrompt?: string        on Message
+  + routingDecision?: RoutingDecision              on Message
+  + generatedImages?: ImageGenerationResult[]      on Message — array; a single turn can
+  |                                                   produce multiple infographics, appended
+  |                                                   as each image_generated event arrives
+  + imageGenStage?: ImageGenStage                  on Message
 
 web/src/components/ChatMessage.tsx
   + Render <RoutingBadge routing={msg.routingDecision} />
-  + Render <GeneratedImage url={msg.generatedImageUrl} fluxPrompt={msg.generatedFluxPrompt} />
+  + Render one <GeneratedImage> per entry in msg.generatedImages[]
 
 web/src/components/ChatView.tsx
   + Handle: routing_decision, image_gen_progress, image_generated, routing_error
@@ -1629,11 +1818,11 @@ web/src/components/Composer.tsx
 
 ```
 ┌──────────────────────────────────────┐
-│  👁 Vision  •  qwen2.5vl  • ollama  │  purple
-│  </> Code   •  qwen2.5-coder        │  blue
-│  🗺 Arch    •  qwen3:latest         │  green
+│  👁 Vision  •  qwen3.5:9b • ollama  │  purple
+│  </> Code   •  gemma4:e4b           │  blue
+│  🗺 Arch    •  gemma4:e4b           │  green
 │  🎨 Image   •  flux2-klein:4b       │  orange
-│  💬 General •  qwen2.5:latest       │  grey
+│  💬 General •  gemma4:e4b           │  grey
 └──────────────────────────────────────┘
 Provider shown only when non-ollama.
 Appears below user message, above assistant reply. 200ms fade-in.
@@ -1670,6 +1859,8 @@ Appears below user message, above assistant reply. 200ms fade-in.
 | [ChatView.tsx](../web/src/components/ChatView.tsx) | Handle 4 new SSE event types | Routing badge, image display, progress, errors |
 | [ChatMessage.tsx](../web/src/components/ChatMessage.tsx) | Render `RoutingBadge` + `GeneratedImage` | Message-level routing metadata |
 | [Composer.tsx](../web/src/components/Composer.tsx) | Auto-route toggle; image pre-fills vision hint | Smart vs manual mode |
+
+> **Superseded (see §18.2 item 8):** the `IOllamaClient.GenerateImageAsync` / `OllamaClient.GenerateImageAsync` rows above describe a v1-era plan that was never followed — the shipped `ImageGenerationAgent` generates images via `FluxImageGenerator`'s CLI path instead (§6.6). Both methods exist in the current codebase, fully implemented, with zero call sites. Retained here for implementation-history context only; do not implement against these rows.
 
 ---
 
@@ -1724,17 +1915,19 @@ gantt
     GeneratedImage.tsx frontend component                     :f5, 26, 27
 ```
 
+> **Historical note (see §18.2 item 8):** the "Image Generation" section's first two tasks (`IOllamaClient + GenerateImageAsync`, `OllamaClient implements GenerateImageAsync`) describe work that shipped but was then bypassed — the actual `ImageGenerationAgent` never calls either method. They are left in this historical Gantt chart for traceability of what was actually built, not as a current implementation guide.
+
 ---
 
 ## 15. Model Fallback Matrix
 
 | Intent | Preferred | Fallback 1 | Fallback 2 | No model found |
 |---|---|---|---|---|
-| Vision | `qwen2.5vl:latest` | Any `*vl*` name match | Any `ModelCapability.Vision` model | `routing_error` + `ollama pull qwen2.5vl` |
-| Coding | `qwen2.5-coder:1.5b` | Any `*coder*` name | Any `fast` tier | Any `balanced` tier |
-| Architecture | `qwen3:latest` | `gemma4:e4b` | `qwen2.5:latest` | Largest `balanced` tier |
-| ImageGeneration | `x/flux2-klein:4b` | Any `*flux*` name | Any `ModelCapability.ImageGeneration` | `routing_error` + `ollama pull x/flux2-klein:4b` |
-| General | `qwen2.5:latest` | Any `balanced` tier | Any `fast` tier | Any installed model |
+| Vision | `qwen3-vl:latest` | `qwen3.5:9b` / `qwen3.5:4b` | Any `ModelCapability.Vision` model | `routing_error` + `ollama pull qwen3-vl:latest` |
+| Coding | `ornith-1.5:9b` | `gemma4:e4b` | `qwen3.5:9b` / `qwen3.5:4b` | Any text model |
+| Architecture | `ornith-1.5:9b` | `gemma4:e4b` | `qwen3.5:9b` / `qwen3.5:4b` | Largest `balanced` / `reasoning` tier |
+| ImageGeneration | `x/flux2-klein:4b` | `x/z-image-turbo` (per-image fallback in `FluxImageGenerator`, not `ModelRouterService`) | Any `ModelCapability.ImageGeneration` | `routing_error` + `ollama pull x/flux2-klein:4b` |
+| General | `gemma4:e4b` | `ornith-1.5:9b` | `qwen3.5:9b` / `qwen3.5:4b` | Any installed model |
 
 When `DataResidencyPolicy.LocalOnly = true`, only `IsLocal = true` models reach the priority list. Cloud providers are filtered out before any name match runs.
  
@@ -1817,9 +2010,427 @@ Run against `IntentRouterService` in unit tests. `ClassificationRecord.RawLabel`
 
 ### VRAM keep-alive strategy
 
-`keep_alive: "10m"` in `OllamaClient.BuildPayload` keeps the last chat model warm. `qwen3:8b` is the classifier and primary general/coding route. `flux2-klein` triggers a full model swap — the `image_gen_progress {stage:"generating"}` SSE event fires before the swap begins, so the UI shows a spinner. This is not optional UX; without it, the user has no feedback for 30–120 seconds.
+`keep_alive: "10m"` in `OllamaClient.BuildPayload` keeps the last chat model warm. `gemma4:e4b` is the classifier and primary general/coding route; `qwen3.5:9b` is the fallback. `flux2-klein` triggers a full model swap — the `image_gen_progress {stage:"generating"}` SSE event fires before the swap begins, so the UI shows a spinner. This is not optional UX; without it, the user has no feedback for 30–120 seconds.
 
 ---
 
-*Document version: 3.2 — 2026-06-21*
-*Supersedes v3.1. `ImageGenerationAgent` updated to reflect actual implementation: `qwen3:latest` as analyst, multi-image prompt expansion, VRAM snapshot/unload/restore pipeline via `ollama run` CLI, new SSE stages, `ImageGenProgressPanel` frontend component, and `x/z-image-turbo` model added to the model table.*
+*Document version: 4.0 — 2026-09-02*
+*Supersedes v3.9. All four phases of §18.7 are now implemented on `feature/AI-Desktop-App` (`dotnet build EminentAi.slnx` and `npx tsc -b` both pass). Phases 1 and 2 shipped exactly as designed. Phases 3 and 4 shipped with a deliberate scope cut each, recorded in the v3.9 → v4.0 notes: intent resolution now uses structured tool-calling but still costs one round-trip per free-text turn (the "zero extra inference" version needs a persistence re-plumb this session couldn't verify live); image generation still runs via the `ollama run` CLI with proper process-tree cancellation added, rather than migrating to the HTTP endpoint that the v3.1→v3.2 history recorded as previously abandoned for Flux response-shape reasons. §§1–17 describe the implementation as previously verified, with §13/§14's `GenerateImageAsync` rows still historical-only per §18.2 item 8.*
+
+---
+
+## 18. Architectural Critique & Next-Generation Alternatives (v4.1 Blueprint — Tool-Calling & UI-Affordance Routing)
+
+> **v4.1 supersedes v4.0.** The original v4.0 blueprint (ONNX embedding router + GPU coordinator + HTTP media sidecar + Semantic Kernel migration) is retained in git history only. Independent architect review kept the two subsystem fixes that address genuine local-hardware constraints (§18.5.1, §18.5.2) and replaced the two routing/framework proposals with patterns closer to what shipped agent products actually use — see §18.3 for the reasoning and industry comparison.
+
+### 18.1 Architectural Review & Scorecard
+
+**Overall Architectural Rating: 7 / 10**
+
+| Dimension | Rating | Analysis & Justification |
+| :--- | :---: | :--- |
+| **Separation of Concerns & Layering** | **8.5 / 10** | Clean decoupling of Intent Routing (`IIntentRouter`) from Model Routing (`IModelRouter`). Typed `ModelCapability` enum and immutable `AgentProfile` records prevent system prompt injection. |
+| **Protocol & SSE Stream Contract** | **8.5 / 10** | Rich event contract (`routing_decision`, `image_gen_progress`, `image_generated`, `done`) enables smooth UI telemetry and progress visualization. |
+| **Local Hardware & Runtime Stability** | **6.0 / 10** | High fragility in GPU resource management: global model eviction (`keep_alive=0`) causes race conditions across concurrent turns; CLI process execution (`ollama run`) lacks process group isolation and true progress callbacks. |
+| **Extensibility & Cloud Readiness** | **8.0 / 10** | Provider interfaces (`IModelProvider`) with policy filters (`CostPolicy`, `DataResidencyPolicy`) provide clear extension points for cloud models (Claude, OpenAI). |
+| **Latency & Routing Efficiency** | **6.5 / 10** | Non-fastpath queries require an LLM round-trip (`gemma4:e4b`) taking 300–800ms and risking cold-model loading latency before the target agent can even begin. This is real, but see §18.3 — the fix is architectural (stop making a dedicated round-trip), not a faster classifier. |
+| **Doc/Code Contract Fidelity** | **5.0 / 10** *(new)* | This document claims to be "verified against implementation" as of v3.6, but independent review of the actual `feature/AI-Desktop-App` source found three unreported divergences — see §18.2 items 5–7. A doc that asserts verification and still drifts from code is a process gap, not just a content gap. |
+
+---
+
+### 18.2 Critical Gaps & Fragility Analysis
+
+#### 1. Uncoordinated Global VRAM Eviction (Multi-Turn / Multi-Session Race Condition)
+`ImageGenerationAgent` calls `/api/ps` and unloads all models with `keep_alive=0`. In a multi-tab or concurrent user scenario, an ongoing chat generation on another branch will be forcibly terminated or cause Ollama to throw OOM / 500 errors when attempting to run Flux.
+
+#### 2. OS Process Spawning inside ASP.NET Core Runtime
+Executing `ollama run <model> "<prompt>"` via `ProcessStartInfo` introduces several failure modes:
+* **Orphan/Zombie Processes:** Web server request cancellations do not guarantee OS child process termination without Win32 Job Objects or Linux cgroups.
+* **Pipe Buffer Deadlocks:** Large base64 stdout strings can saturate standard output buffers if not read asynchronously in chunks.
+* **File Clashes:** Concurrent generations scanning the working directory for generated `.png` files create race conditions on file detection.
+
+#### 3. Classification Latency & Cold-Model Penalties
+When a query does not match the regex fast-path, `IntentRouterService` calls a 4B/9B LLM. If `gemma4:e4b` is not already resident in VRAM, the system incurs a cold model swap (2–6s), classifies the prompt in one word, and then immediately unloads or context-swaps to load the target model (e.g. `ornith-1.5:9b` or `qwen3-vl`). **This entire round-trip is removed in §18.4** rather than sped up — see §18.3 for why speeding it up (the v4.0 ONNX proposal) was rejected.
+
+#### 4. Model Metadata Hardcoding
+While `IModelProvider` abstracts model discovery, `NamePriorities` dictionaries and `ImageGenerationAgent` model names are hardcoded C# constants rather than configuration-driven options in `appsettings.json`.
+
+#### 5. Doc/Code Contract Drift — Vision Override & `ClassificationRecord` Type *(new)*
+Independent review of the actual code (not just this document) found two undocumented divergences:
+* **§6.1/§8/§16 claim** a `Vision` override submitted without an image attachment is "ignored" and the request "falls through to classify normally." **The actual code** (`AgentOrchestratorFacade.ExecuteSmartTurnAsync`) returns a non-null `overrideRejectedReason` from `ValidateManualOverride` and immediately `yield return`s `routing_error` then `yield break`s — the entire turn is aborted, not re-classified. This is a functional bug relative to the documented (and presumably intended) behavior: a user who attaches text with a stale/incorrect `Vision` override gets a hard error instead of a normal chat response.
+* **§4.3 declares** `ClassificationRecord.OverrideRejectedReason` as `AgentKind?`. **The actual record** (`ClassificationRecord.cs`) declares it `string?`. The contract table in §4.3 does not match the type actually compiled and shipped.
+
+#### 6. Undocumented Fast-Path: Bare Quoted Strings Trigger Image Generation *(new)*
+`IntentRouterService.ImageGenKeywords` (not shown in §6.2's fast-path table) also matches any message that is purely one or more quoted strings: `^\s*"[^"]{3,}"(\s*,\s*"[^"]{3,}")*\s*$`. A user pasting quoted OCR'd or invoice text — e.g. `"Total: $412.50"` — matches this pattern and is routed to `ImageGeneration` before the LLM classifier or even the Vision fast-path ever runs, regardless of an attached image. This is exactly the kind of silent misroute the routing-corpus test in §17 is meant to catch, but the corpus in §17 does not include a quoted-string case.
+
+#### 7. PII Redaction Does Not Cover Model-Echoed Text *(new)*
+`IPiiRedactor.Redact` is applied to `context.UserText` and to each `ExpandedPrompt.FluxPrompt` before it is emitted or persisted (`ImageGenerationAgent.cs`), but **not** to `AnalysisResult.Understanding` or `ExpandedPrompt.Description` — both are model-generated text that can echo back content from the (unredacted) analyst input, and both are emitted in `image_gen_progress`/`image_generated` SSE events and persisted verbatim in the assistant `Message.Content` header (`> **{analystModel} understood:** {understanding}`). Any PII the redactor was meant to strip can resurface here if the analyst model repeats it back.
+
+#### 8. Dead Code: `IOllamaClient.GenerateImageAsync` Is Implemented but Never Called *(new, verified against source)*
+`IOllamaClient.cs:71` declares `Task<string> GenerateImageAsync(string model, string prompt, CancellationToken ct)`, and `OllamaClient.cs:204` fully implements it against Ollama's `/api/generate` endpoint — this was the v1-era image-generation plan (§13, §14). The shipped `ImageGenerationAgent` never calls it; the real pipeline goes through `FluxImageGenerator.GenerateViaCliAsync` (`ollama run` CLI, §6.6) instead. A repo-wide search for instance call sites (`.GenerateImageAsync(` outside the interface declaration and its implementation) returns zero results. This is not just stale documentation in §13/§14 — it is a genuinely dead public interface method and implementation shipping in the codebase today. Candidate for removal alongside the §18.5.2 `DiffusionSidecarClient` work, since both touch the same seam.
+
+> **Note on a related claim, checked and rejected:** a separate review pass also flagged `src/EminentAi.Application/Class1.cs` (and its `Infrastructure`/`Domain` siblings) as "unused template boilerplate." Reading all three files shows they already contain only a single comment — `// (intentionally empty — placeholder removed)` — not live scaffold code. That finding does not hold; the only real housekeeping opportunity is deleting three placeholder files outright, which is cosmetic and not tracked here as an architectural gap.
+
+---
+
+### 18.3 Rejected Alternatives & Industry Comparison
+
+The v4.0 blueprint proposed four subsystems. Two are kept unchanged (§18.5.1, §18.5.2) because they fix genuine local-hardware constraints that exist regardless of routing strategy. The other two are **rejected outright**, not merely deferred, for reasons independent of implementation cost:
+
+#### Rejected: ONNX/MiniLM Embedding-Centroid Router
+An in-process CPU classifier trades a 300–800ms LLM round-trip for a hand-maintained ML system: a labeled training corpus, periodic centroid recalibration as the prompt distribution drifts, and a confidence threshold that will misfire precisely on the ambiguous messages that matter most. The latency it saves is invisible next to a 30–180s image-generation pipeline or even normal token-streaming start. This is optimizing a path nobody perceives, at the cost of an ongoing maintenance burden that never ends.
+
+**What the industry actually does instead, based on public information:**
+* **Cursor** does not run a hidden text classifier in front of chat. Routing is done by *product surface* — Tab-completion, Cmd-K inline edit, and Chat/Composer are different features the user explicitly invoked; model selection within a feature is user- or config-driven, not inferred from free text.
+* **LLM-routing products** (OpenRouter, Martian, and similar "model router" services) that *do* route by text content use small purpose-built classifier or reward models trained/distilled for that one job — not a full chat-completion call to a general-purpose 4–9B model asked to emit one word.
+* **Agent products built on frontier models** (Claude Code, GitHub Copilot Workspace, Devin-style agents) use a single capable model with **tool/function calling** — the model decides what to do as a first-class part of the same inference pass that answers the request, with no separate classification round-trip at all. This is the pattern adopted in §18.4 below.
+
+#### Rejected: Microsoft Semantic Kernel Migration
+Migrating the specialized agents to Semantic Kernel's `ChatCompletionAgent`/`AgentGroupChat` abstractions buys OpenTelemetry instrumentation and enterprise filters, in exchange for rewriting a working, well-understood orchestrator (§6.1–§6.6, refined across seven documented revisions) onto a third-party framework with a track record of breaking API redesigns across major versions. The observability benefit is available directly: adding `System.Diagnostics.Activity` spans to `AgentOrchestratorFacade` and each `ISpecializedAgent.ExecuteAsync` gets the same tracing without a framework dependency or a rewrite. This is solving a documentation/maturity gap with a migration; it is rejected regardless of available engineering time.
+
+#### Kept: GPU Work Coordinator & HTTP/IPC Media Sidecar
+Both remain in §18.5 unchanged in substance. Neither is a routing-strategy choice — they fix real defects (§18.2 items 1–2) that exist under any intent-routing design, including the tool-calling design adopted below. A single local Ollama instance genuinely needs a concurrency gate around model swaps, and `Process.Start("ollama run ...")` genuinely lacks cancellation and structured output regardless of how intent is determined upstream.
+
+---
+
+### 18.4 Proposed Target Architecture: Tool-Calling Intent Resolution
+
+The core change: **stop asking a separate model to classify intent as an isolated first step.** Instead, resolve intent as one of two ways, in priority order:
+
+1. **UI affordance (preferred, zero inference cost).** The Composer exposes explicit modes the user directly selects — an "Infographic" action, a "Vision"/attach-image flow, a code/architecture toggle — the same way Cursor's Tab/Cmd-K/Chat are distinct product surfaces rather than text-classified. When the user's action already carries the intent, no model call is needed to rediscover it.
+2. **Tool-calling on the primary resident model (fallback, for free-form chat).** For messages typed into plain chat with no explicit mode, the already-resident general model (e.g. `gemma4:e4b`) is given tool definitions — `respond_as_code`, `respond_as_architecture`, `generate_infographic`, `analyze_attached_image` — and answers the message in the *same* inference pass, either directly or via a tool call that hands off to a specialized agent. There is no dedicated classifier call, no enum-parsing of a raw string, and no cold-model penalty solely to determine intent (§18.2 item 3 is eliminated by construction, not sped up).
+
+Vision and image generation still require different underlying models — that is a modality constraint no routing strategy removes — but which model *starts* the turn is now decided by the UI or by the resident model's own tool choice, not by a standalone classification service.
+
+```mermaid
+flowchart TB
+    subgraph ClientLayer ["1. Client & Presentation Tier"]
+        UI["Web / Desktop Shell (React / Tauri)\nExplicit modes: Code · Architecture · Infographic · Attach Image"]
+        Chat["Plain Chat Composer\n(no explicit mode selected)"]
+    end
+
+    subgraph ApiGateway ["2. API & Ingestion Layer"]
+        Endpoint["POST /api/chat/smart"]
+        AuthValidator["Bearer Token & Request Hash Validator"]
+        PiiGate["IPiiRedactor Gate\nApplied to UserText + FluxPrompt\nAND to model-echoed Understanding/Description\n(closes §18.2 item 7)"]
+    end
+
+    subgraph IntentResolution ["3. Intent Resolution — no dedicated classifier call"]
+        UIRoute{"UI mode\nexplicitly set?"}
+        ToolModel["Resident General Model (gemma4:e4b)\nwith tool definitions:\nrespond_as_code · respond_as_architecture\ngenerate_infographic · analyze_attached_image"]
+    end
+
+    subgraph ResourceCoordination ["4. Hardware & GPU Work Coordinator (kept from v4.0 — §18.5.1)"]
+        GpuCoordinator["IGpuWorkCoordinator\nSemaphoreSlim-gated model swap"]
+    end
+
+    subgraph SpecializedAgents ["5. Specialized Agent Execution Plane"]
+        VA["Vision Agent"]
+        CA["Coding Agent"]
+        AA["Architecture Agent"]
+        GA["General Agent (direct answer, no tool call)"]
+        IGA["Infographic Pipeline Orchestrator"]
+    end
+
+    subgraph ExecutionBackends ["6. Execution & Provider Backends"]
+        OllamaHTTP["Ollama Provider (native HTTP, tool-calling)"]
+        CloudHTTP["Cloud Provider (Anthropic / OpenAI — future)"]
+        DiffusionSidecar["Dedicated Image Engine Sidecar\n(HTTP, kept from v4.0 — §18.5.2)"]
+    end
+
+    subgraph PersistenceLayer ["7. Storage & Persistence Layer"]
+        DB[(SQLite / EF Core)]
+        ImageStore[("Protected Artifact Store\nUUID Containment Check")]
+    end
+
+    UI --> Endpoint
+    Chat --> Endpoint
+    Endpoint --> AuthValidator --> PiiGate --> UIRoute
+    UIRoute -->|"Yes — mode known"| GpuCoordinator
+    UIRoute -->|"No — free text"| ToolModel --> GpuCoordinator
+
+    GpuCoordinator --> SpecializedAgents
+    VA & CA & AA & GA --> OllamaHTTP & CloudHTTP
+    IGA --> DiffusionSidecar
+
+    IGA -.->|"redact Understanding/Description\nbefore emit or persist"| PiiGate
+    SpecializedAgents --> DB
+    IGA --> ImageStore
+```
+
+---
+
+### 18.5 Core Subsystem Design
+
+#### 18.5.1 Hardware & GPU Work Coordinator *(kept from v4.0, unchanged)*
+Introduce a concurrency gateway to coordinate local GPU execution safely, independent of how intent was resolved:
+
+```csharp
+// EminentAi.Infrastructure/Hardware/GpuWorkCoordinator.cs
+public interface IGpuWorkCoordinator
+{
+    Task<IDisposable> AcquireGpuLockAsync(GpuTaskPriority priority, string targetModel, CancellationToken ct);
+}
+
+public sealed class GpuWorkCoordinator : IGpuWorkCoordinator
+{
+    private readonly SemaphoreSlim _gpuLock = new(1, 1);
+    private readonly IOllamaClient _ollama;
+    private string? _currentlyLoadedModel;
+
+    public async Task<IDisposable> AcquireGpuLockAsync(GpuTaskPriority priority, string targetModel, CancellationToken ct)
+    {
+        await _gpuLock.WaitAsync(ct);
+
+        try
+        {
+            if (_currentlyLoadedModel != targetModel)
+            {
+                // Managed warm-up / transition without blind eviction
+                _currentlyLoadedModel = targetModel;
+            }
+            return new Releaser(_gpuLock);
+        }
+        catch
+        {
+            _gpuLock.Release();
+            throw;
+        }
+    }
+
+    private sealed class Releaser(SemaphoreSlim sem) : IDisposable
+    {
+        public void Dispose() => sem.Release();
+    }
+}
+```
+
+* **Prevents OOM Crashes:** Multiple requests are queued gracefully rather than colliding in VRAM.
+* **Eliminates Race Conditions:** No background process can dump models while an active stream is reading tokens.
+* **Scoped per-process, not per-priority-queue:** for a single-user local app, a plain `SemaphoreSlim(1,1)` is sufficient — the `GpuTaskPriority` parameter is retained for API shape but does not need a real priority queue until multi-user/concurrent-session support is a stated goal.
+
+#### 18.5.2 Dedicated HTTP/IPC Media Engine (Sidecar Daemon) *(kept from v4.0, unchanged)*
+Replace `Process.Start("ollama run ...")` with an HTTP/REST sidecar or native Ollama image endpoint:
+
+| Feature | Current (`ollama run` CLI) | Target (HTTP Daemon / Native Endpoint) |
+| :--- | :--- | :--- |
+| **Progress Reporting** | Coarse-grained SSE stages | Step-by-step denoising progress (e.g., `step 12/25`) |
+| **Cancellation** | Risk of orphaned OS child processes | Immediate cancellation via standard `CancellationToken` HTTP abort |
+| **Concurrent Safety** | High risk of working-directory collisions | Isolated memory buffers with per-request correlation IDs |
+| **Output Extraction** | Heuristic file search + base64 stdout regex | Typed JSON response with binary/base64 payload |
+
+#### 18.5.3 Tool-Calling Intent Resolution *(new — replaces the ONNX router)*
+
+```csharp
+// EminentAi.Application/Routing/ToolCallingIntentResolver.cs
+// Replaces IIntentRouter's dedicated classification call for free-text chat only.
+// UI-affordance requests (§18.5.4) never reach this path.
+public sealed class ToolCallingIntentResolver
+{
+    private static readonly IReadOnlyList<ToolDefinition> IntentTools =
+    [
+        new("respond_as_code",          "User wants working code, debugging, or a code review."),
+        new("respond_as_architecture",  "User wants system design, HLD/LLD, or diagrams."),
+        new("generate_infographic",     "User wants an educational infographic image generated."),
+        new("analyze_attached_image",   "User attached an image and wants it read or described.")
+        // No tool call at all => General — the model just answers directly.
+    ];
+
+    public async IAsyncEnumerable<SmartChatEvent> ResolveAndExecuteAsync(
+        SmartChatContext context, ModelRoute residentModelRoute, CancellationToken ct)
+    {
+        // One inference pass: the resident general model either answers directly
+        // (no tool call => AgentKind.General, zero extra round-trips) or calls exactly
+        // one tool, which is resolved to the corresponding ISpecializedAgent.
+        // No separate ChatOnceAsync classification call, no raw-string enum parsing,
+        // no cold-model swap purely to determine intent.
+    }
+}
+
+public sealed record ToolDefinition(string Name, string Description);
+```
+
+* **Eliminates §18.2 item 3 entirely** (classification latency + cold-model penalty), rather than shrinking it — there is no separate classifier call to be slow.
+* **Eliminates §18.2 item 6** — there is no regex-on-free-text image-gen trigger to false-positive on quoted strings; `generate_infographic` is only invoked when the resident model itself judges that to be the request, with the full conversation as context rather than a single regex pattern.
+* Requires the resident model to support reliable function/tool calling — already true of modern local models such as those in the current matrix (§2).
+
+#### 18.5.4 UI-Affordance Routing Contract *(new — the Cursor-style path)*
+
+| Composer action | Routed directly to | Model call to determine intent |
+| :--- | :--- | :--- |
+| User selects "Infographic" action | `ImageGenerationAgent` | None |
+| User attaches an image | `VisionAgent` | None |
+| User toggles Code / Architecture mode | `CodeAgent` / `ArchitectureAgent` | None |
+| Plain chat message, no mode selected | Resolved via §18.5.3 tool-calling | One inference pass (already answering the message) |
+
+`manualRouteOverride` already exists in the current implementation (§6.1, §9) as a partial version of this — the target architecture makes it the **primary** path rather than an optional override, and removes the override-rejection dead-end identified in §18.2 item 5: since intent is either explicit (UI) or resolved in the same pass the model answers with (tool-calling), there is no longer a "Vision requested but no image attached" state to reject — the resident model simply notices the missing image and responds accordingly, the same way a human would.
+
+---
+
+### 18.6 Target State Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Web as React / Tauri UI
+    participant API as POST /api/chat/smart
+    participant AOF as AgentOrchestratorFacade
+    participant GC as GpuWorkCoordinator (Lock)
+    participant Resident as Resident Model (tool-calling)
+    participant Agent as Specialized Agent
+    participant Provider as Ollama / Cloud Provider
+    participant DB as SQLite Persistence
+
+    User->>Web: Submits Prompt (+ Optional Attachments / UI mode)
+    Web->>API: HTTP POST /api/chat/smart {mode?, content, attachments}
+    API->>AOF: ExecuteSmartTurnAsync(request)
+
+    alt UI mode explicitly set (§18.5.4)
+        AOF-->>Web: SSE: routing_decision {intent: mode, source:"ui-affordance", ms:0}
+    else Plain chat — resolve via tool-calling (§18.5.3)
+        rect rgb(240, 248, 255)
+            Note over AOF,Resident: One inference pass — no dedicated classifier round-trip
+            AOF->>GC: AcquireGpuLockAsync(Normal, "gemma4:e4b")
+            GC-->>AOF: Lease granted
+            AOF->>Resident: StreamAsync(messages, tools:[respond_as_code, respond_as_architecture, generate_infographic, analyze_attached_image])
+            Resident-->>AOF: Tool call: respond_as_code  (or: direct answer => General)
+        end
+        AOF-->>Web: SSE: routing_decision {intent:"coding", source:"tool-call", ms: <inference time, not extra>}
+    end
+
+    AOF->>GC: AcquireGpuLockAsync(Normal, route.Model)
+    GC-->>AOF: Lease granted
+    AOF->>Agent: ExecuteAsync(context, route, lease)
+    Agent->>Provider: StreamTokensAsync(route.Model, messages)
+
+    loop Token Streaming
+        Provider-->>Agent: Token chunk
+        Agent-->>Web: SSE: token {text}
+    end
+
+    Provider-->>Agent: Generation Complete (usage stats)
+    Agent->>DB: Persist Message & Metadata
+    DB-->>Agent: ok (messageId)
+
+    Agent->>GC: Release GPU Lease
+    Agent-->>AOF: Complete
+    AOF-->>Web: SSE: done {messageId, tokensIn, tokensOut}
+```
+
+---
+
+### 18.7 Migration & Phased Implementation Roadmap
+
+```mermaid
+gantt
+    title v4.1 Modernization Roadmap — Tool-Calling & UI-Affordance Routing
+    dateFormat  YYYY-MM-DD
+    section Phase 1: Stability (kept from v4.0)
+    GPU Work Coordinator & Concurrency Lock       :p1_1, 2026-09-08, 7d
+    Eliminate Global VRAM Eviction (keep_alive=0)  :p1_2, after p1_1, 4d
+    Config-driven Model Matrix (appsettings.json)   :p1_3, after p1_2, 3d
+    Fix doc-code drift (Vision override, record type) :p1_4, after p1_1, 2d
+
+    section Phase 2: UI-Affordance Routing
+    Composer explicit modes (Code/Arch/Infographic) :p2_1, 2026-09-22, 6d
+    manualRouteOverride promoted to primary path    :p2_2, after p2_1, 3d
+    Remove Vision-override-rejection dead-end        :p2_3, after p2_2, 2d
+
+    section Phase 3: Tool-Calling Fallback
+    Tool definitions on resident general model      :p3_1, 2026-10-06, 8d
+    Retire IntentRouterService classifier call       :p3_2, after p3_1, 4d
+    Routing-corpus tests updated for tool-call path  :p3_3, after p3_2, 3d
+
+    section Phase 4: Media Pipeline (kept from v4.0)
+    Direct HTTP/REST Image Generation Client         :p4_1, 2026-10-27, 8d
+    Remove CLI Process Execution & File Scraping     :p4_2, after p4_1, 4d
+    Granular Denoising Step Progress SSE Events      :p4_3, after p4_2, 3d
+```
+
+| Phase | Milestone | Expected Outcome |
+| :--- | :--- | :--- |
+| **Phase 1: Stability & Concurrency** | Implement `IGpuWorkCoordinator`, lock leasing, and fix the doc/code drift bug (§18.2 item 5). | Zero OOM crashes or model-eviction race conditions under concurrent tabs; override behavior matches documentation. |
+| **Phase 2: UI-Affordance Routing** | Explicit Composer modes become the primary routing path; `manualRouteOverride` stops being an "override" and becomes the normal case. | Most turns resolve intent with **zero** model calls, not a fast classifier — eliminates §18.2 item 3 for the majority of traffic. |
+| **Phase 3: Tool-Calling Fallback** | Free-text chat with no explicit mode resolves intent via tool-calling on the already-resident model, replacing `IntentRouterService`'s dedicated classification call. | No standalone classifier round-trip remains anywhere in the system; §18.2 items 3 and 6 are eliminated by construction. |
+| **Phase 4: Robust Media Engine** | Deprecate CLI `Process.Start` in favor of HTTP image API. | Clean process cancellation, no zombie OS tasks, and granular step progress. |
+
+---
+
+### 18.8 v4.1 File Map — What Actually Changes
+
+Mirrors the level of detail in §11/§12/§13 for the current implementation, scoped to what each phase in §18.7 touches.
+
+**Backend — new files:**
+
+```
+src/EminentAi.Application/Routing/
+├── ToolCallingIntentResolver.cs   ← §18.5.3; replaces IntentRouterService's classification call
+│                                     for free-text chat only (UI-affordance requests never reach it)
+├── ToolDefinition.cs               ← name + description pairs passed to the resident model
+└── IntentSource.cs                 ← enum: UiAffordance | ToolCall | FastPath
+                                       (extends, does not replace, ClassificationRecord.WasFastPath)
+
+src/EminentAi.Infrastructure/Hardware/
+├── IGpuWorkCoordinator.cs          ← §18.5.1
+└── GpuWorkCoordinator.cs           ← SemaphoreSlim(1,1) gate around every model-serving call,
+                                       not just ImageGenerationAgent — text agents acquire it too
+
+src/EminentAi.Infrastructure/ImageGeneration/
+└── DiffusionSidecarClient.cs       ← §18.5.2; HTTP client replacing FluxImageGenerator's
+                                       Process.Start("ollama run ...") CLI path
+```
+
+**Backend — modified files:**
+
+```
+src/EminentAi.Application/Orchestration/AgentOrchestratorFacade.cs
+  - Remove ValidateManualOverride's routing_error-and-abort branch for Vision-without-image (§18.2 item 5)
+  + manualRouteOverride / UI mode becomes the primary path checked first (§18.5.4)
+  + When no mode is set, dispatch to ToolCallingIntentResolver instead of IIntentRouter.ClassifyAsync
+  + Every ISpecializedAgent.ExecuteAsync call wrapped in IGpuWorkCoordinator.AcquireGpuLockAsync
+
+src/EminentAi.Application/Routing/ClassificationRecord.cs
+  No code change — OverrideRejectedReason is already string?; §4.3's contract table is corrected
+  to match it (the drift was in this document, not the code)
+
+src/EminentAi.Application/Agents/ImageGeneration/ImageGenerationAgent.cs
+  - Remove the GetLoadedModelsAsync / UnloadModelAsync / WarmUpModelAsync snapshot-evict-restore
+    dance (§18.2 item 1) — VRAM safety now comes from IGpuWorkCoordinator, not manual eviction
+  + Call DiffusionSidecarClient instead of FluxImageGenerator's CLI path
+  + Apply redactor.Redact to AnalysisResult.Understanding and ExpandedPrompt.Description before
+    they are emitted in SSE or persisted (§18.2 item 7) — currently only UserText and FluxPrompt are redacted
+
+src/EminentAi.Infrastructure/Routing/IntentRouterService.cs
+  - Remove the ImageGenKeywords quoted-string fast-path (§18.2 item 6) — superseded by tool-calling,
+    which sees the full conversation instead of matching a single regex against one message
+  Retained only as an emergency default (→ General) if the resident model's tool-calling call itself fails
+
+src/EminentAi.Application/Abstractions/IOllamaClient.cs
+src/EminentAi.Infrastructure/Ollama/OllamaClient.cs
+  - Delete GenerateImageAsync from both (§18.2 item 8) — implemented, zero call sites, superseded
+    by FluxImageGenerator since before v3.0; safe to remove alongside the DiffusionSidecarClient work
+    since both replace the same "how do we get a PNG out of Ollama" seam
+```
+
+**Frontend — new/modified files (mirrors §12):**
+
+```
+web/src/components/Composer.tsx
+  + Explicit mode buttons — Code · Architecture · Infographic — become the primary way to signal
+    intent, not a secondary "Auto-route toggle"; image attachment still implies Vision as today
+  + manualRouteOverride is sent whenever a mode button is active; omitted only for plain chat,
+    which is the sole case that reaches ToolCallingIntentResolver server-side
+
+web/src/lib/api.ts
+  + smartChat(...) request carries the existing manualRouteOverride field; no new field needed —
+    "mode selected" is simply "manualRouteOverride is non-null"
+
+web/src/lib/types.ts
+  + RoutingDecision gains `source: "ui-affordance" | "tool-call" | "fast-path"`, replacing the
+    current boolean wasFastPath with a three-way discriminator the RoutingBadge can render distinctly
+
+web/src/components/RoutingBadge.tsx
+  + Badge text reflects source: "Vision • you selected" vs "Coding • model decided" vs "Vision • fast-path"
+```
+

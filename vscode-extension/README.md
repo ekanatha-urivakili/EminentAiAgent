@@ -6,7 +6,7 @@ EminentAI is a local-first coding assistant that talks to models you run yoursel
 
 - VS Code 1.90+
 - [Ollama](https://ollama.com) installed and running locally (`ollama serve`, or the desktop app)
-- At least one local model pulled, e.g. `ollama pull qwen3:8b`
+- At least one local model pulled, e.g. `ollama pull gemma4:e4b`
 
 ## Features
 
@@ -18,7 +18,7 @@ EminentAI is a local-first coding assistant that talks to models you run yoursel
 - **Cloud providers (optional)** — add OpenAI / Anthropic / Google API keys in Settings to use their models alongside your local ones.
 - **Task/session switcher** — click the session pill at the top of the panel to search and jump between past conversations.
 - **Live task checklist** — Agent mode shows a running checklist of every step it takes (model selection, file reads/writes, commands, cooldown) as it happens; Plan mode renders its plan as clickable checkboxes.
-- **Model orchestration panel** — the pill in the top-right toolbar always shows which local model is currently loaded and why (e.g. `qwen3:8b · coding`); click it for a session log of every model stopped to free VRAM and restored afterward.
+- **Model orchestration panel** — the pill in the top-right toolbar always shows which local model is currently loaded and why (e.g. `gemma4:e4b · coding`); click it for a session log of every model stopped to free VRAM and restored afterward.
 - **Automatic changelog** — whenever Agent mode edits files, a dated entry (files touched, +/- line counts, one-line summary) is appended to `CHANGELOG.md` in the workspace root.
 
 ## Installing / updating

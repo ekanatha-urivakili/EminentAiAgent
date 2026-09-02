@@ -23,8 +23,8 @@ export interface ImageGenProgressProps {
   restoringModels?: string[];
   currentPrompt?: string;
   completedCount?: number;
-  understanding?: string;   // qwen3's one-line understanding
-  analystModel?: string;    // e.g. "qwen3:latest"
+  understanding?: string;   // analyst model's one-line understanding
+  analystModel?: string;    // e.g. "gemma4:e4b"
 }
 
 // ── Pipeline definition ───────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ const PIPELINE: PipelineStep[] = [
     detail: ({ analystModel, understanding }) =>
       understanding
         ? `"${understanding}"`
-        : `${analystModel ?? 'qwen3:latest'} is understanding your request and writing optimised image prompts`,
+        : `${analystModel ?? 'gemma4:e4b'} is understanding your request and writing optimised image prompts`,
   },
   {
     id:     'freeing_vram',
@@ -68,7 +68,7 @@ const PIPELINE: PipelineStep[] = [
         : '';
       return currentPrompt
         ? `"${currentPrompt}"${countStr}`
-        : `Running x/z-image-turbo${countStr} — typically 30–180 s`;
+        : `Running x/flux2-klein:4b${countStr} — typically 30–180 s`;
     },
   },
   {
@@ -192,7 +192,7 @@ export function ImageGenProgressPanel(props: ImageGenProgressProps) {
   const headline = (() => {
     if (!stage) return 'Starting image generation…';
     switch (stage) {
-      case 'analyzing_request': return `Analysing your request with ${analystModel ?? 'qwen3:latest'}…`;
+      case 'analyzing_request': return `Analysing your request with ${analystModel ?? 'gemma4:e4b'}…`;
       case 'analysis_done':     return understanding ? `Understood — expanding into ${total} image${total !== 1 ? 's' : ''}` : `Planning ${total} image${total !== 1 ? 's' : ''}…`;
       case 'freeing_vram':      return 'Freeing GPU memory…';
       case 'generating': {
@@ -282,9 +282,9 @@ export function ImageGenProgressPanel(props: ImageGenProgressProps) {
                 Agent-to-agent pipeline
               </p>
               <p className="text-[10px] text-violet-600/70 dark:text-violet-400/70">
-                <span className="font-mono">{analystModel ?? 'qwen3:latest'}</span>
+                <span className="font-mono">{analystModel ?? 'gemma4:e4b'}</span>
                 {' '}→ prompt engineer → {' '}
-                <span className="font-mono">x/z-image-turbo</span>
+                <span className="font-mono">x/flux2-klein:4b</span>
                 {' '}→ image generator
               </p>
             </div>

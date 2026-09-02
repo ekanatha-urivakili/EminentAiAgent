@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import type {
   AgentRunState, ChatMsg, ConnectorInfo, CreateConnectorRequest,
   ConversationDetail, ConversationSummary, Mode, ModelInfo, Plan, Theme, AppView,
-  AdminProfile, ChatAttachment,
+  AdminProfile, ChatAttachment, AgentKind,
   JobSearchCriteria, JobSearchRunResult, SourceHealthInfo, IndeedJobInput,
 } from '../lib/types';
 
@@ -50,7 +50,9 @@ interface AppState {
   // Smart chat (A2A routing)
   smartModeEnabled: boolean;
   toggleSmartMode: () => void;
-  sendSmartMessage: (content: string, attachments: ChatAttachment[]) => Promise<void>;
+  // manualRouteOverride: an explicit Composer mode (§18.5.4) — the primary routing path.
+  // Omitted (undefined) only for plain chat, which server-side resolves via tool-calling.
+  sendSmartMessage: (content: string, attachments: ChatAttachment[], manualRouteOverride?: AgentKind) => Promise<void>;
   regenerate: (messageId: string) => Promise<void>;
   stopStreaming: () => void;
   /** Switch to a different branch within the active conversation. */
@@ -76,7 +78,7 @@ interface AppState {
   setAgentConnectors: (cs: string[]) => void;
   agentWorkspaceRoot: string;
   setAgentWorkspaceRoot: (path: string) => void;
-  startAgent: (goal: string, planJson?: string) => Promise<void>;
+  startAgent: (goal: string, planJson?: string, attachments?: import('../lib/types').ChatAttachment[]) => Promise<void>;
   approveStep: (stepId: string, decision: 'approve' | 'reject', remember: boolean) => Promise<void>;
   cancelAgent: () => Promise<void>;
   resetAgent: () => void;
@@ -144,8 +146,8 @@ const storedArchivedIds: string[] = (() => {
 const storedStepBudget = Number(localStorage.getItem('eminentai.stepBudget') ?? 15);
 const storedConnectors: string[] = (() => {
   try {
-    return JSON.parse(localStorage.getItem('eminentai.agentConnectors') ?? '["filesystem","shell","web"]');
-  } catch { return ['filesystem', 'shell', 'web']; }
+    return JSON.parse(localStorage.getItem('eminentai.agentConnectors') ?? '["filesystem","shell","web","image"]');
+  } catch { return ['filesystem', 'shell', 'web', 'image']; }
 })();
 
 export const useStore = create<AppState>((set, get) => ({
@@ -178,13 +180,18 @@ export const useStore = create<AppState>((set, get) => ({
   loadModels: async () => {
     try {
       const models = await api.models();
-      const chatModels = models.filter((m) => m.tier !== 'embedding');
+      const chatModels = models.filter((m) => m.tier !== 'embedding' && m.tier !== 'image_gen');
       const current = get().selectedModel;
       set({
         models,
-        selectedModel: current && models.some((m) => m.name === current)
+        selectedModel: current && chatModels.some((m) => m.name === current)
           ? current
-          : (chatModels.find((m) => m.name === 'qwen3:8b')?.name ?? chatModels[0]?.name ?? ''),
+          : (chatModels.find((m) => m.name === 'gemma4:e4b')?.name
+            ?? chatModels.find((m) => m.name === 'ornith-1.5:9b')?.name
+            ?? chatModels.find((m) => m.name === 'qwen3.5:9b')?.name
+            ?? chatModels.find((m) => m.name === 'qwen3.5:4b')?.name
+            ?? chatModels[0]?.name
+            ?? ''),
       });
     } catch { /* surfaced via health pill */ }
   },
@@ -358,7 +365,7 @@ export const useStore = create<AppState>((set, get) => ({
     return { smartModeEnabled: next };
   }),
 
-  sendSmartMessage: async (content, attachments) => {
+  sendSmartMessage: async (content, attachments, manualRouteOverride) => {
     let { activeBranchId } = get();
     const { selectedModel } = get();
 
@@ -368,10 +375,6 @@ export const useStore = create<AppState>((set, get) => ({
       set({ activeBranchId, activeConversationId: created.id, branches: [] });
       void get().loadConversations();
     }
-
-    const imageAttachments = attachments.filter(a =>
-      a.contentType?.startsWith('image/') ?? false
-    );
 
     const userMsg: ChatMsg = { id: `u_${Date.now()}`, role: 'user', content, attachments };
     const assistantMsg: ChatMsg = {
@@ -388,13 +391,23 @@ export const useStore = create<AppState>((set, get) => ({
         activeBranchId,
         content,
         attachments,
-        imageAttachments.length > 0 ? 'vision' : undefined,
+        manualRouteOverride,
         (event, data) => {
           set((s) => ({
             messages: s.messages.map((m) => {
               if (m.id !== assistantMsg.id && m.id !== (data.messageId as string | undefined)) return m;
 
               if (event === 'routing_decision') {
+                const manualOverrideApplied = data.manualOverrideApplied as boolean;
+                const wasFastPath = data.wasFastPath as boolean;
+                // §18.5.4: derive the badge's "why" from the same fields the server already sends —
+                // an explicit Composer mode, the legacy zero-cost regex fast-path, or the resident
+                // model's own tool-call decision (the only case left that costs a round-trip).
+                const source: import('../lib/types').RoutingSource = manualOverrideApplied
+                  ? 'ui-affordance'
+                  : wasFastPath
+                  ? 'fast-path'
+                  : 'tool-call';
                 return {
                   ...m,
                   routingDecision: {
@@ -403,8 +416,10 @@ export const useStore = create<AppState>((set, get) => ({
                     provider: data.provider as string,
                     reason: data.reason as string,
                     classificationMs: data.classificationMs as number,
-                    wasFastPath: data.wasFastPath as boolean,
-                    manualOverrideApplied: data.manualOverrideApplied as boolean,
+                    wasFastPath,
+                    manualOverrideApplied,
+                    overrideRejectedReason: data.overrideRejectedReason as string | undefined,
+                    source,
                   },
                 };
               }
@@ -433,8 +448,7 @@ export const useStore = create<AppState>((set, get) => ({
                   ...(stage === 'generating' && data.prompt
                     ? { imageGenCurrentPrompt: data.prompt as string }
                     : {}),
-                  // qwen3 analysis result
-                  ...(stage === 'analyzing_request' && data.analystModel
+                  ...(data.analystModel
                     ? { imageGenAnalystModel: data.analystModel as string }
                     : {}),
                   ...(stage === 'analysis_done' && data.understanding
@@ -603,11 +617,19 @@ export const useStore = create<AppState>((set, get) => ({
 
   resetAgent: () => set({ agent: { ...initialAgent } }),
 
-  startAgent: async (goal, planJson) => {
+  startAgent: async (goal, planJson, attachments) => {
     agentAbort?.abort();
     agentAbort = new AbortController();
     const { agentStepBudget, agentConnectors, agentWorkspaceRoot, models, selectedModel } = get();
-    const agentModel = models.some((model) => model.name === 'qwen3:8b') ? 'qwen3:8b' : selectedModel;
+    const hasImageAttachment = (attachments ?? []).some(a => a.contentType?.startsWith('image/') ?? false);
+    // Prefer the vision-capable route model when an image is attached so the agent can actually see it.
+    const agentModel = hasImageAttachment && models.some((model) => model.name === 'qwen3.5:9b')
+      ? 'qwen3.5:9b'
+      : models.some((model) => model.name === 'gemma4:e4b')
+        ? 'gemma4:e4b'
+        : models.some((model) => model.name === 'qwen3.5:9b')
+          ? 'qwen3.5:9b'
+          : selectedModel;
     set({ agent: { ...initialAgent, goal, status: 'running', stepBudget: agentStepBudget } });
 
     const push = (item: Omit<import('../lib/types').AgentTimelineItem, 'id'>) =>
@@ -621,6 +643,7 @@ export const useStore = create<AppState>((set, get) => ({
         planJson,
         agentStepBudget,
         agentWorkspaceRoot,
+        attachments,
         agentAbort.signal,
       )) {
         const d = ev.data;

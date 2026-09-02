@@ -13,9 +13,12 @@ using EminentAi.Application.Abstractions;
 using EminentAi.Application.Agent;
 using EminentAi.Application.Agents;
 using EminentAi.Application.Agents.ImageGeneration;
+using EminentAi.Application.Configuration;
+using EminentAi.Application.Hardware;
 using EminentAi.Application.Orchestration;
 using EminentAi.Application.Providers;
 using EminentAi.Application.Routing;
+using EminentAi.Infrastructure.Hardware;
 using EminentAi.Infrastructure.Providers;
 using EminentAi.Infrastructure.Routing;
 using EminentAi.Infrastructure.Persistence;
@@ -29,6 +32,8 @@ using EminentAi.Infrastructure.Security;
 using EminentAi.Infrastructure.Tools;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+
+LoadDotEnv();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -78,10 +83,12 @@ builder.Services.AddSingleton<IndeedDirectBuffer>();
 builder.Services.AddSingleton<JobRunCache>();
 builder.Services.AddSingleton<JobSearchOrchestrator>();
 
+var configuredOllamaApiKey = builder.Configuration["EminentAi:OllamaApiKey"];
 builder.Services.AddSingleton(new BuiltinToolOptions(
     builder.Configuration["EminentAi:WorkspaceRoot"],
-    builder.Configuration["EminentAi:OllamaApiKey"]
-        ?? Environment.GetEnvironmentVariable("OLLAMA_API_KEY")));
+    !string.IsNullOrWhiteSpace(configuredOllamaApiKey)
+        ? configuredOllamaApiKey
+        : Environment.GetEnvironmentVariable("OLLAMA_API_KEY")));
 builder.Services.AddSingleton<IBuiltinToolRunner, BuiltinToolRunner>();
 builder.Services.AddSingleton<IPiiRedactor, PiiRedactor>();
 builder.Services.AddSingleton<IPolicyEngine, PolicyEngine>();
@@ -95,9 +102,18 @@ builder.Services.AddScoped<PlannerService>();
 builder.Services.AddScoped<AgentOrchestrator>();
 
 // ── Smart chat: A2A orchestration layer ──────────────────────────────────
-builder.Services.AddSingleton<IIntentRouter, IntentRouterService>();
+// Config-driven model matrix (§18.2 item 4): bound once from EminentAi:ModelMatrix in
+// appsettings.json, with defaults equal to what was previously hardcoded. Registered as a plain
+// singleton instance (same pattern as CostPolicy/DataResidencyPolicy below) rather than IOptions<T>,
+// since no other component in this codebase uses the Options pattern.
+var modelMatrix = builder.Configuration.GetSection(ModelMatrixOptions.SectionName).Get<ModelMatrixOptions>()
+    ?? new ModelMatrixOptions();
+builder.Services.AddSingleton(modelMatrix);
+
+builder.Services.AddSingleton<IIntentRouter, ToolCallingIntentResolver>();
 builder.Services.AddSingleton<IModelRouter, ModelRouterService>();
 builder.Services.AddSingleton<IModelProvider, OllamaModelProvider>();
+builder.Services.AddSingleton<IGpuWorkCoordinator, GpuWorkCoordinator>();
 builder.Services.AddSingleton(CostPolicy.DefaultLocal);
 builder.Services.AddSingleton(DataResidencyPolicy.DefaultLocal);
 builder.Services.AddScoped<IGeneratedImageRepository, GeneratedImageRepository>();
@@ -135,6 +151,7 @@ builder.Services.AddScoped<ISpecializedAgent>(sp => new ImageGenerationAgent(
     sp.GetRequiredService<IGeneratedImageRepository>(),
     sp.GetRequiredService<IConversationRepository>(),
     sp.GetRequiredService<IPiiRedactor>(),
+    sp.GetRequiredService<ModelMatrixOptions>(),
     generatedImagesDir));
 builder.Services.AddScoped<AgentOrchestratorFacade>();
 builder.Services.AddScoped<ObservabilityService>();
@@ -148,7 +165,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 // CORS: explicit allowlist for the Vite dev server — never AllowAnyOrigin.
 var allowedOrigins = builder.Configuration.GetSection("EminentAi:AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173", "https://*.railway.app" };
+    ?? new[] { "http://localhost:5173", "http://127.0.0.1:5173" };
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     policy.WithOrigins(allowedOrigins)
           .SetIsOriginAllowedToAllowWildcardSubdomains()
@@ -988,15 +1005,30 @@ app.MapPost("/api/agent/runs",
         await WriteSseAsync(context.Response, "error", new { message = "goal is required" }, CancellationToken.None);
         return;
     }
+    if ((request.Attachments?.Count ?? 0) > 10)
+    {
+        await WriteSseAsync(context.Response, "error", new { message = "too many attachments (max 10)" }, CancellationToken.None);
+        return;
+    }
+    if (request.Attachments?.Any(a => (a.DataBase64?.Length ?? 0) > 10_000_000) == true)
+    {
+        await WriteSseAsync(context.Response, "error", new { message = "attachment exceeds 10 MB limit" }, CancellationToken.None);
+        return;
+    }
+
+    var attachments = request.Attachments?
+        .Select(a => new ChatAttachment(a.Name, a.ContentType, StripDataUrlPrefix(a.DataBase64)))
+        .ToList();
 
     var runId = Guid.NewGuid();
     var opts = new AgentRunOptions(
         request.Goal,
         request.Connectors is { Length: > 0 } ? request.Connectors : new[] { "filesystem", "shell" },
-        string.IsNullOrWhiteSpace(request.Model) ? "qwen2.5-coder:7b" : request.Model,
+        string.IsNullOrWhiteSpace(request.Model) ? "gemma4:e4b" : request.Model,
         request.PlanJson,
         request.StepBudget ?? 15,
-        WorkspaceRoot: request.WorkspaceRoot);
+        WorkspaceRoot: request.WorkspaceRoot,
+        Attachments: attachments);
 
     try
     {
@@ -1647,6 +1679,38 @@ app.MapGet("/api/generated-images/{filename}", async (
 
 app.Run();
 
+// Loads KEY=VALUE pairs from a .env file next to the project (if present) into the
+// process environment, without overriding variables already set by the shell/host.
+static void LoadDotEnv()
+{
+    for (var dir = AppContext.BaseDirectory; dir is not null; dir = Directory.GetParent(dir)?.FullName)
+    {
+        var path = Path.Combine(dir, ".env");
+        if (File.Exists(path))
+        {
+            foreach (var line in File.ReadAllLines(path))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+                    continue;
+
+                var separatorIndex = trimmed.IndexOf('=');
+                if (separatorIndex <= 0)
+                    continue;
+
+                var key = trimmed[..separatorIndex].Trim();
+                var value = trimmed[(separatorIndex + 1)..].Trim().Trim('"');
+                if (Environment.GetEnvironmentVariable(key) is null)
+                    Environment.SetEnvironmentVariable(key, value);
+            }
+            return;
+        }
+
+        if (Directory.Exists(Path.Combine(dir, ".git")))
+            return; // reached the repo root without finding a .env file
+    }
+}
+
 internal static class SseJson
 {
     public static readonly JsonSerializerOptions Options = new()
@@ -1665,14 +1729,15 @@ public record SendMessageRequest(string Content, string? ModelOverride, List<Sen
 public record SendAttachmentRequest(string Name, string ContentType, string DataBase64);
 public record RegenerateRequest(string? Model, float? Temperature);
 public record ForkRequest(Guid MessageId);
-public record PlanRequest(string Goal, string Model = "qwen2.5-coder:7b");
+public record PlanRequest(string Goal, string Model = "gemma4:e4b");
 public record StartAgentRunRequest(
     string Goal,
     string[]? Connectors,
     string? Model,
     string? PlanJson,
     int? StepBudget,
-    string? WorkspaceRoot);
+    string? WorkspaceRoot,
+    List<SendAttachmentRequest>? Attachments);
 public record ApprovalRequest(string Decision, bool? Remember);
 public record ConnectorRequest(string Name, ConnectorTransport? Transport, string CommandOrUrl, PolicyProfile? PolicyProfile);
 public record PullModelRequest(string Name);

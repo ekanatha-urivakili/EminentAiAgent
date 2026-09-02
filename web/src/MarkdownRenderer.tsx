@@ -25,6 +25,7 @@ function MermaidDiagram({ source }: { source: string }) {
         startOnLoad: false,
         securityLevel: 'strict',
         theme: 'default',
+        suppressErrorRendering: true,
       });
       const result = await mermaid.render(`eminentai-${id}`, source);
       if (active) setSvg(result.svg);
